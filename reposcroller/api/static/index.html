@@ -184,6 +184,17 @@
       <!-- Tab 2: Chatbot Interrogation -->
       <div id="tab-chat" class="tab-content">
         <div class="chat-container">
+          <!-- Active Document Context Banner -->
+          <div id="chat-context-banner" class="chat-context-banner hidden">
+            <div class="chat-context-info">
+              <span class="chat-context-icon">📄</span>
+              <span class="chat-context-label">Focus:</span>
+              <span id="chat-context-name" class="chat-context-name" title="Current document in interrogation context"></span>
+            </div>
+            <button class="chat-context-clear" onclick="clearChatDocumentContext()"
+              title="Clear document focus to query across all repositories">✕</button>
+          </div>
+
           <div id="chat-messages" class="chat-messages">
             <div class="chat-msg bot">
               <div class="msg-bubble">

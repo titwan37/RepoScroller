@@ -1013,6 +1013,61 @@ body.resizing-table-col .th-resizer {
   align-self: flex-end;
 }
 
+/* Active Document Context Banner in Chat */
+.chat-context-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0.85rem;
+  background: rgba(6, 182, 212, 0.1);
+  border-bottom: 1px solid rgba(6, 182, 212, 0.25);
+  font-size: 0.78rem;
+  gap: 0.5rem;
+  flex-shrink: 0;
+  animation: fadeIn 0.2s ease-in;
+}
+
+.chat-context-info {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-context-label {
+  color: var(--accent-cyan);
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+}
+
+.chat-context-name {
+  color: #ffffff;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-context-clear {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 0.95rem;
+  cursor: pointer;
+  padding: 0.1rem 0.3rem;
+  border-radius: var(--radius-sm);
+  transition: all 0.15s ease;
+  line-height: 1;
+}
+
+.chat-context-clear:hover {
+  color: var(--status-error);
+  background: rgba(244, 63, 94, 0.15);
+}
 .msg-bubble {
   padding: 0.75rem 1rem;
   border-radius: var(--radius-md);
@@ -1020,10 +1075,103 @@ body.resizing-table-col .th-resizer {
   line-height: 1.45;
 }
 
+/* Rich Markdown formatting in Chat Bot Bubbles */
 .chat-msg.bot .msg-bubble {
   background: var(--bg-surface-elevated);
   border: 1px solid var(--border-color);
   color: var(--text-main);
+  line-height: 1.55;
+    word-break: break-word;
+  }
+  
+  .chat-msg.bot .msg-bubble p {
+    margin: 0 0 0.55rem 0;
+  }
+  
+  .chat-msg.bot .msg-bubble p:last-child {
+    margin-bottom: 0;
+  }
+  
+  .chat-msg.bot .msg-bubble strong {
+    color: #ffffff;
+    font-weight: 600;
+  }
+  
+  .chat-msg.bot .msg-bubble em {
+    color: #cbd5e1;
+    font-style: italic;
+  }
+  
+  .chat-msg.bot .msg-bubble .chat-inline-code {
+    background: rgba(0, 0, 0, 0.45);
+    color: var(--accent-cyan);
+    padding: 0.15rem 0.4rem;
+    border-radius: var(--radius-sm);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.82em;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    word-break: break-all;
+  }
+  
+  .chat-msg.bot .msg-bubble .chat-pre {
+    background: rgba(15, 23, 42, 0.9);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 0.65rem 0.85rem;
+    overflow-x: auto;
+    margin: 0.5rem 0;
+  }
+  
+  .chat-msg.bot .msg-bubble .chat-code-block {
+    background: transparent;
+    padding: 0;
+    border: none;
+    font-size: 0.82em;
+    color: #e2e8f0;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  
+  .chat-msg.bot .msg-bubble .chat-ul,
+  .chat-msg.bot .msg-bubble .chat-ol {
+    margin: 0.35rem 0 0.55rem 0;
+    padding-left: 1.3rem;
+  }
+  
+  .chat-msg.bot .msg-bubble .chat-li,
+  .chat-msg.bot .msg-bubble .chat-oli {
+    margin-bottom: 0.25rem;
+  }
+  
+  .chat-msg.bot .msg-bubble .chat-quote {
+    border-left: 3px solid var(--accent-cyan);
+    background: rgba(6, 182, 212, 0.08);
+    margin: 0.5rem 0;
+    padding: 0.4rem 0.75rem;
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    color: var(--text-muted);
+    font-style: italic;
+  }
+  
+  .chat-msg.bot .msg-bubble h2,
+  .chat-msg.bot .msg-bubble h3,
+  .chat-msg.bot .msg-bubble h4,
+  .chat-msg.bot .msg-bubble h5 {
+    color: #ffffff;
+    margin: 0.65rem 0 0.3rem 0;
+    font-weight: 600;
+    line-height: 1.3;
+  }
+  
+  .chat-msg.bot .msg-bubble .chat-hr {
+    border: none;
+    border-top: 1px solid var(--border-color);
+    margin: 0.6rem 0;
+  }
+  
+  .chat-msg.bot .msg-bubble .chat-link {
+    color: var(--accent-cyan);
+    text-decoration: underline;
+    text-underline-offset: 2px;
 }
 
 .chat-msg.user .msg-bubble {

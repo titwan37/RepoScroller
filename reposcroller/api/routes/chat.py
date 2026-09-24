@@ -40,22 +40,27 @@ async def stream_interrogation(
     agent = DuplicateResolverAgent()
 
     async def event_generator():
-        yield f"data: {json.dumps({'type': 'status', 'message': 'Searching SQLite WAL ledger & SimHash indexes...'})}\n\n"
-        await asyncio.sleep(0.05)
+        yield f"data: {json.dumps({'type': 'status', 'message': 'Consulting document ledger & knowledge index...'})}\n\n"
+        await asyncio.sleep(0.04)
 
-        # Run resolution agent
+        # Run resolution / QA agent
         result = agent.interrogate(query=query, sha256_hash=sha256_hash)
 
+        # Emit active document context if matched or active
+        canon = result.get("canonical_document")
+        if canon:
+            yield f"data: {json.dumps({'type': 'active_doc', 'sha256_hash': canon['sha256_hash'], 'canonical_filename': canon['canonical_filename']})}\n\n"
+
         yield f"data: {json.dumps({'type': 'category', 'status_category': result['status_category']})}\n\n"
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.03)
 
         # Stream answer chunks
         answer_text = result["answer"]
-        chunk_size = 64
+        chunk_size = 48
         for i in range(0, len(answer_text), chunk_size):
             chunk = answer_text[i:i + chunk_size]
             yield f"data: {json.dumps({'type': 'chunk', 'content': chunk})}\n\n"
-            await asyncio.sleep(0.02)
+            await asyncio.sleep(0.015)
 
         yield f"data: {json.dumps({'type': 'recommendation', 'recommendation': result['recommendation']})}\n\n"
         yield f"data: {json.dumps({'type': 'sources', 'sources': result['sources']})}\n\n"

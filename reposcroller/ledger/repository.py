@@ -228,6 +228,44 @@ class DocumentRepository:
 
             return doc
 
+    def get_document_full_text(self, sha256_hash: str) -> str:
+        """Retrieve full text of document from FTS index, disk file, or ledger snippet."""
+        with self._lock:
+            cur = self.conn.cursor()
+            # 1. Check FTS table
+            try:
+                cur.execute("SELECT text_content FROM document_fts WHERE sha256_hash = ?", (sha256_hash,))
+                row = cur.fetchone()
+                if row and row[0] and len(row[0].strip()) > 30:
+                    return row[0].strip()
+            except Exception:
+                pass
+
+            # 2. Check locations on disk
+            try:
+                cur.execute("SELECT absolute_path FROM file_locations WHERE sha256_hash = ?", (sha256_hash,))
+                loc_rows = cur.fetchall()
+                for lr in loc_rows:
+                    p = Path(lr[0])
+                    if p.exists() and p.is_file():
+                        from reposcroller.extraction.text_extractor import extract_document_data
+                        text, _ = extract_document_data(p)
+                        if text and len(text.strip()) > 20:
+                            return text.strip()
+            except Exception:
+                pass
+
+            # 3. Fallback to snippet in document_ledger
+            try:
+                cur.execute("SELECT text_snippet FROM document_ledger WHERE sha256_hash = ?", (sha256_hash,))
+                row = cur.fetchone()
+                if row and row[0]:
+                    return row[0].strip()
+            except Exception:
+                pass
+
+        return ""
+
     def get_location_by_path(self, absolute_path: str) -> Optional[Dict[str, Any]]:
         """Lookup existing record for an exact absolute file path."""
         with self._lock:

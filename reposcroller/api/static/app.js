@@ -826,6 +826,7 @@ async function selectDocument(sha256) {
   try {
     const res = await fetch(`/api/v1/documents/${sha256}`);
     const doc = await res.json();
+    setChatDocumentContext(doc.sha256_hash, doc.canonical_filename);
 
     const locationsHtml = (doc.locations || []).map(loc => `
       <div class="location-item">
@@ -989,6 +990,36 @@ async function uploadForCheck(file) {
 }
 
 // 12. Tabs & AI Chat Interrogation
+let currentChatDoc = null;
+
+function setChatDocumentContext(sha, filename) {
+  if (!sha || !filename) return;
+  currentChatDoc = { sha256_hash: sha, canonical_filename: filename };
+  const banner = document.getElementById("chat-context-banner");
+  const nameEl = document.getElementById("chat-context-name");
+  const inputEl = document.getElementById("chat-input");
+  if (banner && nameEl) {
+    nameEl.textContent = filename;
+    banner.classList.remove("hidden");
+  }
+  if (inputEl) {
+    inputEl.placeholder = `Ask anything about "${filename}" or any document...`;
+  }
+}
+
+function clearChatDocumentContext() {
+  currentChatDoc = null;
+  const banner = document.getElementById("chat-context-banner");
+  const inputEl = document.getElementById("chat-input");
+  if (banner) {
+    banner.classList.add("hidden");
+  }
+  if (inputEl) {
+    inputEl.placeholder = "Ask about any document copy...";
+  }
+  showToast("Cleared document focus. Next questions will search globally.", "info");
+}
+
 function switchTab(tab) {
   document.getElementById("tab-btn-detail").classList.toggle("active", tab === "detail");
   document.getElementById("tab-btn-chat").classList.toggle("active", tab === "chat");
@@ -1003,8 +1034,87 @@ function sendSuggestion(query) {
 
 function interrogateAboutCurrent(filename) {
   switchTab("chat");
+  setChatDocumentContext(activeDocumentSha, filename);
   document.getElementById("chat-input").value = `Do we have any copy or draft of "${filename}"?`;
   sendChatMessage(activeDocumentSha);
+}
+
+// Markdown Parser for Chat Responses
+function renderMarkdown(md) {
+  if (!md) return "";
+
+  // 1. Separate code blocks to protect them
+  const codeBlocks = [];
+  let text = md.replace(/```([a-zA-Z0-9_\-]*)\n([\s\S]*?)```/g, (match, lang, code) => {
+    const idx = codeBlocks.length;
+    codeBlocks.push(`<pre class="chat-pre"><code class="chat-code-block">${escapeHtml(code.trim())}</code></pre>`);
+    return `___CODE_BLOCK_${idx}___`;
+  });
+
+  // 2. Separate inline code
+  const inlineCodes = [];
+  text = text.replace(/`([^`\n]+)`/g, (match, code) => {
+    const idx = inlineCodes.length;
+    inlineCodes.push(`<code class="chat-inline-code">${escapeHtml(code)}</code>`);
+    return `___INLINE_CODE_${idx}___`;
+  });
+
+  // 3. Escape HTML of body text
+  text = escapeHtml(text);
+
+  // 4. Headings
+  text = text.replace(/^#### (.*$)/gim, '<h5>$1</h5>');
+  text = text.replace(/^### (.*$)/gim, '<h4>$1</h4>');
+  text = text.replace(/^## (.*$)/gim, '<h3>$1</h3>');
+  text = text.replace(/^# (.*$)/gim, '<h2>$1</h2>');
+
+  // 5. Horizontal rules
+  text = text.replace(/^(?:---|___|\*\*\*)\s*$/gim, '<hr class="chat-hr">');
+
+  // 6. Blockquotes
+  text = text.replace(/^>(?:[\t ])?(.*$)/gim, '<blockquote class="chat-quote">$1</blockquote>');
+  text = text.replace(/<\/blockquote>\s*<blockquote class="chat-quote">/g, '<br>');
+
+  // 7. Bold and Italic
+  text = text.replace(/\*\*\*([^*]+)\*\*\*/g, '<strong><em>$1</em></strong>');
+  text = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  text = text.replace(/__([^_]+)__/g, '<strong>$1</strong>');
+  text = text.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+  text = text.replace(/_([^_]+)_/g, '<em>$1</em>');
+
+  // 8. Markdown Links [text](url)
+  text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" class="chat-link">$1</a>');
+
+  // 9. Unordered Lists
+  text = text.replace(/^[\t ]*[-*] (.*$)/gim, '<li class="chat-li">$1</li>');
+  text = text.replace(/(<li class="chat-li">[\s\S]*?<\/li>)(?!\s*<li class="chat-li">)/g, '<ul class="chat-ul">$1</ul>');
+
+  // 10. Ordered Lists
+  text = text.replace(/^[\t ]*\d+\. (.*$)/gim, '<li class="chat-oli">$1</li>');
+  text = text.replace(/(<li class="chat-oli">[\s\S]*?<\/li>)(?!\s*<li class="chat-oli">)/g, '<ol class="chat-ol">$1</ol>');
+
+  // 11. Paragraphs & line breaks
+  const blocks = text.split(/\n{2,}/);
+  text = blocks.map(b => {
+    b = b.trim();
+    if (!b) return "";
+    if (b.startsWith("<h") || b.startsWith("<ul") || b.startsWith("<ol") || b.startsWith("<blockquote") || b.startsWith("<pre") || b.startsWith("<hr") || b.startsWith("___CODE_BLOCK_")) {
+      return b;
+    }
+    return `<p>${b.replace(/\n/g, '<br>')}</p>`;
+  }).join("\n");
+
+  // 12. Restore inline codes
+  inlineCodes.forEach((code, idx) => {
+    text = text.replace(new RegExp(`___INLINE_CODE_${idx}___`, 'g'), code);
+  });
+
+  // 13. Restore code blocks
+  codeBlocks.forEach((block, idx) => {
+    text = text.replace(new RegExp(`___CODE_BLOCK_${idx}___`, 'g'), block);
+  });
+
+  return text;
 }
 
 async function sendChatMessage(sha = null) {
@@ -1012,7 +1122,11 @@ async function sendChatMessage(sha = null) {
   const query = input.value.trim();
   if (!query) return;
 
-  const targetSha = sha || (activeDocumentSha && query.includes("Do we have") ? activeDocumentSha : null);
+  // Resolve target SHA:
+  // 1. Explicit sha argument if provided
+  // 2. Current active chat document focus if set
+  // 3. Global active document from table
+  let targetSha = sha || (currentChatDoc && currentChatDoc.sha256_hash) || activeDocumentSha || null;
 
   input.value = "";
   const container = document.getElementById("chat-messages");
@@ -1028,7 +1142,7 @@ async function sendChatMessage(sha = null) {
   botDiv.className = "chat-msg bot";
   const bubble = document.createElement("div");
   bubble.className = "msg-bubble";
-  bubble.innerHTML = `<em>Consulting SQLite WAL ledger & SimHash indexes...</em>`;
+  bubble.innerHTML = `<em>Consulting document ledger & knowledge index...</em>`;
   botDiv.appendChild(bubble);
   container.appendChild(botDiv);
   container.scrollTop = container.scrollHeight;
@@ -1049,13 +1163,18 @@ async function sendChatMessage(sha = null) {
 
     try {
       const payload = JSON.parse(event.data);
-      if (payload.type === "chunk") {
+      if (payload.type === "active_doc") {
+        setChatDocumentContext(payload.sha256_hash, payload.canonical_filename);
+      } else if (payload.type === "status") {
+        bubble.innerHTML = `<em>${escapeHtml(payload.message)}</em>`;
+      } else if (payload.type === "chunk") {
         accumulated += payload.content;
-        bubble.innerHTML = escapeHtml(accumulated).replace(/\n/g, '<br>');
+        bubble.innerHTML = renderMarkdown(accumulated);
         container.scrollTop = container.scrollHeight;
       } else if (payload.type === "recommendation") {
-        accumulated += `\n\n💡 Recommendation: ${payload.recommendation}`;
-        bubble.innerHTML = escapeHtml(accumulated).replace(/\n/g, '<br>');
+        accumulated += `\n\n💡 **Recommendation:** ${payload.recommendation}`;
+        bubble.innerHTML = renderMarkdown(accumulated);
+        container.scrollTop = container.scrollHeight;
       }
     } catch (e) {
       // Raw string
