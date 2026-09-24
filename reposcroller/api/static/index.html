@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RepoScroller - ALCOA+ Document Intelligence & Deduplication</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css?v=8">
+</head>
+<body>
+  <!-- Top Navigation Bar -->
+  <header class="navbar">
+    <div class="nav-brand">
+      <div class="logo-icon">📜</div>
+      <div class="brand-text">
+        <h1>Administrative Document Repository Scroller</h1>
+        <span class="alcoa-badge">ALCOA+ Compliant</span>
+      </div>
+    </div>
+
+    <!-- Pre-flight Duplicate Dropzone -->
+    <div class="nav-actions">
+      <section class="dropzone-section">
+        <div id="dropzone" class="dropzone" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)"
+          ondrop="handleDrop(event)" onclick="triggerFileInput()">
+          <input type="file" id="file-input" style="display:none" onchange="handleFileSelected(event)">
+          <!-- <div class="drop-icon">📥</div> -->
+          <div class="drop-title">📥 Pre-Flight Duplicate Inspection</div>
+          <p class="drop-desc">Drag & drop any document here before saving, or <span>browse file</span></p>
+          <div class="drop-hint">Computes SHA-256 & SimHash instantly to detect bitwise copies & drafts</div>
+          </div>
+          <div id="drop-result" class="drop-result hidden"></div>
+          </section>
+          </div>
+
+    <div class="nav-actions">
+      <div id="backend-status" class="status-indicator">
+        <span class="pulse-dot"></span>
+        <span id="backend-status-text">Connecting...</span>
+      </div>
+      <button id="btn-scan" class="btn btn-primary" onclick="triggerScan()">
+        <span class="btn-icon">⚡</span> Quick Scan
+      </button>
+      <button id="btn-watch" class="btn btn-outline" onclick="toggleWatcher()">
+        <span class="btn-icon">👁️</span> <span id="watch-btn-text">Start Watcher</span>
+      </button>
+      <button id="btn-diag-toggle" class="btn btn-outline btn-diag-nav" onclick="toggleDiagnosticConsole()"
+        title="Toggle Live Diagnostic Console">
+        <span class="btn-icon">🩺</span> Diagnostics
+        <span id="nav-diag-badge" class="badge-diag-counter hidden">0</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Storage Mounts Bar -->
+  <section class="mounts-bar">
+    <div class="mounts-label">Active Storage Mounts:</div>
+    <div id="mounts-list" class="mounts-chips">
+      <span class="chip chip-loading">Probing storage roots...</span>
+    </div>
+  </section>
+
+  <!-- Main Container -->
+  <main class="dashboard-grid">
+    
+    <!-- Left Column: Metrics, Pre-flight Dropzone, and Ledger -->
+    <div class="main-column">
+      
+      <!-- Metrics KPI Cards -->
+      <section class="metrics-grid">
+        <div class="metric-card">
+          <div class="metric-label">🏷️ Unique Documents</div>
+          <div id="metric-unique" class="metric-value">--</div>
+          <div class="metric-sub">Single source of truth</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">📁 Physical Locations</div>
+          <div id="metric-locations" class="metric-value">--</div>
+          <div class="metric-sub">Distributed files mapped</div>
+        </div>
+        <div class="metric-card metric-interactive" id="card-duplicates" onclick="toggleDuplicatesFilter()" title="Click to view all duplicate files in the repository">
+          <div class="metric-header-row">
+            <div class="metric-label">📄 Deduplicated Savings</div>
+            <span id="duplicates-badge" class="badge-filter-active hidden">Active Filter</span>
+          </div>
+          <div id="metric-savings" class="metric-value text-emerald">--</div>
+          <div class="metric-sub" id="duplicates-sub">Exact duplicate copies (click to filter)</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">🕒 Version Links</div>
+          <div id="metric-lineage" class="metric-value text-cyan">--</div>
+          <div class="metric-sub">Evolved & draft chains</div>
+        </div>
+      </section>
+
+
+
+      <!-- Document Ledger Explorer -->
+      <section class="ledger-section">
+        <div class="section-header">
+          <div class="section-title">Document Ledger (WAL)</div>
+          <div class="filter-controls">
+            <input type="text" id="search-box" placeholder="Filter filename..." oninput="handleSearch(event)">
+            <select id="category-filter" onchange="handleCategoryChange()" title="Filter by dynamic taxonomy category">
+              <option value="">All Categories (Taxonomy)</option>
+            </select>
+            <select id="status-filter" onchange="loadLedger()">
+              <option value="">All Statuses</option>
+              <option value="final">Final Only</option>
+              <option value="draft">Drafts Only</option>
+              <option value="review">Under Review</option>
+              <option value="truncated">Truncated / Partial</option>
+            </select>
+            <button id="btn-clear-filters" class="btn btn-outline btn-sm hidden" onclick="clearAllFilters()">✕ Reset</button>
+          </div>
+        </div>
+
+        <div id="active-filter-bar" class="active-filter-bar hidden">
+          <span id="active-filter-text">Filtered by duplicates</span>
+          <button class="btn-clear-pill" onclick="clearAllFilters()">Reset Filter ✕</button>
+        </div>
+
+        <div class="table-container">
+          <table class="ledger-table">
+            <thead>
+              <tr>
+                <th class="th-sortable" onclick="setSort('canonical_filename')">
+                  <span>Document</span> <span class="sort-indicator" id="sort-canonical_filename">↕</span>
+                </th>
+                <th class="th-sortable" onclick="setSort('doc_type')">
+                  <span>Category</span> <span class="sort-indicator" id="sort-doc_type">↕</span>
+                </th>
+                <th class="th-sortable" onclick="setSort('maturity_score')">
+                  <span>Maturity</span> <span class="sort-indicator" id="sort-maturity_score">↕</span>
+                </th>
+                <th class="th-sortable" onclick="setSort('lifecycle_status')">
+                  <span>Status</span> <span class="sort-indicator" id="sort-lifecycle_status">↕</span>
+                </th>
+                <th class="th-sortable" onclick="setSort('location_count')">
+                  <span>Copies</span> <span class="sort-indicator" id="sort-location_count">↕</span>
+                </th>
+                <th class="th-sortable" onclick="setSort('doc_date')"
+                  title="Sort by document date (filename prefix, content, or last modified)">
+                  <span>Doc Date</span> <span class="sort-indicator" id="sort-doc_date">↕</span>
+                </th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="ledger-rows">
+              <tr>
+                <td colspan="7" class="text-center loading-cell">Loading document ledger...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <!-- Right Column Resizer Handle -->
+    <div id="side-column-resizer" class="side-column-resizer" title="Drag to resize panel (Double-click to reset)">
+      <div class="resizer-handle-grip"></div>
+    </div>
+
+    <!-- Right Column: Dual Pane Detail & Chatbot -->
+    <aside class="side-column" id="side-column">
+      <div class="tabs-header">
+        <button id="tab-btn-detail" class="tab-btn active" onclick="switchTab('detail')">Lineage Detail</button>
+        <button id="tab-btn-chat" class="tab-btn" onclick="switchTab('chat')">AI Interrogation</button>
+      </div>
+
+      <!-- Tab 1: Document Detail & Lineage -->
+      <div id="tab-detail" class="tab-content active">
+        <div id="detail-empty" class="empty-state">
+          <div class="empty-icon">🔍</div>
+          <div class="empty-text">Select a document from the ledger to inspect its cryptographic identity, NAS/GDrive locations, and version lineage.</div>
+        </div>
+        <div id="detail-panel" class="detail-panel hidden">
+          <!-- Populated dynamically via app.js -->
+        </div>
+      </div>
+
+      <!-- Tab 2: Chatbot Interrogation -->
+      <div id="tab-chat" class="tab-content">
+        <div class="chat-container">
+          <div id="chat-messages" class="chat-messages">
+            <div class="chat-msg bot">
+              <div class="msg-bubble">
+                Hello! I am your <strong>RepoScroller Interrogation Assistant</strong>. Ask me if a document or draft exists, e.g.:
+                <div class="suggestion-chips">
+                  <span class="chip suggestion" onclick="sendSuggestion('Do we have the 2024 Kantonsgericht decision?')">Decision 2024</span>
+                  <span class="chip suggestion" onclick="sendSuggestion('Do we have any contract for Acme?')">Acme Contract</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="chat-input-row">
+            <input type="text" id="chat-input" placeholder="Ask about any document copy..." onkeydown="if(event.key==='Enter') sendChatMessage()">
+            <button id="btn-send-chat" class="btn btn-primary" onclick="sendChatMessage()">Send</button>
+          </div>
+        </div>
+      </div>
+
+    </aside>
+  </main>
+
+  <!-- Toast Notification Container -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <!-- Floating Diagnostic Pill (bottom-right launcher) -->
+  <div id="diag-floating-pill" class="diag-floating-pill" onclick="toggleDiagnosticConsole()"
+    title="Click to view Diagnostic Console">
+    <span class="diag-pill-pulse" id="diag-pill-pulse"></span>
+    <span class="diag-pill-icon">🩺</span>
+    <span class="diag-pill-text">Diagnostics</span>
+    <span id="diag-pill-badge" class="diag-pill-badge clean">0 issues</span>
+  </div>
+  
+  <!-- Floating Diagnostic Console Window -->
+  <div id="diag-console-window" class="diag-console-window hidden">
+    <!-- Header -->
+    <div class="diag-header" id="diag-header">
+      <div class="diag-title-area">
+        <span class="diag-title-icon">🛠️</span>
+        <span class="diag-title-text">Diagnostic Console</span>
+        <span class="diag-live-indicator"><span class="pulse-mini"></span> Live</span>
+        <div class="diag-badge-group">
+          <span id="diag-count-errors" class="diag-counter-badge error" title="Errors">0 ❌</span>
+          <span id="diag-count-warnings" class="diag-counter-badge warning" title="Warnings">0 ⚠️</span>
+        </div>
+      </div>
+      <div class="diag-header-actions">
+        <button class="btn-diag-action" onclick="triggerTestDiagnosticIssue('WARNING')"
+          title="Emit synthetic test warning">⚠️ Warn</button>
+        <button class="btn-diag-action" onclick="triggerTestDiagnosticIssue('ERROR')" title="Emit synthetic test error">❌
+          Err</button>
+        <button class="btn-diag-action" onclick="copyDiagnosticLogs()" title="Copy all logs to clipboard">📋 Copy</button>
+        <button class="btn-diag-action" onclick="clearDiagnosticLogs()" title="Clear console and backend buffer">🗑️
+          Clear</button>
+        <button class="btn-diag-action" id="btn-diag-maximize" onclick="toggleDiagnosticMaximize()"
+          title="Maximize / Restore">🗖</button>
+        <button class="btn-diag-action close" onclick="toggleDiagnosticConsole(false)" title="Minimize console">✕</button>
+      </div>
+    </div>
+  
+    <!-- Telemetry Ticker Strip -->
+    <div class="diag-telemetry-bar" id="diag-telemetry-bar">
+      <span class="telemetry-item"><strong id="telem-status" class="text-emerald">Healthy</strong></span>
+      <span class="telemetry-sep">•</span>
+      <span class="telemetry-item">DB WAL: <span id="telem-wal">Active</span></span>
+      <span class="telemetry-sep">•</span>
+      <span class="telemetry-item">Roots: <span id="telem-roots">--</span></span>
+      <span class="telemetry-sep">•</span>
+      <span class="telemetry-item">Workers: <span id="telem-threads">--</span></span>
+      <span class="telemetry-sep">•</span>
+      <span class="telemetry-item">Uptime: <span id="telem-uptime">--</span></span>
+    </div>
+  
+    <!-- Filter Toolbar -->
+    <div class="diag-toolbar">
+      <div class="diag-filter-buttons">
+        <button class="diag-filter-btn active" data-filter="all" onclick="setDiagFilter('all')">All (<span
+            id="filter-count-all">0</span>)</button>
+        <button class="diag-filter-btn" data-filter="frontend" onclick="setDiagFilter('frontend')">Frontend (<span
+            id="filter-count-frontend">0</span>)</button>
+        <button class="diag-filter-btn" data-filter="backend" onclick="setDiagFilter('backend')">Backend (<span
+            id="filter-count-backend">0</span>)</button>
+        <button class="diag-filter-btn" data-filter="errors" onclick="setDiagFilter('errors')">Errors (<span
+            id="filter-count-errors">0</span>)</button>
+        <button class="diag-filter-btn" data-filter="warnings" onclick="setDiagFilter('warnings')">Warnings (<span
+            id="filter-count-warnings">0</span>)</button>
+      </div>
+      <div class="diag-search-box">
+        <input type="text" id="diag-search-input" placeholder="Filter logs..." oninput="handleDiagSearch(event)">
+        <label class="diag-autoscroll-label">
+          <input type="checkbox" id="diag-autoscroll" checked> Auto-scroll
+        </label>
+      </div>
+    </div>
+  
+    <!-- Log Stream Output Body -->
+    <div class="diag-log-container" id="diag-log-container">
+      <div class="diag-empty-logs" id="diag-empty-state">
+        <span class="diag-empty-icon">✨</span>
+        <span>Diagnostic console active. No anomalies or errors detected.</span>
+      </div>
+      <div class="diag-log-list" id="diag-log-list"></div>
+    </div>
+  </div>
+  
+  <script src="/static/app.js?v=6"></script>
+</body>
+</html>

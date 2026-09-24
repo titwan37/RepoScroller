@@ -1,0 +1,21 @@
+# Python & Virtual Environments
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*__init__.py    
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local databases & logs
+*.db
+*.db-wal
+*.db-shm
+*.log
+*.lock
+
+# Local environment variables
+.env
