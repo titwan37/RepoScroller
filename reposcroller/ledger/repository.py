@@ -539,6 +539,14 @@ class DocumentRepository:
         """Fetch pending items from the KB queue and mark them as processing."""
         with self._lock:
             cur = self.conn.cursor()
+            # Auto-recover orphaned 'processing' items stranded for > 60 seconds
+            cur.execute("""
+                UPDATE kb_processing_queue
+                SET status = 'pending'
+                WHERE status = 'processing'
+                  AND (strftime('%s', 'now') - strftime('%s', enqueued_at) > 60);
+            """)
+
             cur.execute("""
                 SELECT q.queue_id, q.sha256_hash, q.retry_count, dl.canonical_filename, dl.doc_type,
                        dl.doc_date, dl.doc_date_source, dl.maturity_score, dl.lifecycle_status, dl.text_snippet

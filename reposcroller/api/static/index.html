@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/style.css?v=10">
+  <link rel="stylesheet" href="/static/style.css?v=12">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 </head>
@@ -56,6 +56,42 @@
     </div>
   </header>
 
+<!-- Top Workspace Switcher Bar -->
+<nav class="workspace-nav-bar">
+  <div class="workspace-tabs-group">
+    <button id="ws-btn-process" class="ws-tab-btn active" onclick="switchWorkspace('process')">
+      <span class="ws-tab-icon">📊</span>
+      <span class="ws-tab-title">Process Scroller</span>
+      <span class="ws-tab-pill">Digitalization Pipeline</span>
+    </button>
+    <button id="ws-btn-ledger" class="ws-tab-btn" onclick="switchWorkspace('ledger')">
+      <span class="ws-tab-icon">🗄️</span>
+      <span class="ws-tab-title">Document Ledger</span>
+      <span class="ws-tab-pill">Single Source of Truth</span>
+    </button>
+    <button id="ws-btn-graphrag" class="ws-tab-btn" onclick="switchWorkspace('graphrag')">
+      <span class="ws-tab-icon">🧠</span>
+      <span class="ws-tab-title">GraphRAG Sovereign Studio</span>
+      <span class="ws-tab-pill pill-ai">CUDA Hybrid Search</span>
+    </button>
+    <button id="ws-btn-universe" class="ws-tab-btn" onclick="switchWorkspace('universe')">
+      <span class="ws-tab-icon">🌐</span>
+      <span class="ws-tab-title">3D Knowledge Universe</span>
+      <span class="ws-tab-pill pill-glsl">WebGL GLSL 3D</span>
+    </button>
+    <button id="ws-btn-chat" class="ws-tab-btn" onclick="switchWorkspace('chat')">
+      <span class="ws-tab-icon">💬</span>
+      <span class="ws-tab-title">AI Interrogation Assistant</span>
+      <span class="ws-tab-pill pill-chat">Grounded Reasoning</span>
+    </button>
+  </div>
+</nav>
+
+<!-- =========================================================================
+         WORKSPACE 0: PROCESS SCROLLER & LINEAGE EXPLORER
+         ========================================================================= -->
+
+<main id="ws-pane-process" class="workspace-pane active dashboard-grid">
   <!-- Storage Mounts Bar -->
   <section class="mounts-bar">
     <div class="mounts-label">Active Storage Mounts:</div>
@@ -108,11 +144,16 @@
       <div class="workload-hud-title-group">
         <span class="workload-hud-icon">⚡</span>
         <span class="workload-hud-title">Split Workload Architecture</span>
-        <span class="workload-hud-pill">Parallel Hybrid Ingestion</span>
+        <span class="workload-hud-pill pill-ai" id="hud-active-tier-pill">⚡ CUDA Remote Node (PC2)</span>
+        <span class="workload-hud-pill pill-subtle" id="hud-active-model-pill">snowflake-arctic-embed2:latest</span>
       </div>
-      <button class="btn-workload-refresh" onclick="loadWorkloadTelemetry(true)" title="Force Refresh Node Status">
-        <span>⟳</span> Probe Hardware
-      </button>
+      <div class="workload-hud-actions">
+        <span class="hud-sync-time" id="hud-sync-time">⟳ Synced: --:--:--</span>
+        <button class="btn-workload-refresh" id="btn-workload-refresh" onclick="loadWorkloadTelemetry(true)"
+          title="Force Refresh Node Status">
+          <span class="refresh-icon">⟳</span> Probe Hardware
+        </button>
+      </div>
     </div>
     <div class="workload-nodes-grid">
       <!-- PC1 Localhost Node -->
@@ -125,12 +166,22 @@
               <div class="node-target" id="pc1-node-url">http://127.0.0.1:11434</div>
             </div>
           </div>
-          <span class="node-status-badge badge-probing" id="pc1-node-badge"><span class="dot"></span> Probing...</span>
+          <div class="node-header-right">
+            <span class="node-status-badge badge-probing" id="pc1-node-badge"><span class="dot"></span> Probing...</span>
+            </div>
         </div>
+        
+        <div class="node-models-bar">
+          <span class="models-label">Loaded:</span>
+          <div class="models-tag-list" id="pc1-models-list">
+            <span class="mini-tag">llama3.2:1b</span>
+          </div>
+        </div>
+
         <div class="node-metrics-row">
           <div class="node-metric-item">
             <span class="node-metric-label">Model (CPU)</span>
-            <span class="node-metric-val" id="pc1-model-name">llama3.2</span>
+            <span class="node-metric-val" id="pc1-model-name">llama3.2:1b</span>
           </div>
           <div class="node-metric-item">
             <span class="node-metric-label">Local Ping</span>
@@ -138,11 +189,15 @@
           </div>
           <div class="node-metric-item">
             <div class="node-metric-label">Chat Calls</div>
-            <div class="node-metric-val text-indigo" id="pc1-chat-count">0</div>
+            <div class="node-metric-val text-indigo" id="pc1-chat-count">0 calls</div>
           </div>
           <div class="node-metric-item">
-            <div class="node-metric-label">Last Latency</div>
-            <div class="node-metric-val" id="pc1-latency-ms">--</div>
+            <div class="node-metric-label">Inference Latency</div>
+            <div class="node-metric-val" id="pc1-latency-ms">Ready</div>
+            </div>
+            <div class="node-metric-item">
+              <div class="node-metric-label">Host Status</div>
+              <div class="node-metric-val" id="pc1-activity-status">idle</div>
           </div>
         </div>
       </div>
@@ -154,11 +209,21 @@
             <span class="node-icon">⚡</span>
             <div>
               <div class="node-name">PC2 CUDA Server (RTX 3060) <span class="node-role-pill cuda">api/embed</span></div>
-              <div class="node-target" id="pc2-node-url">http://192.168.192.9:11434</div>
+              <div class="node-target" id="pc2-node-url">http://NITRO-AN51755:11434</div>
             </div>
           </div>
-          <span class="node-status-badge badge-probing" id="pc2-node-badge"><span class="dot"></span> Probing...</span>
+          <div class="node-header-right">
+            <span class="node-status-badge badge-probing" id="pc2-node-badge"><span class="dot"></span> Probing...</span>
+            </div>
         </div>
+        
+        <div class="node-models-bar">
+          <span class="models-label">VRAM Loaded:</span>
+          <div class="models-tag-list" id="pc2-models-list">
+            <span class="mini-tag tag-cuda">snowflake-arctic-embed2:latest</span>
+          </div>
+        </div>
+
         <div class="node-metrics-row">
           <div class="node-metric-item">
             <span class="node-metric-label">Embedding Model</span>
@@ -170,47 +235,26 @@
           </div>
           <div class="node-metric-item">
             <div class="node-metric-label">Vectors Embedded</div>
-            <div class="node-metric-val text-emerald" id="pc2-chunks-count">0 chunks</div>
+            <div class="node-metric-val text-emerald font-bold" id="pc2-chunks-count">0 chunks</div>
           </div>
           <div class="node-metric-item">
             <div class="node-metric-label">Tensor Latency</div>
             <div class="node-metric-val text-amber" id="pc2-latency-ms">--</div>
           </div>
+          <div class="node-metric-item">
+            <div class="node-metric-label">CUDA Activity</div>
+            <div class="node-metric-val text-emerald" id="pc2-activity-status">active</div>
+          </div>
         </div>
       </div>
     </div>
   </section>
-
-  <!-- Top Workspace Switcher Bar -->
-  <nav class="workspace-nav-bar">
-    <div class="workspace-tabs-group">
-      <button id="ws-btn-ledger" class="ws-tab-btn active" onclick="switchWorkspace('ledger')">
-        <span class="ws-tab-icon">🗄️</span>
-        <span class="ws-tab-title">Document Ledger</span>
-        <span class="ws-tab-pill">Single Source of Truth</span>
-      </button>
-      <button id="ws-btn-graphrag" class="ws-tab-btn" onclick="switchWorkspace('graphrag')">
-        <span class="ws-tab-icon">🧠</span>
-        <span class="ws-tab-title">GraphRAG Sovereign Studio</span>
-        <span class="ws-tab-pill pill-ai">CUDA Hybrid Search</span>
-      </button>
-      <button id="ws-btn-universe" class="ws-tab-btn" onclick="switchWorkspace('universe')">
-        <span class="ws-tab-icon">🌐</span>
-        <span class="ws-tab-title">3D Knowledge Universe</span>
-        <span class="ws-tab-pill pill-glsl">WebGL GLSL 3D</span>
-      </button>
-      <button id="ws-btn-chat" class="ws-tab-btn" onclick="switchWorkspace('chat')">
-        <span class="ws-tab-icon">💬</span>
-        <span class="ws-tab-title">AI Interrogation Assistant</span>
-        <span class="ws-tab-pill pill-chat">Grounded Reasoning</span>
-      </button>
-    </div>
-  </nav>
+  </main>
 
   <!-- =========================================================================
        WORKSPACE 1: DOCUMENT LEDGER & LINEAGE EXPLORER
        ========================================================================= -->
-  <main id="ws-pane-ledger" class="workspace-pane active dashboard-grid">
+  <main id="ws-pane-ledger" class="workspace-pane hidden dashboard-grid">
     <!-- Left Column: Pre-flight Dropzone and Ledger Table -->
     <div class="main-column">
       <!-- Document Ledger Explorer -->
@@ -827,6 +871,6 @@
     </div>
   </div>
   
-  <script src="/static/app.js?v=10"></script>
+  <script src="/static/app.js?v=12"></script>
 </body>
 </html>

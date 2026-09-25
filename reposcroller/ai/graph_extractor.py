@@ -127,7 +127,12 @@ class KnowledgeGraphExtractor:
         if not text or not text.strip():
             return self._extract_heuristic_fallback(text="", sha256_hash=sha256_hash, filename=filename, doc_type=doc_type)
 
-        # Attempt structured LLM extraction
+        # High-throughput ingestion: default to deterministic Swiss legal regex/taxonomy (< 1ms)
+        mode = getattr(settings, "GRAPH_EXTRACTOR_MODE", "heuristic")
+        if mode == "heuristic":
+            return self._extract_heuristic_fallback(text=text, sha256_hash=sha256_hash, filename=filename, doc_type=doc_type)
+
+        # Attempt structured LLM extraction (optional / low-volume)
         if self.provider in ["auto", "ollama", "openrouter"]:
             try:
                 prompt = f"""Extract knowledge graph entities and relationships from this document snippet into a strict JSON format.

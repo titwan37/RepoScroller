@@ -143,11 +143,38 @@ async function initDashboard() {
 
 // 0. Split Workload Hardware Telemetry (PC1 Localhost vs PC2 Remote CUDA)
 async function loadWorkloadTelemetry(force = false) {
+  const refreshBtn = document.getElementById("btn-workload-refresh");
+  if (force && refreshBtn) {
+    refreshBtn.classList.add("refreshing");
+    refreshBtn.innerHTML = `<span class="refresh-icon">⟳</span> Probing...`;
+  }
+
   try {
     const res = await fetch(`/api/v1/diagnostics/workload${force ? '?force=true' : ''}`);
     if (!res.ok) return;
     const data = await res.json();
     
+    // Top Bar Metadata: Timestamp & Tier Pills
+    const syncTimeEl = document.getElementById("hud-sync-time");
+    if (syncTimeEl && data.timestamp) {
+      syncTimeEl.textContent = `⟳ Synced: ${data.timestamp}`;
+    }
+
+    const tierData = data.embedding_tier || {};
+    const activeTierPill = document.getElementById("hud-active-tier-pill");
+    const activeModelPill = document.getElementById("hud-active-model-pill");
+
+    if (activeTierPill) {
+      activeTierPill.textContent = tierData.tier_label || "⚡ CUDA Remote Node (PC2)";
+      activeTierPill.className = `workload-hud-pill ${
+        tierData.active_tier === 'cuda' ? 'pill-cuda' : (tierData.active_tier === 'local' ? 'pill-local' : 'pill-fallback')
+      }`;
+    }
+
+    if (activeModelPill && tierData.active_model) {
+      activeModelPill.textContent = tierData.active_model;
+    }
+
     // PC1 Localhost Node
     const pc1 = data.localhost_node;
     if (pc1) {
@@ -157,18 +184,53 @@ async function loadWorkloadTelemetry(force = false) {
       const pc1Ping = document.getElementById("pc1-ping-ms");
       const pc1ChatCount = document.getElementById("pc1-chat-count");
       const pc1Latency = document.getElementById("pc1-latency-ms");
+      const pc1Activity = document.getElementById("pc1-activity-status");
+      const pc1ModelsList = document.getElementById("pc1-models-list");
       
       if (pc1Url) pc1Url.textContent = pc1.url;
-      if (pc1Model) pc1Model.textContent = pc1.target_model || "llama3.2";
-      if (pc1Ping) pc1Ping.textContent = pc1.online ? `${pc1.ping_ms || '<1'} ms` : 'Offline / Fallback';
-      if (pc1ChatCount) pc1ChatCount.textContent = `${pc1.stats?.requests || 0} calls`;
+      if (pc1Model) pc1Model.textContent = pc1.target_model || "llama3.2:1b";
+      
+      if (pc1Ping) {
+        if (pc1.online) {
+          const pingVal = parseFloat(pc1.ping_ms) || 0;
+          const pingClass = pingVal < 400 ? 'ping-fast' : 'ping-slow';
+          pc1Ping.innerHTML = `<span class="ping-dot ${pingClass}"></span> ${pingVal < 1 ? '<1' : pingVal.toFixed(1)} ms`;
+        } else {
+          pc1Ping.textContent = 'Offline';
+        }
+      }
+
+      if (pc1ChatCount) {
+        const calls = pc1.stats?.requests || 0;
+        pc1ChatCount.textContent = `${calls.toLocaleString()} calls`;
+      }
+
       if (pc1Latency) {
         if (pc1.stats?.last_latency_ms > 0) {
-          pc1Latency.textContent = `${pc1.stats.last_latency_ms} ms`;
+          pc1Latency.textContent = `${pc1.stats.last_latency_ms.toFixed(1)} ms (avg ${pc1.stats.avg_latency_ms.toFixed(1)} ms)`;
         } else if (pc1.stats?.requests > 0) {
-          pc1Latency.textContent = `${pc1.stats.avg_latency_ms} ms`;
+          pc1Latency.textContent = `${pc1.stats.avg_latency_ms.toFixed(1)} ms`;
         } else {
           pc1Latency.textContent = 'Ready';
+        }
+      }
+
+      if (pc1Activity) {
+        const act = pc1.stats?.last_active || (pc1.online ? 'idle' : 'offline');
+        if (act === 'active') {
+          pc1Activity.innerHTML = `<span class="pulse-dot-emerald"></span> active`;
+        } else if (pc1.online) {
+          pc1Activity.innerHTML = `<span class="idle-dot"></span> idle`;
+        } else {
+          pc1Activity.textContent = 'offline';
+        }
+      }
+
+      if (pc1ModelsList && pc1.models_loaded) {
+        if (Array.isArray(pc1.models_loaded) && pc1.models_loaded.length > 0) {
+          pc1ModelsList.innerHTML = pc1.models_loaded.map(m => `<span class="mini-tag">${m}</span>`).join('');
+        } else {
+          pc1ModelsList.innerHTML = `<span class="mini-tag text-faint">None loaded</span>`;
         }
       }
       
@@ -185,7 +247,6 @@ async function loadWorkloadTelemetry(force = false) {
 
     // PC2 CUDA GPU Node & Multi-Tier Embedding Engine
     const pc2 = data.cuda_gpu_node;
-    const tierData = data.embedding_tier || {};
     const effectiveTier = pc2?.effective_tier || tierData.active_tier || (pc2?.online ? "cuda" : "local");
 
     if (pc2) {
@@ -195,6 +256,8 @@ async function loadWorkloadTelemetry(force = false) {
       const pc2Ping = document.getElementById("pc2-ping-ms");
       const pc2ChunksCount = document.getElementById("pc2-chunks-count");
       const pc2Latency = document.getElementById("pc2-latency-ms");
+      const pc2Activity = document.getElementById("pc2-activity-status");
+      const pc2ModelsList = document.getElementById("pc2-models-list");
       
       if (pc2Url) {
         if (effectiveTier === "local") {
@@ -211,7 +274,9 @@ async function loadWorkloadTelemetry(force = false) {
 
       if (pc2Ping) {
         if (effectiveTier === "cuda" && pc2.online) {
-          pc2Ping.textContent = `${pc2.ping_ms || '<1'} ms`;
+          const pingVal = parseFloat(pc2.ping_ms) || 0;
+          const pingClass = pingVal < 400 ? 'ping-fast' : 'ping-slow';
+          pc2Ping.innerHTML = `<span class="ping-dot ${pingClass}"></span> ${pingVal < 1 ? '<1' : pingVal.toFixed(1)} ms`;
         } else if (effectiveTier === "local") {
           pc2Ping.textContent = "Local Host (CPU)";
         } else {
@@ -220,17 +285,36 @@ async function loadWorkloadTelemetry(force = false) {
       }
 
       if (pc2ChunksCount) {
-        const total = pc2.stats?.chunks_embedded || 0;
-        pc2ChunksCount.textContent = `${total} chunks`;
+        const total = pc2.stats?.chunks_embedded ?? tierData.total_chunks ?? 0;
+        pc2ChunksCount.textContent = `${total.toLocaleString()} chunks`;
       }
 
       if (pc2Latency) {
         if (pc2.stats?.last_latency_ms > 0) {
-          pc2Latency.textContent = `${pc2.stats.last_latency_ms} ms`;
+          pc2Latency.textContent = `${pc2.stats.last_latency_ms.toFixed(1)} ms (avg ${pc2.stats.avg_latency_ms.toFixed(1)} ms)`;
         } else if (pc2.stats?.requests > 0) {
-          pc2Latency.textContent = `${pc2.stats.avg_latency_ms} ms`;
+          pc2Latency.textContent = `${pc2.stats.avg_latency_ms.toFixed(1)} ms`;
         } else {
           pc2Latency.textContent = effectiveTier === "cuda" ? 'VRAM Hot' : 'Ready';
+        }
+      }
+
+      if (pc2Activity) {
+        const act = pc2.stats?.last_active || (pc2.online ? 'active' : 'offline');
+        if (act === 'active' || (pc2.online && effectiveTier === 'cuda')) {
+          pc2Activity.innerHTML = `<span class="pulse-dot-emerald"></span> active`;
+        } else if (pc2.online) {
+          pc2Activity.innerHTML = `<span class="idle-dot"></span> idle`;
+        } else {
+          pc2Activity.textContent = 'offline';
+        }
+      }
+
+      if (pc2ModelsList && pc2.models_loaded) {
+        if (Array.isArray(pc2.models_loaded) && pc2.models_loaded.length > 0) {
+          pc2ModelsList.innerHTML = pc2.models_loaded.map(m => `<span class="mini-tag tag-cuda">⚡ ${m}</span>`).join('');
+        } else {
+          pc2ModelsList.innerHTML = `<span class="mini-tag text-faint">VRAM Standby</span>`;
         }
       }
       
@@ -252,6 +336,13 @@ async function loadWorkloadTelemetry(force = false) {
     }
   } catch (err) {
     console.debug("Workload telemetry probe notice:", err);
+  } finally {
+    if (force && refreshBtn) {
+      setTimeout(() => {
+        refreshBtn.classList.remove("refreshing");
+        refreshBtn.innerHTML = `<span class="refresh-icon">⟳</span> Probe Hardware`;
+      }, 500);
+    }
   }
 }
 
@@ -399,6 +490,7 @@ function toggleDuplicatesFilter() {
     badge.classList.remove("hidden");
     sub.textContent = "Showing duplicates only (click to reset)";
     showToast("Filtering ledger by duplicate files (>1 locations)", "info", 3000);
+    switchWorkspace("ledger");
   } else {
     card.classList.remove("active-card");
     badge.classList.add("hidden");
@@ -1137,32 +1229,40 @@ function clearChatDocumentContext() {
 // ==========================================
 // 12. Workspace Navigation (Ledger, GraphRAG Studio, AI Room)
 // ==========================================
-let activeWorkspace = "ledger";
+let activeWorkspace = "process";
 
 function switchWorkspace(ws) {
   activeWorkspace = ws;
 
+  const btnProcess = document.getElementById("ws-btn-process");
   const btnLedger = document.getElementById("ws-btn-ledger");
   const btnGraphrag = document.getElementById("ws-btn-graphrag");
   const btnUniverse = document.getElementById("ws-btn-universe");
   const btnChat = document.getElementById("ws-btn-chat");
 
+  const paneProcess = document.getElementById("ws-pane-process");
   const paneLedger = document.getElementById("ws-pane-ledger");
   const paneGraphrag = document.getElementById("ws-pane-graphrag");
   const paneUniverse = document.getElementById("ws-pane-universe");
   const paneChat = document.getElementById("ws-pane-chat");
 
+  if (btnProcess) btnProcess.classList.toggle("active", ws === "process");
   if (btnLedger) btnLedger.classList.toggle("active", ws === "ledger");
   if (btnGraphrag) btnGraphrag.classList.toggle("active", ws === "graphrag");
   if (btnUniverse) btnUniverse.classList.toggle("active", ws === "universe");
   if (btnChat) btnChat.classList.toggle("active", ws === "chat");
 
+  if (paneProcess) paneProcess.classList.toggle("hidden", ws !== "process");
   if (paneLedger) paneLedger.classList.toggle("hidden", ws !== "ledger");
   if (paneGraphrag) paneGraphrag.classList.toggle("hidden", ws !== "graphrag");
   if (paneUniverse) paneUniverse.classList.toggle("hidden", ws !== "universe");
   if (paneChat) paneChat.classList.toggle("hidden", ws !== "chat");
 
-  if (ws === "universe") {
+  if (ws === "process") {
+    loadMetrics();
+    loadMountsAndCrawlerStatus();
+    loadWorkloadTelemetry();
+  } else if (ws === "universe") {
     init3DKnowledgeUniverse();
     load3DUniverseData();
   } else if (ws === "graphrag") {
@@ -1183,6 +1283,8 @@ function switchTab(tab) {
     switchWorkspace("graphrag");
   } else if (tab === "chat") {
     switchWorkspace("chat");
+  } else if (tab === "process") {
+    switchWorkspace("process");
   } else {
     switchWorkspace("ledger");
   }

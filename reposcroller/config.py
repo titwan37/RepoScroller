@@ -123,6 +123,7 @@ class Settings(BaseSettings):
 
     # Knowledge Graph & Neo4j Settings (Optional Sidecar Integration)
     GRAPH_STORE_TYPE: str = "sqlite"  # 'sqlite' or 'neo4j'
+    GRAPH_EXTRACTOR_MODE: str = "heuristic"  # 'heuristic' (instant regex/taxonomy, 1ms) or 'llm'
     NEO4J_URI: Optional[str] = "bolt://localhost:7687"
     NEO4J_USER: Optional[str] = "neo4j"
     NEO4J_PASSWORD: Optional[str] = "password"
