@@ -86,7 +86,7 @@ class Settings(BaseSettings):
     LLM_PROVIDER: str = "auto"  # 'auto', 'openrouter', 'ollama', or 'heuristic'
     OPENROUTER_API_KEY: Optional[str] = None
     OPENROUTER_MODEL: str = "google/gemini-2.0-flash-001"
-    OLLAMA_MODEL: str = "llama3.2:1b"
+    OLLAMA_MODEL: str = "llama3.2:3b"
     OLLAMA_MODEL_PC1: str = "llama3.2:1b"
     OLLAMA_MODEL_PC2: str = "llama3.2:3b"
 
@@ -117,7 +117,7 @@ class Settings(BaseSettings):
             from reposcroller.ai.telemetry import workload_telemetry
             return workload_telemetry.get_active_chat_model()
         except Exception:
-            return self.OLLAMA_MODEL
+            return self.OLLAMA_MODEL_PC2 or self.OLLAMA_MODEL
 
     @property
     def embed_url(self) -> str:

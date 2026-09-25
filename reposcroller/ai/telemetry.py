@@ -20,9 +20,9 @@ class WorkloadTelemetry:
         # Chat Telemetry (Dynamic Split Routing: PC1 vs PC2)
         self.chat_active_node = "pc2"  # "pc1" (Host CPU) or "pc2" (Remote CUDA GPU)
         self.chat_pc1_url = settings.OLLAMA_CHAT_BASE_URL or "http://localhost:11434"
-        self.chat_pc1_model = settings.OLLAMA_MODEL_PC1 or "llama3.2:3b"
+        self.chat_pc1_model = settings.OLLAMA_MODEL_PC1 or "llama3.2:1b"
         self.chat_pc2_url = settings.OLLAMA_EMBED_BASE_URL or "http://NITRO-AN51755:11434"
-        self.chat_pc2_model = settings.OLLAMA_MODEL_PC2 or "llama3.1:8b"
+        self.chat_pc2_model = settings.OLLAMA_MODEL_PC2 or "llama3.2:3b"
         self.chat_requests = 0
         self.chat_pc1_requests = 0
         self.chat_pc2_requests = 0
@@ -113,7 +113,7 @@ class WorkloadTelemetry:
                     "label": "PC1 Host Engine (CPU / Chat)",
                     "url": self.chat_pc1_url,
                     "model": self.chat_pc1_model,
-                    "size_tag": "2.2 GB",
+                    "size_tag": "1.3 GB",
                     "calls": self.chat_pc1_requests
                 },
                 "pc2": {
@@ -121,7 +121,7 @@ class WorkloadTelemetry:
                     "label": "PC2 Remote GPU Node (RTX 3060 CUDA)",
                     "url": self.chat_pc2_url,
                     "model": self.chat_pc2_model,
-                    "size_tag": "4.6 GB (Q4_K_M)",
+                    "size_tag": "2.0 GB (Q4_K_M)",
                     "calls": self.chat_pc2_requests
                 }
             }
@@ -340,9 +340,9 @@ class WorkloadTelemetry:
                 "architecture": "split_workload",
                 "throughput": self.get_throughput_metrics(),
                 "endpoints_matrix": {
-                    "pc1_chat": {"url": f"{pc1_base_url}/api/chat", "online": local_node["online"], "model": settings.OLLAMA_MODEL_PC1, "role": "Host LLM Reasoning (CPU)"},
+                    "pc1_chat": {"url": f"{pc1_base_url}/api/chat", "online": local_node["online"], "model": settings.OLLAMA_MODEL_PC1, "role": "Host LLM Reasoning (CPU Fallback)"},
                     "pc1_embed": {"url": f"{pc1_base_url}/api/embed", "online": local_node["online"], "model": settings.OLLAMA_LOCAL_EMBEDDING_MODEL, "role": "Localhost CPU Embed (Fallback)"},
-                    "pc2_chat": {"url": f"{pc2_base_url}/api/chat", "online": cuda_node["online"], "model": settings.OLLAMA_MODEL_PC2, "role": "Remote LLM Reasoning (CUDA RTX 3060)"},
+                    "pc2_chat": {"url": f"{pc2_base_url}/api/chat", "online": cuda_node["online"], "model": settings.OLLAMA_MODEL_PC2, "role": "Remote LLM Reasoning (CUDA RTX 3060 Active)"},
                     "pc2_embed": {"url": f"{pc2_base_url}/api/embed", "online": cuda_node["online"], "model": settings.OLLAMA_EMBEDDING_MODEL, "role": "Remote NVIDIA RTX 3060 CUDA Embed"}
                 },
                 "embedding_tier": {
