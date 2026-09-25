@@ -39,6 +39,7 @@ if (Test-Path $envFile) {
                 $k = $parts[0].Trim()
                 $v = $parts[1].Split('#')[0].Trim()
                 if ($k -eq "OLLAMA_BASE_URL") { $ollamaUrl = $v }
+                if ($k -eq "OLLAMA_EMBED_BASE_URL") { $ollamaUrl = $v }
                 if ($k -eq "OLLAMA_EMBEDDING_MODEL") { $embeddingModel = $v }
             }
         }

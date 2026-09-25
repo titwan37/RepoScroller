@@ -69,7 +69,7 @@ if (Test-Path $envFile) {
         $line = $_.Trim()
         if ($line -and -not $line.StartsWith("#")) {
             $parts = $line.Split('=', 2)
-            if ($parts.Count -eq 2 -and $parts[0].Trim() -eq "OLLAMA_BASE_URL") {
+            if ($parts.Count -eq 2 -and $parts[0].Trim() -eq "OLLAMA_CHAT_BASE_URL") {
                 $configuredOllamaUrl = $parts[1].Split('#')[0].Trim()
             }
         }
