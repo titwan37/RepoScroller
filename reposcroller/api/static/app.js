@@ -204,7 +204,7 @@ async function loadWorkloadTelemetry(force = false) {
       const pc1ModelsList = document.getElementById("pc1-models-list");
       
       if (pc1Url) pc1Url.textContent = pc1.url;
-      if (pc1Model) pc1Model.textContent = pc1.target_model || "llama3.2:1b";
+      if (pc1Model) pc1Model.textContent = pc1.target_model || "Loading...";
       
       if (pc1Ping) {
         if (pc1.online) {
@@ -284,7 +284,7 @@ async function loadWorkloadTelemetry(force = false) {
       }
 
       if (pc2Model) {
-        const rawModel = (effectiveTier === "local" ? tierData.active_model : pc2.target_model) || "snowflake-arctic-embed2:latest";
+        const rawModel = (effectiveTier === "local" ? tierData.active_model : pc2.target_model) || "Loading...";
         pc2Model.textContent = rawModel.includes(":") ? rawModel.split(":")[0] : rawModel;
       }
 
@@ -460,7 +460,8 @@ async function loadWorkloadTelemetry(force = false) {
     }
     if (zooChatVal && zoo.chat_reasoning) {
       const isPc2 = zoo.chat_reasoning.active_node === "pc2";
-      zooChatVal.textContent = isPc2 ? "PC2 (8B CUDA)" : "PC1 (3B CPU)";
+      const modelShort = isPc2 ? (zoo.chat_reasoning.pc2_model || "PC2 Model") : (zoo.chat_reasoning.pc1_model || "PC1 Model");
+      zooChatVal.textContent = `${isPc2 ? "⚡ " : "💻 "}${modelShort.split(':')[0]}`;
       zooChatVal.className = isPc2 ? "text-emerald font-bold" : "text-indigo font-bold";
       if (zooChatSub) {
         const reqs = isPc2 ? zoo.chat_reasoning.pc2_requests : zoo.chat_reasoning.pc1_requests;
@@ -565,7 +566,7 @@ async function switchChatNode(targetNode, targetModel = null) {
     
     if (res.ok) {
       const result = await res.json();
-      const nodeLabel = targetNode === "pc2" ? "PC2 Remote (llama3.1:8b CUDA RTX 3060)" : "PC1 Host (llama3.2:1b CPU)";
+      const nodeLabel = targetNode === "pc2" ? "PC2 Remote (CUDA)" : "PC1 Host (CPU)";
       showToast(`⚡ api/chat reasoning routed to ${nodeLabel}`, "success", 4000);
       loadWorkloadTelemetry(false);
     } else {

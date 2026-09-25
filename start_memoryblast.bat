@@ -1,0 +1,1 @@
+C:\Dev\MemoryBlast\target\debug\memoryblast.exe --cli
