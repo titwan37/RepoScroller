@@ -169,7 +169,7 @@ class TaxonomyManager:
 
     def upsert_category(self, cat: TaxonomyCategory) -> None:
         """Insert or update a taxonomy entry."""
-        kw_json = json.dumps(cat.keywords)
+        kw_json = json.dumps(cat.keywords, ensure_ascii=False)
         with transaction(self.conn) as cur:
             cur.execute("""
                 INSERT INTO global_taxonomy (
@@ -262,7 +262,7 @@ class TaxonomyManager:
                     UPDATE global_taxonomy
                     SET keywords = ?
                     WHERE category_id = ?;
-                """, (json.dumps(merged_kw), target_category_id))
+                """, (json.dumps(merged_kw, ensure_ascii=False), target_category_id))
 
             # Record audit log
             cur.execute("""

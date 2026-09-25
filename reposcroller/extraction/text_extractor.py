@@ -1,10 +1,15 @@
-"""Text and structural metadata extractor supporting PDF, EML, Markdown, and TXT."""
+"""Text and structural metadata extractor supporting PDF, DOCX, EML, Markdown, and TXT."""
 
 import email
 from email import policy
 from pathlib import Path
 from typing import Dict, Any, Tuple
+import logging
 import pymupdf
+import zipfile
+import xml.etree.ElementTree as ET
+
+logger = logging.getLogger("reposcroller.extraction")
 
 
 def extract_document_data(file_path: Path) -> Tuple[str, Dict[str, Any]]:
@@ -13,6 +18,8 @@ def extract_document_data(file_path: Path) -> Tuple[str, Dict[str, Any]]:
 
     if ext == ".pdf":
         return _extract_pdf(file_path)
+    elif ext == ".docx":
+        return _extract_docx(file_path)
     elif ext in [".txt", ".md"]:
         return _extract_text_file(file_path)
     elif ext == ".eml":
@@ -53,9 +60,61 @@ def _extract_pdf(file_path: Path) -> Tuple[str, Dict[str, Any]]:
 
         doc.close()
     except Exception as e:
+        logger.error(f"PDF extraction failed for '{file_path.name}' ({file_path}): {e}")
         metadata["extraction_error"] = str(e)
 
     full_text = "\n".join(text_parts).strip()
+    return full_text, metadata
+
+
+def _extract_docx(file_path: Path) -> Tuple[str, Dict[str, Any]]:
+    """Extract clean readable text and document properties from Microsoft Word .docx files."""
+    metadata: Dict[str, Any] = {
+        "page_count": 1,
+        "has_digital_signature": False,
+        "author": None,
+        "title": None,
+        "creation_date": None,
+    }
+    paragraphs = []
+
+    try:
+        with zipfile.ZipFile(file_path, "r") as docx_zip:
+            # 1. Parse main body text from word/document.xml
+            if "word/document.xml" in docx_zip.namelist():
+                xml_data = docx_zip.read("word/document.xml")
+                root = ET.fromstring(xml_data)
+                ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+                
+                # Iterate through paragraph elements
+                for p_elem in root.iterfind(".//w:p", ns):
+                    runs = []
+                    for t_elem in p_elem.iterfind(".//w:t", ns):
+                        if t_elem.text:
+                            runs.append(t_elem.text)
+                    if runs:
+                        p_text = "".join(runs).strip()
+                        if p_text:
+                            paragraphs.append(p_text)
+
+            # 2. Extract core metadata from docProps/core.xml
+            if "docProps/core.xml" in docx_zip.namelist():
+                core_data = docx_zip.read("docProps/core.xml")
+                core_root = ET.fromstring(core_data)
+                for elem in core_root.iter():
+                    tag = elem.tag.lower()
+                    if "creator" in tag or "author" in tag:
+                        metadata["author"] = elem.text
+                    elif "title" in tag:
+                        metadata["title"] = elem.text
+                    elif "created" in tag or "date" in tag:
+                        metadata["creation_date"] = elem.text
+
+    except Exception as e:
+        logger.error(f"DOCX extraction failed for '{file_path.name}' ({file_path}): {e}")
+        metadata["extraction_error"] = str(e)
+
+    full_text = "\n\n".join(paragraphs).strip()
     return full_text, metadata
 
 
@@ -69,6 +128,7 @@ def _extract_text_file(file_path: Path) -> Tuple[str, Dict[str, Any]]:
         with open(file_path, "r", encoding="utf-8", errors="replace") as f:
             text = f.read()
     except Exception as e:
+        logger.error(f"Text file read failed for '{file_path.name}' ({file_path}): {e}")
         text = ""
         metadata["extraction_error"] = str(e)
 
@@ -104,7 +164,9 @@ def _extract_eml(file_path: Path) -> Tuple[str, Dict[str, Any]]:
 
         text = "\n\n".join(body_parts)
     except Exception as e:
+        logger.error(f"EML extraction failed for '{file_path.name}' ({file_path}): {e}")
         text = ""
         metadata["extraction_error"] = str(e)
 
     return text.strip(), metadata
+

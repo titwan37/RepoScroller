@@ -38,7 +38,7 @@ class PropertyGraphStore:
                     node_type = excluded.node_type,
                     properties_json = excluded.properties_json,
                     updated_at = CURRENT_TIMESTAMP;
-            """, (node.node_id, node.node_type, node.name, json.dumps(node.properties)))
+            """, (node.node_id, node.node_type, node.name, json.dumps(node.properties, ensure_ascii=False)))
             self.repo.conn.commit()
 
         # Optional Neo4j Sync
@@ -62,7 +62,7 @@ class PropertyGraphStore:
                 ON CONFLICT(source_id, target_id, relation_type) DO UPDATE SET
                     weight = excluded.weight,
                     properties_json = excluded.properties_json;
-            """, (edge.source_id, edge.target_id, edge.relation_type, edge.weight, json.dumps(edge.properties)))
+            """, (edge.source_id, edge.target_id, edge.relation_type, edge.weight, json.dumps(edge.properties, ensure_ascii=False)))
             self.repo.conn.commit()
 
         # Optional Neo4j Sync
@@ -160,6 +160,32 @@ class PropertyGraphStore:
                 "associated_documents": docs,
             }
 
+    def get_all_entities_grouped(self, limit_per_type: int = 500) -> Dict[str, List[Dict[str, Any]]]:
+        """Fetch all entities grouped by node_type, annotated with their linked document count."""
+        with self.repo._lock:
+            cur = self.repo.conn.cursor()
+            cur.execute("""
+                SELECT n.node_id, n.node_type, n.name, n.properties_json,
+                       COUNT(l.sha256_hash) AS doc_count
+                FROM knowledge_nodes n
+                LEFT JOIN document_entity_links l ON n.node_id = l.node_id
+                GROUP BY n.node_id, n.node_type, n.name
+                ORDER BY doc_count DESC, n.name ASC
+            """)
+            rows = cur.fetchall()
+            grouped: Dict[str, List[Dict[str, Any]]] = {}
+            for r in rows:
+                ntype = r["node_type"] or "other"
+                if ntype not in grouped:
+                    grouped[ntype] = []
+                if len(grouped[ntype]) < limit_per_type:
+                    grouped[ntype].append({
+                        "node_id": r["node_id"],
+                        "name": r["name"],
+                        "doc_count": r["doc_count"]
+                    })
+            return grouped
+
     def get_graph_stats(self) -> Dict[str, Any]:
         """Aggregate statistics on knowledge graph nodes, edges, and document links."""
         with self.repo._lock:
@@ -167,7 +193,7 @@ class PropertyGraphStore:
             cur.execute("SELECT COUNT(*) FROM knowledge_nodes")
             total_nodes = cur.fetchone()[0]
 
-            cur.execute("SELECT node_type, COUNT(*) FROM knowledge_nodes GROUP BY node_type")
+            cur.execute("SELECT node_type, COUNT(*) FROM knowledge_nodes GROUP BY node_type ORDER BY COUNT(*) DESC")
             node_types = dict(cur.fetchall())
 
             cur.execute("SELECT COUNT(*) FROM knowledge_edges")
@@ -186,3 +212,4 @@ class PropertyGraphStore:
                 "edge_types": edge_types,
                 "total_document_links": total_links,
             }
+

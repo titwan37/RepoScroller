@@ -46,6 +46,18 @@ def get_sidecar_stats():
     }
 
 
+@router.get("/entities")
+def get_grouped_entities(limit_per_type: int = Query(default=200, ge=1, le=1000)):
+    """Retrieve all extracted knowledge graph entities grouped by node_type."""
+    grouped = _graph_store.get_all_entities_grouped(limit_per_type=limit_per_type)
+    return {
+        "status": "success",
+        "node_types_count": len(grouped),
+        "entities_by_type": grouped,
+    }
+
+
+
 @router.post("/process")
 def process_pending_sidecar(req: ProcessRequest):
     """Trigger an immediate processing batch for pending documents in the KB queue."""

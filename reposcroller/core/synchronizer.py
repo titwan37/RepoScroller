@@ -1,6 +1,7 @@
 """Synchronizer pipeline orchestrating SHA-256 identity, text extraction, SimHash, and ALCOA+ ledger."""
 
 import os
+import logging
 from pathlib import Path
 from typing import Dict, Any, Optional
 from reposcroller.config import settings
@@ -12,6 +13,7 @@ from reposcroller.extraction.text_extractor import extract_document_data
 from reposcroller.ledger.repository import DocumentRepository
 from reposcroller.ai.analyzer import DocumentAnalyzer
 
+logger = logging.getLogger("reposcroller.synchronizer")
 
 class DocumentSynchronizer:
     """Processes a single file, handles duplicate detection, and records in SQLite WAL ledger."""
@@ -41,6 +43,7 @@ class DocumentSynchronizer:
         try:
             file_size, mtime = compute_file_stats(file_path)
         except (FileNotFoundError, PermissionError, OSError) as e:
+            logger.error(f"Cannot stat file '{file_path.name}' at {abs_path}: {e}")
             return {"status": "error", "error": f"Cannot stat file: {e}", "path": abs_path}
 
         # Check existing location record (fast path)
@@ -57,6 +60,7 @@ class DocumentSynchronizer:
         try:
             sha256_hash = compute_sha256(file_path)
         except Exception as e:
+            logger.error(f"Cryptographic SHA-256 hashing failed for '{file_path.name}' ({abs_path}): {e}")
             return {"status": "error", "error": f"Failed hashing content: {e}", "path": abs_path}
 
         # Step 2: Check if bit-identical document already exists in ledger
@@ -87,6 +91,8 @@ class DocumentSynchronizer:
         text, metadata = extract_document_data(file_path)
         metadata["file_size"] = file_size
         metadata["mtime"] = mtime
+        if metadata.get("extraction_error"):
+            logger.warning(f"Document extraction issue for '{file_path.name}' ({abs_path}): {metadata['extraction_error']}")
 
         # Step 4: Locality-Sensitive Hashing (SimHash)
         simhash_val = compute_simhash(text)

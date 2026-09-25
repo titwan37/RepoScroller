@@ -50,9 +50,71 @@ def main():
     sidecar_p.add_argument("--batch", action="store_true", help="Process pending items once and exit")
     sidecar_p.add_argument("--limit", type=int, default=10, help="Number of documents to process in batch")
     sidecar_p.add_argument("--poll-interval", type=float, default=3.0, help="Poll interval in seconds for continuous mode")
+    # Command: reset
+    reset_p = subparsers.add_parser("reset", help="Reset ledger database, FTS5 index, and queue (with optional backup)")
+    reset_p.add_argument("--backup", action="store_true", default=True, help="Create a .bak backup of the existing database (default: True)")
+    reset_p.add_argument("--no-backup", dest="backup", action="store_false", help="Do not create a backup file")
+    reset_p.add_argument("-y", "--yes", action="store_true", help="Confirm reset non-interactively")
 
     args = parser.parse_args()
 
+    if args.command == "reset":
+        if not args.yes:
+            confirm = input("Are you sure you want to reset the RepoScroller ledger database and index? (y/N): ")
+            if confirm.lower() not in ["y", "yes"]:
+                print("Reset cancelled.")
+                return
+
+        import os
+        import shutil
+        from reposcroller.ledger.qdrant_plugin import QdrantVectorStorePlugin
+
+        db_file = Path(settings.DB_PATH)
+        wal_file = Path(f"{settings.DB_PATH}-wal")
+        shm_file = Path(f"{settings.DB_PATH}-shm")
+
+        if db_file.exists():
+            if args.backup:
+                bak_path = Path(f"{settings.DB_PATH}.bak")
+                print(f"Creating database backup at '{bak_path}'...")
+                shutil.copy2(db_file, bak_path)
+
+        # 1. Truncate / Drop all tables and recreate schema cleanly
+        from reposcroller.ledger.db import get_db_connection
+        from reposcroller.ledger.schema import SCHEMA_SQL
+        
+        try:
+            conn = get_db_connection()
+            conn.execute("PRAGMA foreign_keys = OFF;")
+            cur = conn.cursor()
+            cur.execute("SELECT name, type FROM sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%';")
+            objects = cur.fetchall()
+            for obj in objects:
+                obj_name = obj["name"]
+                obj_type = obj["type"].upper()
+                try:
+                    conn.execute(f"DROP {obj_type} IF EXISTS \"{obj_name}\";")
+                except Exception:
+                    pass
+            conn.commit()
+            conn.executescript(SCHEMA_SQL)
+            conn.commit()
+            conn.execute("VACUUM;")
+            conn.close()
+            print("Successfully truncated and recreated all SQLite tables and FTS5 indices.")
+        except Exception as e:
+            print(f"Error resetting database via SQL: {e}")
+
+        # 2. Clear Qdrant collection if active
+        qdrant = QdrantVectorStorePlugin()
+        if qdrant.is_available:
+            print("Clearing Qdrant vector collection...")
+            qdrant.clear_collection()
+
+        print("Re-initializing pristine database schema with UTF-8 encoding...")
+        init_db()
+        print("Database reset completed successfully! You can now start scanning.")
+        return
 
     # Ensure DB is initialized
     init_db()

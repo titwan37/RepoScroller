@@ -38,6 +38,10 @@ class QdrantVectorStorePlugin:
 
     def _init_client(self) -> None:
         """Lazily imports and establishes connection to Qdrant client."""
+        if settings.VECTOR_STORE_TYPE.lower() != "qdrant":
+            self._available = False
+            return
+
         try:
             from qdrant_client import QdrantClient, models  # type: ignore[import-not-found,import-untyped]
             self._models = models
@@ -45,7 +49,7 @@ class QdrantVectorStorePlugin:
                 url=self.url,
                 api_key=self.api_key,
                 prefer_grpc=self.prefer_grpc,
-                timeout=1.5,
+                timeout=1.0,
                 check_compatibility=False
             )
             # Ping / test connection
@@ -244,3 +248,17 @@ class QdrantVectorStorePlugin:
                 "url": self.url,
                 "detail": str(exc)
             }
+
+    def clear_collection(self) -> bool:
+        """Delete and clear the collection for clean re-indexing."""
+        if not self.is_available:
+            return False
+        try:
+            self._client.delete_collection(collection_name=self.collection_name)
+            self._initialized_collections.discard(self.collection_name)
+            logger.info("Qdrant collection '%s' cleared.", self.collection_name)
+            return True
+        except Exception as exc:
+            logger.warning("Failed to delete Qdrant collection '%s': %s", self.collection_name, exc)
+            return False
+

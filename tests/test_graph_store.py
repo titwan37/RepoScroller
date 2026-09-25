@@ -61,3 +61,10 @@ def test_property_graph_store_operations(tmp_path):
     assert stats["total_nodes"] == 2
     assert stats["total_edges"] == 1
     assert stats["total_document_links"] == 2
+
+    # 7. Verify Grouped Entities
+    grouped = store.get_all_entities_grouped()
+    assert "organization" in grouped
+    assert len(grouped["organization"]) == 2
+    assert grouped["organization"][0]["doc_count"] >= 1
+

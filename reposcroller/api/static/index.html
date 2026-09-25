@@ -298,9 +298,34 @@
             </div>
 
             <div class="kb-nodetypes-wrap">
-              <div class="kb-sub-title">Entity Distribution</div>
+              <div class="kb-nodetypes-header">
+                <div class="kb-sub-title">Entity Distribution</div>
+                <span class="kb-hint-text">Click type to toggle entities</span>
+              </div>
               <div id="kb-nodetypes-list" class="kb-chips-row">
-                <span class="chip" style="font-size: 0.72rem;">Loading entities...</span>
+                <!-- Prebuilt & dynamically loaded entity type toggle chips -->
+                <button class="kb-type-chip" data-type="contract_type" onclick="toggleEntityType('contract_type')">📄 <strong>contract_type</strong>: <span class="badge-count">11</span></button>
+                <button class="kb-type-chip" data-type="location" onclick="toggleEntityType('location')">📍 <strong>location</strong>: <span class="badge-count">9</span></button>
+                <button class="kb-type-chip" data-type="organization" onclick="toggleEntityType('organization')">🏢 <strong>organization</strong>: <span class="badge-count">214</span></button>
+                <button class="kb-type-chip" data-type="person" onclick="toggleEntityType('person')">👤 <strong>person</strong>: <span class="badge-count">110</span></button>
+                <button class="kb-type-chip" data-type="statute" onclick="toggleEntityType('statute')">🏷️ <strong>statute</strong>: <span class="badge-count">28</span></button>
+              </div>
+
+              <!-- Collapsible / Toggleable Entity List Drawer -->
+              <div id="kb-entity-drawer" class="kb-entity-drawer hidden">
+                <div class="kb-drawer-header">
+                  <div class="kb-drawer-title-row">
+                    <span id="kb-drawer-title" class="kb-drawer-title">🏢 Organization Entities</span>
+                    <span id="kb-drawer-count" class="badge badge-sm badge-info">214</span>
+                  </div>
+                  <button class="kb-drawer-close" onclick="closeEntityDrawer()" title="Close list">✕</button>
+                </div>
+                <div class="kb-drawer-search">
+                  <input type="text" id="kb-entity-filter-input" placeholder="Filter entities in list..." oninput="filterEntityList(this.value)">
+                </div>
+                <div id="kb-entity-items" class="kb-entity-items-grid">
+                  <!-- Populated dynamically -->
+                </div>
               </div>
             </div>
           </div>

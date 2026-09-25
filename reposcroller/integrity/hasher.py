@@ -1,9 +1,12 @@
 """Streaming cryptographic hashing for bit-level document identification (ALCOA+ Original/Accurate)."""
 
 import hashlib
+import logging
 from pathlib import Path
 from typing import Tuple, Optional
 import os
+
+logger = logging.getLogger("reposcroller.integrity.hasher")
 
 
 def compute_sha256(file_path: Path, chunk_size: int = 1024 * 1024) -> str:
@@ -31,5 +34,7 @@ def quick_content_probe(file_path: Path, head_size: int = 4096) -> Optional[byte
     try:
         with open(file_path, "rb") as f:
             return f.read(head_size)
-    except (PermissionError, FileNotFoundError, OSError):
+    except (PermissionError, FileNotFoundError, OSError) as e:
+        logger.warning(f"File probe failed for '{file_path.name}' ({file_path}): {e}")
         return None
+

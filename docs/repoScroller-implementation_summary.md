@@ -628,3 +628,33 @@ Documentation:
   [M] docs/repoScroller-implementation_summary.md
   [A] docs/repoScroller-RAG-Architecture.md
 ```
+
+Validating all diagnostic logging changes across the test suite...
+
+### Diagnostic Event Notification Architecture
+
+All background and backend workflows—including document discovery, SHA-256 hashing, text/OpenXML extraction, semantic chunking, Ollama dense vector embedding, Knowledge Graph entity extraction, and GraphRAG multi-signal queries—are now instrumented with structured diagnostic logging connected directly to the __Floating Diagnostic Console__:
+
+---
+
+### Pipeline Components & Diagnostic Coverage
+
+| Pipeline Stage | Module | Diagnostic Logger | Logged Events / Alerts |
+| :--- | :--- | :--- | :--- |
+| __Document Discovery & Stat__ | [synchronizer.py](file:///C:/Dev/RepoScroller/reposcroller/core/synchronizer.py) | `reposcroller.synchronizer` | Permission errors, missing SMB paths, stat failures (`ERROR`) |
+| __Bit-Level SHA-256 & Probing__ | [hasher.py](file:///C:/Dev/RepoScroller/reposcroller/integrity/hasher.py) | `reposcroller.integrity.hasher` | File access denial, corrupt headers, hashing exceptions (`ERROR`) |
+| __Document Text Extraction__ | [text_extractor.py](file:///C:/Dev/RepoScroller/reposcroller/extraction/text_extractor.py) | `reposcroller.extraction` | Corrupt PDF/DOCX structures, XML parsing errors, EML decoding failures (`ERROR`) |
+| __Snowflake Arctic Embedding__ | [embeddings.py](file:///C:/Dev/RepoScroller/reposcroller/ai/embeddings.py) | `reposcroller.ai.embeddings` | Ollama connection timeouts, HTTP 500/404, fallback transitions (`WARNING`/`ERROR`) |
+| __KB Sidecar Processing__ | [sidecar_worker.py](file:///C:/Dev/RepoScroller/reposcroller/ai/sidecar_worker.py) | `reposcroller.kb_sidecar` | Chunking exceptions, queue failure states, embedding timeouts (`ERROR`) |
+| __Knowledge Graph Extractor__ | [graph_extractor.py](file:///C:/Dev/RepoScroller/reposcroller/ai/graph_extractor.py) | `reposcroller.graph_extractor` | Entity extraction fallbacks, LLM parsing failures (`INFO`/`WARNING`) |
+| __Multi-Signal GraphRAG__ | [graph_rag.py](file:///C:/Dev/RepoScroller/reposcroller/agents/graph_rag.py) | `reposcroller.graph_rag` | RRF fusion exceptions, neighborhood expansion failures (`ERROR`) |
+| __Crawler & PollingObserver__ | [crawler.py](file:///C:/Dev/RepoScroller/reposcroller/core/crawler.py) | `reposcroller.crawler` | Observer processing errors, thread pool worker failures (`ERROR`) |
+
+---
+
+### How Diagnostic Events Flow to the Dashboard
+
+1. __Thread-Safe Ring Buffer__: [diagnostics.py](file:///C:/Dev/RepoScroller/reposcroller/api/diagnostics.py) attaches `InMemoryDiagnosticHandler` (capacity: 500 events) to all `reposcroller.*` loggers.
+2. __REST API Streaming__: `/api/v1/diagnostics/logs` delivers real-time events to the frontend.
+3. __Live UI Diagnostic Console__: [app.js](file:///C:/Dev/RepoScroller/reposcroller/api/static/app.js) polls every 2.5s, updates error counters, and displays full stack traces upon clicking __▶ Details / Trace__.
+4. __Periodic KB Sidecar Queue Refresh__: Dashboard automatically refreshes both the KPI metrics and the Knowledge Base Sidecar progress bar every 5 seconds.

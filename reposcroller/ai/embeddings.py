@@ -2,10 +2,12 @@
 
 import math
 import hashlib
+import logging
 from typing import List, Optional, Union
 import httpx
 from reposcroller.config import settings
 
+logger = logging.getLogger("reposcroller.ai.embeddings")
 
 def cosine_similarity(v1: List[float], v2: List[float]) -> float:
     """Compute cosine similarity between two normalized or raw floating point vectors."""
@@ -79,8 +81,10 @@ class EmbeddingAdapter:
                     emb = data.get("embedding", [])
                     if emb:
                         return emb
-            except Exception:
-                pass
+                else:
+                    logger.warning(f"Ollama returned HTTP {resp_legacy.status_code} for model '{self.model_name}' at {self.base_url}")
+            except Exception as exc:
+                logger.warning(f"Ollama embedding request failed at {self.base_url} ({exc}). Using pseudo-embedding fallback.")
 
         return self._fallback_pseudo_embedding(text)
 
@@ -101,7 +105,10 @@ class EmbeddingAdapter:
                     embeddings = data.get("embeddings", [])
                     if embeddings and len(embeddings) == len(texts):
                         return embeddings
-            except Exception:
-                pass
+                else:
+                    logger.warning(f"Ollama batch embed returned HTTP {resp.status_code} for {len(texts)} chunks")
+            except Exception as exc:
+                logger.warning(f"Ollama batch embedding failed ({exc}). Falling back to sequential embedding.")
 
         return [self.embed_text(t) for t in texts]
+

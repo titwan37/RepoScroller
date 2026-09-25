@@ -232,3 +232,12 @@ def test_diagnostics_logs_lifecycle(client: TestClient):
     assert "Uncaught TypeError" in frontend_logs[-1]["message"]
 
 
+def test_sidecar_entities_endpoint(client: TestClient):
+    resp = client.get("/api/v1/sidecar/entities")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "success"
+    assert "entities_by_type" in data
+
+
+

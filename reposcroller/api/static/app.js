@@ -119,6 +119,7 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 async function initDashboard() {
+  // Diagnostics initialization — uses global error interceptors for maximum coverage
   initDiagnostics();
   initSideColumnResizer();
   initTableColumnResizers();
@@ -768,7 +769,7 @@ function renderLedgerRows(items) {
         ${subpathHtml}
       </td>
       <td>
-        <span class="badge" style="background: rgba(255,255,255,0.06); cursor: pointer;" title="Filter by this category" onclick="event.stopPropagation(); setCategoryFilter('${escapeHtml(doc.doc_type || '')}')">
+        <span class="badge" style="background: rgba(255,255,255,0.06); cursor: pointer;" title="Filter by this category" data-cat="${escapeHtml(doc.doc_type || '')}" onclick="event.stopPropagation(); setCategoryFilter(this.getAttribute('data-cat'))">
           ${escapeHtml(doc.doc_type || 'doc')}
         </span>
       </td>
@@ -855,14 +856,14 @@ async function selectDocument(sha256) {
     `).join("") || `<div class="location-item text-muted">No physical location registered.</div>`;
 
     const parentsHtml = (doc.parents || []).map(p => `
-      <div class="lineage-item" onclick="selectDocument('${p.parent_sha256}')" style="cursor: pointer;">
+      <div class="lineage-item" data-sha="${escapeHtml(p.parent_sha256)}" onclick="selectDocument(this.getAttribute('data-sha'))" style="cursor: pointer;">
         <div><strong>Parent Revision:</strong> ${escapeHtml(p.canonical_filename)}</div>
         <div class="location-root">Relation: ${p.relationship} (Similarity: ${(p.similarity_score * 100).toFixed(1)}%)</div>
       </div>
     `).join("");
 
     const childrenHtml = (doc.children || []).map(c => `
-      <div class="lineage-item" onclick="selectDocument('${c.child_sha256}')" style="cursor: pointer;">
+      <div class="lineage-item" data-sha="${escapeHtml(c.child_sha256)}" onclick="selectDocument(this.getAttribute('data-sha'))" style="cursor: pointer;">
         <div><strong>Child Revision:</strong> ${escapeHtml(c.canonical_filename)}</div>
         <div class="location-root">Relation: ${c.relationship} (Similarity: ${(c.similarity_score * 100).toFixed(1)}%)</div>
       </div>
@@ -874,7 +875,7 @@ async function selectDocument(sha256) {
     panel.innerHTML = `
       <div class="detail-header">
         <div class="detail-title">${escapeHtml(doc.canonical_filename)}</div>
-        <div class="hash-box" title="Click to copy SHA-256" onclick="navigator.clipboard.writeText('${doc.sha256_hash}'); showToast('Copied SHA-256 to clipboard', 'info');">
+        <div class="hash-box" title="Click to copy SHA-256" data-hash="${escapeHtml(doc.sha256_hash)}" onclick="navigator.clipboard.writeText(this.getAttribute('data-hash')); showToast('Copied SHA-256 to clipboard', 'info');">
           SHA-256: ${doc.sha256_hash}
         </div>
         <div class="hash-box" style="margin-top: 0.25rem;">
@@ -887,7 +888,7 @@ async function selectDocument(sha256) {
       </div>
 
       <div class="detail-section" style="margin-top: 1rem;">
-        <button class="btn btn-interrogate-detail" onclick="interrogateAboutCurrent('${escapeHtml(doc.canonical_filename)}')">
+        <button class="btn btn-interrogate-detail" data-filename="${escapeHtml(doc.canonical_filename)}" onclick="interrogateAboutCurrent(this.getAttribute('data-filename'))">
           💬 Interrogate Bot About This Document
         </button>
       </div>
@@ -1113,16 +1114,16 @@ async function loadSidecarStats() {
     const nodeTypesWrap = document.getElementById("kb-nodetypes-list");
     if (nodeTypesWrap && g.node_types) {
       const typeEntries = Object.entries(g.node_types);
-      if (typeEntries.length === 0) {
-        nodeTypesWrap.innerHTML = `<span class="chip" style="font-size: 0.72rem;">No entity nodes extracted yet</span>`;
-      } else {
+      if (typeEntries.length > 0) {
         nodeTypesWrap.innerHTML = typeEntries.map(([type, count]) => {
           let icon = "🏷️";
           if (type === "organization") icon = "🏢";
           else if (type === "person") icon = "👤";
           else if (type === "contract_type") icon = "📄";
           else if (type === "location") icon = "📍";
-          return `<span class="kb-type-chip">${icon} <strong>${escapeHtml(type)}</strong>: ${count}</span>`;
+          else if (type === "statute") icon = "⚖️";
+          const isActive = activeEntityType === type ? "active" : "";
+          return `<button class="kb-type-chip ${isActive}" data-type="${escapeHtml(type)}" onclick="toggleEntityType('${escapeHtml(type)}')">${icon} <strong>${escapeHtml(type)}</strong>: <span class="badge-count">${count}</span></button>`;
         }).join("");
       }
     }
@@ -1130,6 +1131,120 @@ async function loadSidecarStats() {
     console.error("Failed loading sidecar stats:", err);
   }
 }
+
+// Global state for entity distribution inspection
+let sidecarEntitiesCache = null;
+let activeEntityType = null;
+
+async function fetchSidecarEntities() {
+  if (sidecarEntitiesCache) return sidecarEntitiesCache;
+  try {
+    const res = await fetch("/api/v1/sidecar/entities?limit_per_type=300");
+    if (res.ok) {
+      const data = await res.json();
+      sidecarEntitiesCache = data.entities_by_type || {};
+      return sidecarEntitiesCache;
+    }
+  } catch (err) {
+    console.warn("Could not fetch entities from sidecar:", err);
+  }
+  return {};
+}
+
+async function toggleEntityType(type) {
+  const drawer = document.getElementById("kb-entity-drawer");
+  if (!drawer) return;
+
+  // If clicking the same active type, close drawer
+  if (activeEntityType === type) {
+    closeEntityDrawer();
+    return;
+  }
+
+  activeEntityType = type;
+
+  // Update active class on chips
+  document.querySelectorAll(".kb-type-chip").forEach(chip => {
+    if (chip.getAttribute("data-type") === type) {
+      chip.classList.add("active");
+    } else {
+      chip.classList.remove("active");
+    }
+  });
+
+  // Setup Drawer Header
+  const titleEl = document.getElementById("kb-drawer-title");
+  const countEl = document.getElementById("kb-drawer-count");
+  const itemsContainer = document.getElementById("kb-entity-items");
+  const searchInput = document.getElementById("kb-entity-filter-input");
+
+  if (searchInput) searchInput.value = "";
+
+  let icon = "🏷️";
+  if (type === "organization") icon = "🏢";
+  else if (type === "person") icon = "👤";
+  else if (type === "contract_type") icon = "📄";
+  else if (type === "location") icon = "📍";
+  else if (type === "statute") icon = "⚖️";
+
+  if (titleEl) titleEl.textContent = `${icon} ${type.replace(/_/g, " ").toUpperCase()}`;
+  drawer.classList.remove("hidden");
+
+  if (itemsContainer) {
+    itemsContainer.innerHTML = `<span class="loading-text" style="font-size: 0.72rem;">Loading entities...</span>`;
+  }
+
+  const allGrouped = await fetchSidecarEntities();
+  const entities = allGrouped[type] || [];
+
+  if (countEl) countEl.textContent = entities.length;
+  renderEntityList(entities, "");
+}
+
+function closeEntityDrawer() {
+  activeEntityType = null;
+  const drawer = document.getElementById("kb-entity-drawer");
+  if (drawer) drawer.classList.add("hidden");
+  document.querySelectorAll(".kb-type-chip").forEach(chip => chip.classList.remove("active"));
+}
+
+function filterEntityList(query) {
+  if (!activeEntityType || !sidecarEntitiesCache) return;
+  const entities = sidecarEntitiesCache[activeEntityType] || [];
+  renderEntityList(entities, query.toLowerCase().trim());
+}
+
+function renderEntityList(entities, filterQuery) {
+  const itemsContainer = document.getElementById("kb-entity-items");
+  if (!itemsContainer) return;
+
+  const filtered = filterQuery
+    ? entities.filter(e => (e.name || "").toLowerCase().includes(filterQuery))
+    : entities;
+
+  if (filtered.length === 0) {
+    itemsContainer.innerHTML = `<span class="empty-text" style="font-size: 0.72rem; padding: 0.5rem;">No matching entities found.</span>`;
+    return;
+  }
+
+  itemsContainer.innerHTML = filtered.map(e => {
+    const docTag = e.doc_count > 0 ? `<span class="kb-entity-pill-doccount">${e.doc_count} doc${e.doc_count > 1 ? 's' : ''}</span>` : "";
+    return `<button class="kb-entity-pill" data-name="${escapeHtml(e.name)}" onclick="selectEntityForSearch(this.getAttribute('data-name'))" title="Click to search in GraphRAG & ledger">
+      <span>${escapeHtml(e.name)}</span>
+      ${docTag}
+    </button>`;
+  }).join("");
+}
+
+function selectEntityForSearch(name) {
+  const ragInput = document.getElementById("kb-rag-input");
+  if (ragInput) {
+    ragInput.value = name;
+    ragInput.focus();
+    executeGraphRAGSearch();
+  }
+}
+
 
 async function triggerSidecarBatch() {
   const btn = document.getElementById("btn-trigger-batch");
@@ -1187,13 +1302,16 @@ async function executeGraphRAGSearch() {
       throw new Error(errJson.detail || `HTTP ${res.status}`);
     }
     const data = await res.json();
-    const hits = data.ranked_results || [];
+    const hits = data.ranked_results || data.top_candidates || [];
 
     if (hits.length === 0) {
       resultsDiv.innerHTML = `
         <div class="empty-state" style="padding: 1.5rem 0.5rem;">
           <div class="empty-icon">🔍</div>
-          <div class="empty-text">No relevant knowledge chunks found for "${escapeHtml(query)}".</div>
+          <div class="empty-text">No matches for "${escapeHtml(query)}".</div>
+          <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.4rem;">
+            Tip: Click <strong>▶ Process Batch</strong> above to index more documents into Snowflake Arctic Vectors and Knowledge Graph.
+          </div>
         </div>
       `;
       return;
@@ -1213,7 +1331,7 @@ async function executeGraphRAGSearch() {
       const sha = doc.sha256_hash || chunk.sha256_hash || "";
 
       return `
-        <div class="kb-result-card" onclick="${sha ? `selectDocument('${sha}')` : ''}" style="cursor: pointer;" title="Click to view document in ledger">
+        <div class="kb-result-card" data-sha="${escapeHtml(sha || '')}" onclick="const s = this.getAttribute('data-sha'); if (s) selectDocument(s);" style="cursor: pointer;" title="Click to view document in ledger">
           <div class="kb-result-header">
             <span class="kb-result-title">📄 ${escapeHtml(filename)}</span>
             <span class="kb-score-badge">RRF Score: ${(hit.composite_score || 0).toFixed(4)}</span>
@@ -1733,7 +1851,7 @@ function renderDiagnosticLogs() {
         </div>
         <div class="diag-log-msg">${escapeHtml(log.message)}</div>
         ${hasStack ? `
-          <span class="diag-log-details-toggle" onclick="toggleDiagStack('${stackId}')">
+          <span class="diag-log-details-toggle" data-stack-id="${escapeHtml(stackId)}" onclick="toggleDiagStack(this.getAttribute('data-stack-id'))">
             ▶ Details / Trace
           </span>
           <div id="${stackId}" class="diag-log-stack hidden">${escapeHtml(log.exception)}</div>
