@@ -55,7 +55,11 @@ class KnowledgeBaseSidecarWorker:
                 doc_type=doc_type,
                 doc_date=doc_date,
             )
-            indexed_count = self.vector_store.index_document_chunks(sha, chunks)
+            indexed_count = self.vector_store.index_document_chunks(
+                sha256_hash=sha,
+                chunks=chunks,
+                doc_metadata=doc_record
+            )
 
             # 2. Knowledge Graph Entity & Relationship Extraction
             doc_graph = self.graph_extractor.extract_knowledge_graph(

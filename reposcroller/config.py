@@ -90,6 +90,13 @@ class Settings(BaseSettings):
     VECTOR_STORE_PATH: Path = Field(default=Path("reposcroller_vectors"))
     KB_SIDECAR_BATCH_SIZE: int = 10
 
+    # Vector Store Backend Type ('sqlite' or 'qdrant')
+    VECTOR_STORE_TYPE: str = "sqlite"  # 'sqlite' or 'qdrant'
+    QDRANT_URL: Optional[str] = "http://localhost:6333"
+    QDRANT_API_KEY: Optional[str] = None
+    QDRANT_COLLECTION: str = "reposcroller_chunks"
+    QDRANT_PREFER_GRPC: bool = False
+
     # Knowledge Graph & Neo4j Settings (Optional Sidecar Integration)
     GRAPH_STORE_TYPE: str = "sqlite"  # 'sqlite' or 'neo4j'
     NEO4J_URI: Optional[str] = "bolt://localhost:7687"
