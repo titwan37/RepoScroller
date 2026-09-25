@@ -153,12 +153,12 @@
           <span class="switcher-label">api/chat:</span>
           <div class="switcher-toggle-group">
             <button class="btn-node-toggle" id="btn-chat-toggle-pc1" onclick="switchChatNode('pc1')"
-              title="Route reasoning to PC1 Host (llama3.2:1b CPU)">
-              💻 PC1 (1B CPU)
+              title="Route reasoning to PC1 Host (CPU)">
+              💻 PC1 (CPU)
             </button>
             <button class="btn-node-toggle active" id="btn-chat-toggle-pc2" onclick="switchChatNode('pc2')"
-              title="Route reasoning to PC2 Remote Node (llama3.1:8b CUDA RTX 3060)">
-              ⚡ PC2 (8B CUDA)
+              title="Route reasoning to PC2 Remote Node (CUDA RTX 3060)">
+              ⚡ PC2 (CUDA)
             </button>
           </div>
         </div>
@@ -189,14 +189,14 @@
         <div class="node-models-bar">
           <span class="models-label">Loaded:</span>
           <div class="models-tag-list" id="pc1-models-list">
-            <span class="mini-tag">llama3.2:1b</span>
+            <span class="mini-tag">Loading...</span>
           </div>
         </div>
 
         <div class="node-metrics-row">
           <div class="node-metric-item">
             <span class="node-metric-label">Model (CPU)</span>
-            <span class="node-metric-val" id="pc1-model-name">llama3.2:1b</span>
+            <span class="node-metric-val" id="pc1-model-name">Loading...</span>
           </div>
           <div class="node-metric-item">
             <span class="node-metric-label">Local Ping</span>

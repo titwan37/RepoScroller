@@ -8,6 +8,7 @@ param (
     [switch]$StartScanner = $true,
     [switch]$StartWatcher = $true,
     [switch]$StartSidecar = $true,
+    [switch]$StartMemoryBlast = $true,
     [switch]$ForceOllamaTab = $false,
     [int]$Port = 8090,
     [int]$Workers = 6,
@@ -127,6 +128,11 @@ if ($UseWindowsTerminal -and (Get-Command wt.exe -ErrorAction SilentlyContinue))
     # Always open Localhost Ollama Live Activity tab
     $wtArgs += @(";", "new-tab", "--title", "Ollama Localhost Activity", "-d", "$devPath", "cmd.exe", "/k", "start_ollama.bat")
 
+    # Open MemoryBlast CLI tab if requested and available
+    if ($StartMemoryBlast -and (Test-Path (Join-Path $devPath "start_memoryblast.bat"))) {
+        $wtArgs += @(";", "new-tab", "--title", "MemoryBlast CLI", "-d", "$devPath", "cmd.exe", "/k", "start_memoryblast.bat")
+    }
+
     & wt.exe @wtArgs
 }
 else {
@@ -162,6 +168,12 @@ else {
     if ($needStartOllama) {
         Write-Host "[+] Lancement du Serveur Ollama..." -ForegroundColor DarkCyan
         Start-Process -FilePath "cmd.exe" -WorkingDirectory $devPath -ArgumentList "/k", "start_ollama.bat"
+    }
+
+    # 6. Console MemoryBlast CLI (si demande)
+    if ($StartMemoryBlast -and (Test-Path (Join-Path $devPath "start_memoryblast.bat"))) {
+        Write-Host "[+] Lancement de MemoryBlast CLI..." -ForegroundColor Magenta
+        Start-Process -FilePath "cmd.exe" -WorkingDirectory $devPath -ArgumentList "/k", "start_memoryblast.bat"
     }
 }
 

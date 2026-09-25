@@ -86,16 +86,16 @@ class Settings(BaseSettings):
     LLM_PROVIDER: str = "auto"  # 'auto', 'openrouter', 'ollama', or 'heuristic'
     OPENROUTER_API_KEY: Optional[str] = None
     OPENROUTER_MODEL: str = "google/gemini-2.0-flash-001"
-    OLLAMA_MODEL: str = "llama3.2:1b"
+    OLLAMA_MODEL: str = "llama3.2:3b"
     OLLAMA_MODEL_PC1: str = "llama3.2:1b"
     OLLAMA_MODEL_PC2: str = "llama3.2:3b"
 
     # Dense Vector Embeddings & Knowledge Base Sidecar Settings
     EMBEDDING_PROVIDER: str = "auto"  # 'auto', 'ollama', 'openrouter', or 'mock'
     OLLAMA_EMBEDDING_MODEL: str = "snowflake-arctic-embed2:latest"
-    OLLAMA_TIMEOUT: float = 60.0  # Timeout in seconds for Ollama model load & embedding
+    OLLAMA_TIMEOUT: float = 300.0  # Timeout in seconds for Ollama model load & embedding (patient for CPU/GPU)
     OLLAMA_KEEP_ALIVE: str = "24h"  # Keep model resident in VRAM/RAM
-    OLLAMA_SUB_BATCH_SIZE: int = 32  # Max chunks sent per HTTP batch request to avoid timeouts
+    OLLAMA_SUB_BATCH_SIZE: int = 16  # Max chunks sent per HTTP batch slice to ensure fast, reliable responses
     CHUNK_SIZE_TOKENS: int = 600
     CHUNK_OVERLAP_TOKENS: int = 80
     VECTOR_STORE_PATH: Path = Field(default=Path("reposcroller_vectors"))
@@ -117,7 +117,7 @@ class Settings(BaseSettings):
             from reposcroller.ai.telemetry import workload_telemetry
             return workload_telemetry.get_active_chat_model()
         except Exception:
-            return self.OLLAMA_MODEL
+            return self.OLLAMA_MODEL_PC2 or self.OLLAMA_MODEL
 
     @property
     def embed_url(self) -> str:
