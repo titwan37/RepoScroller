@@ -42,6 +42,13 @@ def get_diagnostics_health():
     return get_system_health()
 
 
+@router.get("/workload")
+def get_workload_telemetry(force: bool = Query(False, description="Force real-time network probe of nodes")):
+    """Retrieve real-time telemetry on PC1 Localhost (Chat) vs PC2 Remote (CUDA Embeddings)."""
+    from reposcroller.ai.telemetry import workload_telemetry
+    return workload_telemetry.get_node_probes(force=force)
+
+
 @router.post("/clear")
 def clear_diagnostic_logs():
     """Clear the buffered diagnostic logs."""

@@ -156,7 +156,7 @@ Do NOT include preamble or explanations.
                 resp_text = None
                 if self.provider in ["ollama", "openrouter"]:
                     resp = httpx.post(
-                        f"{settings.OLLAMA_BASE_URL.rstrip('/')}/api/chat",
+                        f"{settings.chat_url}/api/chat",
                         json={
                             "model": settings.OLLAMA_MODEL,
                             "messages": [{"role": "user", "content": prompt}],

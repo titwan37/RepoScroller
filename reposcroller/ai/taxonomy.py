@@ -438,14 +438,15 @@ Return ONLY a valid JSON object:
 
         # Local Ollama fallback
         try:
-            with httpx.Client(timeout=10.0) as client:
+            with httpx.Client(timeout=settings.OLLAMA_TIMEOUT) as client:
                 resp = client.post(
-                    f"{settings.OLLAMA_BASE_URL}/api/chat",
+                    f"{settings.chat_url}/api/chat",
                     json={
                         "model": settings.OLLAMA_MODEL,
                         "messages": [{"role": "user", "content": prompt}],
                         "format": "json",
-                        "stream": False
+                        "stream": False,
+                        "keep_alive": settings.OLLAMA_KEEP_ALIVE
                     }
                 )
                 if resp.status_code == 200:

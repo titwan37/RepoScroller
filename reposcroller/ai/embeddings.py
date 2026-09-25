@@ -34,11 +34,11 @@ class EmbeddingAdapter:
                  sub_batch_size: Optional[int] = None):
         self.provider = provider or settings.EMBEDDING_PROVIDER
         self.model_name = model_name or settings.OLLAMA_EMBEDDING_MODEL
-        self.base_url = (base_url or settings.OLLAMA_BASE_URL).rstrip("/")
+        self.base_url = (base_url or settings.embed_url).rstrip("/")
         self.dimension = dimension
         self.timeout = timeout if timeout is not None else getattr(settings, "OLLAMA_TIMEOUT", 60.0)
-        self.keep_alive = keep_alive or getattr(settings, "OLLAMA_KEEP_ALIVE", "1h")
-        self.sub_batch_size = sub_batch_size or getattr(settings, "OLLAMA_SUB_BATCH_SIZE", 16)
+        self.keep_alive = keep_alive or getattr(settings, "OLLAMA_KEEP_ALIVE", "24h")
+        self.sub_batch_size = sub_batch_size or getattr(settings, "OLLAMA_SUB_BATCH_SIZE", 32)
         
         # Reuse persistent client connection pool with reasonable timeouts
         self._client = httpx.Client(
@@ -69,6 +69,7 @@ class EmbeddingAdapter:
             return [0.0] * self.dimension
 
         if self.provider in ["auto", "ollama"]:
+            t0 = time.time()
             try:
                 # 1. Try modern Ollama /api/embed endpoint
                 resp = self._client.post(
@@ -83,6 +84,9 @@ class EmbeddingAdapter:
                     data = resp.json()
                     embeddings = data.get("embeddings", [])
                     if embeddings and isinstance(embeddings[0], list):
+                        elapsed_ms = (time.time() - t0) * 1000
+                        from reposcroller.ai.telemetry import workload_telemetry
+                        workload_telemetry.record_embedding(chunk_count=1, latency_ms=elapsed_ms, success=True)
                         return embeddings[0]
 
                 # 2. Try legacy Ollama /api/embeddings endpoint
@@ -98,10 +102,16 @@ class EmbeddingAdapter:
                     data = resp_legacy.json()
                     emb = data.get("embedding", [])
                     if emb:
+                        elapsed_ms = (time.time() - t0) * 1000
+                        from reposcroller.ai.telemetry import workload_telemetry
+                        workload_telemetry.record_embedding(chunk_count=1, latency_ms=elapsed_ms, success=True)
                         return emb
                 else:
                     logger.warning(f"Ollama returned HTTP {resp_legacy.status_code} for model '{self.model_name}' at {self.base_url}")
             except Exception as exc:
+                elapsed_ms = (time.time() - t0) * 1000
+                from reposcroller.ai.telemetry import workload_telemetry
+                workload_telemetry.record_embedding(chunk_count=1, latency_ms=elapsed_ms, success=False)
                 logger.warning(f"Ollama embedding request failed at {self.base_url} ({exc}). Using pseudo-embedding fallback.")
 
         return self._fallback_pseudo_embedding(text)
@@ -114,9 +124,11 @@ class EmbeddingAdapter:
         if self.provider in ["auto", "ollama"]:
             results: List[List[float]] = []
             chunk_step = max(1, self.sub_batch_size)
+            batch_t0 = time.time()
 
             for i in range(0, len(texts), chunk_step):
                 sub_slice = texts[i:i + chunk_step]
+                t_slice = time.time()
                 try:
                     resp = self._client.post(
                         f"{self.base_url}/api/embed",
@@ -130,6 +142,9 @@ class EmbeddingAdapter:
                         data = resp.json()
                         embeddings = data.get("embeddings", [])
                         if embeddings and len(embeddings) == len(sub_slice):
+                            elapsed_slice = (time.time() - t_slice) * 1000
+                            from reposcroller.ai.telemetry import workload_telemetry
+                            workload_telemetry.record_embedding(chunk_count=len(sub_slice), latency_ms=elapsed_slice, success=True)
                             results.extend(embeddings)
                             continue
                     
@@ -137,6 +152,9 @@ class EmbeddingAdapter:
                     logger.warning(f"Ollama sub-batch embed returned HTTP {resp.status_code}. Processing sub-slice sequentially.")
                     results.extend([self.embed_text(t) for t in sub_slice])
                 except Exception as exc:
+                    elapsed_slice = (time.time() - t_slice) * 1000
+                    from reposcroller.ai.telemetry import workload_telemetry
+                    workload_telemetry.record_embedding(chunk_count=len(sub_slice), latency_ms=elapsed_slice, success=False)
                     logger.warning(f"Ollama sub-batch embed failed for slice [{i}:{i+len(sub_slice)}] ({exc}). Processing sequentially.")
                     results.extend([self.embed_text(t) for t in sub_slice])
 

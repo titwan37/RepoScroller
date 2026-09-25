@@ -75,23 +75,37 @@ class Settings(BaseSettings):
     MATURITY_WEIGHT_DATE: float = 0.20
     MATURITY_WEIGHT_NAMING: float = 0.20
 
+    # Split Workload LLM & Embedding Routing
+    OLLAMA_BASE_URL: str = "http://localhost:11434"
+    OLLAMA_CHAT_BASE_URL: Optional[str] = "http://localhost:11434"  # PC1 Localhost (CPU / Reasoning)
+    OLLAMA_EMBED_BASE_URL: Optional[str] = "http://192.168.192.9:11434"  # PC2 Remote Node (CUDA GPU RTX 3060)
+
     # LLM Categorization & Analysis settings
     LLM_PROVIDER: str = "auto"  # 'auto', 'openrouter', 'ollama', or 'heuristic'
     OPENROUTER_API_KEY: Optional[str] = None
     OPENROUTER_MODEL: str = "google/gemini-2.0-flash-001"
-    OLLAMA_BASE_URL: str = "http://localhost:11434"
     OLLAMA_MODEL: str = "llama3.2"
 
     # Dense Vector Embeddings & Knowledge Base Sidecar Settings
     EMBEDDING_PROVIDER: str = "auto"  # 'auto', 'ollama', 'openrouter', or 'mock'
-    OLLAMA_EMBEDDING_MODEL: str = "snowflake-arctic-embed:latest"
+    OLLAMA_EMBEDDING_MODEL: str = "snowflake-arctic-embed2:latest"
     OLLAMA_TIMEOUT: float = 60.0  # Timeout in seconds for Ollama model load & embedding
-    OLLAMA_KEEP_ALIVE: str = "1h"  # Keep model resident in VRAM/RAM
-    OLLAMA_SUB_BATCH_SIZE: int = 16  # Max chunks sent per HTTP batch request to avoid timeouts
+    OLLAMA_KEEP_ALIVE: str = "24h"  # Keep model resident in VRAM/RAM
+    OLLAMA_SUB_BATCH_SIZE: int = 32  # Max chunks sent per HTTP batch request to avoid timeouts
     CHUNK_SIZE_TOKENS: int = 600
     CHUNK_OVERLAP_TOKENS: int = 80
     VECTOR_STORE_PATH: Path = Field(default=Path("reposcroller_vectors"))
     KB_SIDECAR_BATCH_SIZE: int = 10
+
+    @property
+    def chat_url(self) -> str:
+        """Endpoint for conversational reasoning, taxonomy discovery, and chat generation."""
+        return (self.OLLAMA_CHAT_BASE_URL or self.OLLAMA_BASE_URL).rstrip("/")
+
+    @property
+    def embed_url(self) -> str:
+        """Endpoint for dense vector embeddings on remote CUDA GPU."""
+        return (self.OLLAMA_EMBED_BASE_URL or self.OLLAMA_BASE_URL).rstrip("/")
 
     # Vector Store Backend Type ('sqlite' or 'qdrant')
     VECTOR_STORE_TYPE: str = "sqlite"  # 'sqlite' or 'qdrant'

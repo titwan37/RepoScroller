@@ -385,14 +385,15 @@ Document Content / Text:
 User Question: {query}
 """
         if settings.LLM_PROVIDER in ["auto", "ollama"]:
+            t0 = time.time()
             try:
-                tags_resp = httpx.get(f"{settings.OLLAMA_BASE_URL.rstrip('/')}/api/tags", timeout=1.5)
+                tags_resp = httpx.get(f"{settings.chat_url}/api/tags", timeout=1.5)
                 if tags_resp.status_code == 200:
                     models = [m["name"] for m in tags_resp.json().get("models", [])]
                     pref = settings.OLLAMA_MODEL
                     chosen = next((m for m in models if m == pref or m.startswith(pref + ":")), None)
                     if not chosen:
-                        for candidate in ["qwen2.5:7b", "mistral:latest", "llama3.1:8b", "llama3.2:1b", "qwen3:latest", "deepseek-r1:8b"]:
+                        for candidate in ["llama3.2:latest", "llama3.2", "qwen2.5:7b", "mistral:latest", "llama3.1:8b", "llama3.2:1b", "qwen3:latest", "deepseek-r1:8b"]:
                             if candidate in models:
                                 chosen = candidate
                                 break
@@ -401,16 +402,20 @@ User Question: {query}
 
                     if chosen:
                         chat_resp = httpx.post(
-                            f"{settings.OLLAMA_BASE_URL.rstrip('/')}/api/chat",
+                            f"{settings.chat_url}/api/chat",
                             json={
                                 "model": chosen,
                                 "messages": [{"role": "user", "content": prompt}],
                                 "stream": False,
+                                "keep_alive": settings.OLLAMA_KEEP_ALIVE,
                                 "options": {"temperature": 0.2}
                             },
-                            timeout=5.0
+                            timeout=settings.OLLAMA_TIMEOUT
                         )
                         if chat_resp.status_code == 200:
+                            elapsed_ms = (time.time() - t0) * 1000
+                            from reposcroller.ai.telemetry import workload_telemetry
+                            workload_telemetry.record_chat(latency_ms=elapsed_ms, success=True)
                             content = chat_resp.json().get("message", {}).get("content", "").strip()
                             refusals = [
                                 "cannot provide", "can't provide", "can't help", "cannot help",

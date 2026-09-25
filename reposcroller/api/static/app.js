@@ -126,17 +126,103 @@ async function initDashboard() {
   await Promise.all([
     checkBackendHealth(),
     loadMountsAndCrawlerStatus(),
+    loadWorkloadTelemetry(),
     loadMetrics(),
     loadSidecarStats(),
     loadTaxonomyCategories(),
     loadLedger()
   ]);
 
-  // Periodic refresh for metrics and sidecar queue
+  // Periodic refresh for metrics, sidecar queue, and workload telemetry
   setInterval(() => {
     loadMetrics();
     loadSidecarStats();
-  }, 5000);
+    loadWorkloadTelemetry();
+  }, 4000);
+}
+
+// 0. Split Workload Hardware Telemetry (PC1 Localhost vs PC2 Remote CUDA)
+async function loadWorkloadTelemetry(force = false) {
+  try {
+    const res = await fetch(`/api/v1/diagnostics/workload${force ? '?force=true' : ''}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    
+    // PC1 Localhost Node
+    const pc1 = data.localhost_node;
+    if (pc1) {
+      const pc1Badge = document.getElementById("pc1-node-badge");
+      const pc1Url = document.getElementById("pc1-node-url");
+      const pc1Model = document.getElementById("pc1-model-name");
+      const pc1Ping = document.getElementById("pc1-ping-ms");
+      const pc1ChatCount = document.getElementById("pc1-chat-count");
+      const pc1Latency = document.getElementById("pc1-latency-ms");
+      
+      if (pc1Url) pc1Url.textContent = pc1.url;
+      if (pc1Model) pc1Model.textContent = pc1.target_model || "llama3.2";
+      if (pc1Ping) pc1Ping.textContent = pc1.online ? `${pc1.ping_ms || '<1'} ms` : 'Offline / Fallback';
+      if (pc1ChatCount) pc1ChatCount.textContent = `${pc1.stats?.requests || 0} calls`;
+      if (pc1Latency) {
+        if (pc1.stats?.last_latency_ms > 0) {
+          pc1Latency.textContent = `${pc1.stats.last_latency_ms} ms`;
+        } else if (pc1.stats?.requests > 0) {
+          pc1Latency.textContent = `${pc1.stats.avg_latency_ms} ms`;
+        } else {
+          pc1Latency.textContent = 'Ready';
+        }
+      }
+      
+      if (pc1Badge) {
+        if (pc1.online) {
+          pc1Badge.className = "node-status-badge badge-online";
+          pc1Badge.innerHTML = `<span class="dot"></span> Online (CPU)`;
+        } else {
+          pc1Badge.className = "node-status-badge badge-offline";
+          pc1Badge.innerHTML = `<span class="dot"></span> Fallback / Offline`;
+        }
+      }
+    }
+
+    // PC2 CUDA GPU Node
+    const pc2 = data.cuda_gpu_node;
+    if (pc2) {
+      const pc2Badge = document.getElementById("pc2-node-badge");
+      const pc2Url = document.getElementById("pc2-node-url");
+      const pc2Model = document.getElementById("pc2-model-name");
+      const pc2Ping = document.getElementById("pc2-ping-ms");
+      const pc2ChunksCount = document.getElementById("pc2-chunks-count");
+      const pc2Latency = document.getElementById("pc2-latency-ms");
+      
+      if (pc2Url) pc2Url.textContent = pc2.url;
+      if (pc2Model) {
+        const rawModel = pc2.target_model || "snowflake-arctic-embed2:latest";
+        pc2Model.textContent = rawModel.includes(":") ? rawModel.split(":")[0] : rawModel;
+      }
+      if (pc2Ping) pc2Ping.textContent = pc2.online ? `${pc2.ping_ms || '<1'} ms` : 'Disconnected';
+      if (pc2ChunksCount) pc2ChunksCount.textContent = `${pc2.stats?.chunks_embedded || 0} chunks`;
+      if (pc2Latency) {
+        if (pc2.stats?.last_latency_ms > 0) {
+          pc2Latency.textContent = `${pc2.stats.last_latency_ms} ms`;
+        } else if (pc2.stats?.requests > 0) {
+          pc2Latency.textContent = `${pc2.stats.avg_latency_ms} ms`;
+        } else {
+          pc2Latency.textContent = 'VRAM Hot';
+        }
+      }
+      
+      if (pc2Badge) {
+        if (pc2.online) {
+          pc2Badge.className = "node-status-badge badge-online";
+          pc2Badge.innerHTML = `<span class="dot"></span> ⚡ CUDA Ready`;
+        } else {
+          pc2Badge.className = "node-status-badge badge-offline";
+          pc2Badge.innerHTML = `<span class="dot"></span> Disconnected`;
+        }
+      }
+    }
+  } catch (err) {
+    console.debug("Workload telemetry probe notice:", err);
+  }
 }
 
 // 1. Backend Health Check

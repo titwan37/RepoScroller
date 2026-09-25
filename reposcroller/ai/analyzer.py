@@ -36,7 +36,7 @@ class DocumentAnalyzer:
                  taxonomy_manager=None):
         self.provider = provider or settings.LLM_PROVIDER
         self.openrouter_key = openrouter_key or settings.OPENROUTER_API_KEY
-        self.ollama_url = (ollama_url or settings.OLLAMA_BASE_URL).rstrip("/")
+        self.ollama_url = (ollama_url or settings.chat_url).rstrip("/")
         from reposcroller.ai.taxonomy import TaxonomyManager
         self.taxonomy = taxonomy_manager or TaxonomyManager()
 
@@ -142,15 +142,27 @@ Return ONLY a valid JSON object matching this schema:
             "temperature": 0.1,
             "response_format": {"type": "json_object"}
         }
-        with httpx.Client(timeout=15.0) as client:
-            resp = client.post(url, headers=headers, json=payload)
-            if resp.status_code == 200:
-                raw_json = resp.json()["choices"][0]["message"]["content"]
-                data = json.loads(raw_json)
-                return DocumentAnalysisResult(**data)
+        t0 = time.time()
+        try:
+            with httpx.Client(timeout=15.0) as client:
+                resp = client.post(url, headers=headers, json=payload)
+                if resp.status_code == 200:
+                    elapsed_ms = (time.time() - t0) * 1000
+                    from reposcroller.ai.telemetry import workload_telemetry
+                    workload_telemetry.record_chat(latency_ms=elapsed_ms, success=True)
+                    raw_json = resp.json()["choices"][0]["message"]["content"]
+                    data = json.loads(raw_json)
+                    return DocumentAnalysisResult(**data)
+        except Exception:
+            elapsed_ms = (time.time() - t0) * 1000
+            from reposcroller.ai.telemetry import workload_telemetry
+            workload_telemetry.record_chat(latency_ms=elapsed_ms, success=False)
+            raise
         return None
 
     def _call_ollama(self, text: str, filename: str) -> Optional[DocumentAnalysisResult]:
+        import time
+        t0 = time.time()
         prompt = self._build_prompt(text, filename)
         url = f"{self.ollama_url}/api/chat"
         payload = {
@@ -161,12 +173,21 @@ Return ONLY a valid JSON object matching this schema:
             "keep_alive": settings.OLLAMA_KEEP_ALIVE,
             "options": {"temperature": 0.1}
         }
-        with httpx.Client(timeout=settings.OLLAMA_TIMEOUT) as client:
-            resp = client.post(url, json=payload)
-            if resp.status_code == 200:
-                raw_json = resp.json()["message"]["content"]
-                data = json.loads(raw_json)
-                return DocumentAnalysisResult(**data)
+        try:
+            with httpx.Client(timeout=settings.OLLAMA_TIMEOUT) as client:
+                resp = client.post(url, json=payload)
+                if resp.status_code == 200:
+                    elapsed_ms = (time.time() - t0) * 1000
+                    from reposcroller.ai.telemetry import workload_telemetry
+                    workload_telemetry.record_chat(latency_ms=elapsed_ms, success=True)
+                    raw_json = resp.json()["message"]["content"]
+                    data = json.loads(raw_json)
+                    return DocumentAnalysisResult(**data)
+        except Exception:
+            elapsed_ms = (time.time() - t0) * 1000
+            from reposcroller.ai.telemetry import workload_telemetry
+            workload_telemetry.record_chat(latency_ms=elapsed_ms, success=False)
+            raise
         return None
 
     def _heuristic_analyze(self,

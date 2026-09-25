@@ -62,6 +62,85 @@
     </div>
   </section>
 
+  <!-- Split Workload Telemetry HUD (PC1 Localhost vs PC2 CUDA GPU) -->
+  <section class="workload-hud-bar" id="workload-hud-bar">
+    <div class="workload-hud-header">
+      <div class="workload-hud-title-group">
+        <span class="workload-hud-icon">⚡</span>
+        <span class="workload-hud-title">Split Workload Architecture</span>
+        <span class="workload-hud-pill">Parallel Hybrid Ingestion</span>
+      </div>
+      <button class="btn-workload-refresh" onclick="loadWorkloadTelemetry(true)" title="Force Refresh Node Status">
+        <span>⟳</span> Probe Hardware
+      </button>
+    </div>
+    <div class="workload-nodes-grid">
+      <!-- PC1 Localhost Node -->
+      <div class="workload-node-card" id="node-card-pc1">
+        <div class="node-card-header">
+          <div class="node-title-group">
+            <span class="node-icon">💻</span>
+            <div>
+              <div class="node-name">PC1 Host Engine <span class="node-role-pill">api/chat</span></div>
+              <div class="node-target" id="pc1-node-url">http://127.0.0.1:11434</div>
+            </div>
+          </div>
+          <span class="node-status-badge badge-probing" id="pc1-node-badge"><span class="dot"></span> Probing...</span>
+        </div>
+        <div class="node-metrics-row">
+          <div class="node-metric-item">
+            <span class="node-metric-label">Model (CPU)</span>
+            <span class="node-metric-val" id="pc1-model-name">llama3.2</span>
+          </div>
+          <div class="node-metric-item">
+            <span class="node-metric-label">Local Ping</span>
+            <span class="node-metric-val" id="pc1-ping-ms">--</span>
+          </div>
+          <div class="node-metric-item">
+            <div class="node-metric-label">Chat Calls</div>
+            <div class="node-metric-val text-indigo" id="pc1-chat-count">0</div>
+          </div>
+          <div class="node-metric-item">
+            <div class="node-metric-label">Last Latency</div>
+            <div class="node-metric-val" id="pc1-latency-ms">--</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- PC2 CUDA GPU Node -->
+      <div class="workload-node-card cuda-accelerated" id="node-card-pc2">
+        <div class="node-card-header">
+          <div class="node-title-group">
+            <span class="node-icon">⚡</span>
+            <div>
+              <div class="node-name">PC2 CUDA Server (RTX 3060) <span class="node-role-pill cuda">api/embed</span></div>
+              <div class="node-target" id="pc2-node-url">http://192.168.192.9:11434</div>
+            </div>
+          </div>
+          <span class="node-status-badge badge-probing" id="pc2-node-badge"><span class="dot"></span> Probing...</span>
+        </div>
+        <div class="node-metrics-row">
+          <div class="node-metric-item">
+            <span class="node-metric-label">Embedding Model</span>
+            <span class="node-metric-val text-cyan" id="pc2-model-name">snowflake-arctic-embed2</span>
+          </div>
+          <div class="node-metric-item">
+            <span class="node-metric-label">LAN Ping</span>
+            <span class="node-metric-val" id="pc2-ping-ms">--</span>
+          </div>
+          <div class="node-metric-item">
+            <div class="node-metric-label">Vectors Embedded</div>
+            <div class="node-metric-val text-emerald" id="pc2-chunks-count">0 chunks</div>
+          </div>
+          <div class="node-metric-item">
+            <div class="node-metric-label">Tensor Latency</div>
+            <div class="node-metric-val text-amber" id="pc2-latency-ms">--</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- Main Container -->
   <main class="dashboard-grid">
     
