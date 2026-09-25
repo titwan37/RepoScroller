@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/style.css?v=12">
+  <link rel="stylesheet" href="/static/style.css?v=13">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 </head>
@@ -156,6 +156,7 @@
       </div>
     </div>
     <div class="workload-nodes-grid">
+      
       <!-- PC1 Localhost Node -->
       <div class="workload-node-card" id="node-card-pc1">
         <div class="node-card-header">
@@ -198,6 +199,70 @@
             <div class="node-metric-item">
               <div class="node-metric-label">Host Status</div>
               <div class="node-metric-val" id="pc1-activity-status">idle</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- LAN Stream & Ingestion Throughput Bridge Card -->
+      <div class="workload-node-card throughput-card" id="node-card-throughput">
+        <div class="node-card-header">
+          <div class="node-title-group">
+            <span class="node-icon stream-icon">⇄</span>
+            <div>
+              <div class="node-name">LAN Stream & Throughput <span class="node-role-pill pill-stream">PC1 ⇄ PC2</span></div>
+              <div class="node-target" id="stream-endpoints-desc">http://localhost:11434 ⇄ http://NITRO-AN51755:11434</div>
+            </div>
+          </div>
+          <div class="node-header-right">
+            <span class="node-status-badge badge-stream" id="bridge-status-badge">
+              <span class="dot-stream"></span> Active Stream
+            </span>
+          </div>
+        </div>
+      
+        <!-- Animated Directional Transfer Pipeline -->
+        <div class="stream-pipeline-box">
+          <div class="stream-channel outbound">
+            <div class="stream-meta">
+              <span class="stream-label">Text Chunks ➔ PC2 CUDA</span>
+              <span class="stream-endpoint-tag">POST /api/embed</span>
+            </div>
+            <div class="stream-track">
+              <div class="stream-pulse pulse-outbound"></div>
+            </div>
+          </div>
+      
+          <div class="stream-channel inbound">
+            <div class="stream-meta">
+              <span class="stream-label">Dense Vectors ➔ PC1 SQLite</span>
+              <span class="stream-endpoint-tag">1024-dim Floats (200 OK)</span>
+            </div>
+            <div class="stream-track">
+              <div class="stream-pulse pulse-inbound"></div>
+            </div>
+          </div>
+        </div>
+      
+        <div class="node-metrics-row">
+          <div class="node-metric-item">
+            <span class="node-metric-label">Ingestion Rate</span>
+            <span class="node-metric-val text-cyan" id="throughput-fpm">-- files/min</span>
+          </div>
+          <div class="node-metric-item">
+            <span class="node-metric-label">Chunk Velocity</span>
+            <span class="node-metric-val" id="throughput-cpm">-- chunks/min</span>
+          </div>
+          <div class="node-metric-item">
+            <div class="node-metric-label">Token Batch</div>
+            <div class="node-metric-val text-indigo" id="throughput-tokens">1,206 tokens</div>
+          </div>
+          <div class="node-metric-item">
+            <div class="node-metric-label">Checkpoints</div>
+            <div class="node-metric-val text-amber" id="throughput-checkpoints">0 (WAL Normal)</div>
+          </div>
+          <div class="node-metric-item">
+            <div class="node-metric-label">Vector Payload</div>
+            <div class="node-metric-val text-emerald font-bold" id="throughput-payload">37.702 MiB</div>
           </div>
         </div>
       </div>
@@ -871,6 +936,6 @@
     </div>
   </div>
   
-  <script src="/static/app.js?v=12"></script>
+  <script src="/static/app.js?v=13"></script>
 </body>
 </html>

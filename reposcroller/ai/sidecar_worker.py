@@ -82,6 +82,8 @@ class KnowledgeBaseSidecarWorker:
             self.graph_store.save_document_graph(doc_graph)
 
             self.repo.mark_kb_queue_status(sha, "completed")
+            from reposcroller.ai.telemetry import workload_telemetry
+            workload_telemetry.record_document_completed(count=1, chunks=indexed_count)
 
             with self._lock:
                 self.session_docs_processed += 1
@@ -176,6 +178,8 @@ class KnowledgeBaseSidecarWorker:
         # 5. Batch Mark Completed
         if completed_shas:
             self.repo.mark_kb_queue_batch_status(completed_shas, "completed")
+            from reposcroller.ai.telemetry import workload_telemetry
+            workload_telemetry.record_document_completed(count=len(completed_shas), chunks=total_batch_chunks)
 
         with self._lock:
             self.session_docs_processed += len(completed_shas)

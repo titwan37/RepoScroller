@@ -912,3 +912,79 @@ All 64 tests passed with 100% success, and the 3-tier embedding hierarchy is liv
     - 🟠 `🟠 Ingestion Active (Local CPU Fallback - snowflake-arctic-embed)`
     - 🔴 `🔴 Ingestion Active (Offline Pseudo-Vectors - No Neural Model)`
 - __Knowledge Base Metric Card:__ Dot color and status text dynamically mirror the active embedding tier.
+
+Ran command: `uv run python -m reposcroller.main serve --port 8092`
+Ran command: `powershell -Command "Invoke-RestMethod -Uri 'http://127.0.0.1:8092/api/v1/diagnostics/workload' | ConvertTo-Json -Depth 4"`
+Ran command: `powershell -Command "Invoke-RestMethod -Uri 'http://127.0.0.1:8092/api/v1/sidecar/stats' | ConvertTo-Json -Depth 4"`
+Browser task: "Verify Dual-Node Throughput Card on Frontend"
+
+### 1. Telemetry & Throughput Evaluation
+
+The telemetry engine in [`reposcroller/ai/telemetry.py`](file:///c:/Dev/RepoScroller/reposcroller/ai/telemetry.py) and [`reposcroller/api/routes/sidecar.py`](file:///c:/Dev/RepoScroller/reposcroller/api/routes/sidecar.py) has been upgraded with sliding-window throughput tracking and cross-machine endpoint evaluation:
+
+- __Files Per Minute (FPM) & Chunks Per Minute (CPM)__: Calculated using a rolling 60-second window of document completions and embedding batches.
+- __Enhanced `get_sidecar_stats()`__: Now returns `files_per_minute`, `chunks_per_minute`, `tokens_processed`, `last_batch_tokens`, `checkpoints`, `payload_mib`, and `embedding_tier`.
+- __4-Endpoint Health & Latency Matrix__: Both local and CUDA remote Ollama endpoints are probed:
+  - `http://localhost:11434/api/chat` (PC1 Host Reasoning / Classification)
+  - `http://localhost:11434/api/embed` (PC1 Local Fallback Embeddings)
+  - `http://NITRO-AN51755:11434/api/chat` (PC2 Remote Chat)
+  - `http://NITRO-AN51755:11434/api/embed` (PC2 Remote NVIDIA RTX 3060 CUDA Embeddings)
+
+```json
+// Sample response from /api/v1/diagnostics/workload:
+{
+  "throughput": {
+    "files_per_minute": 14.5,
+    "chunks_per_minute": 210.0,
+    "tokens_per_second": 96480.0,
+    "last_batch_tokens": 1206,
+    "total_tokens": 13487910,
+    "checkpoints": 0,
+    "payload_mib": 184.867,
+    "active_tier": "cuda",
+    "transfer_direction": "PC1_TO_PC2",
+    "avg_tensor_latency_ms": 12.5
+  },
+  "endpoints_matrix": {
+    "pc1_chat":  { "url": "http://localhost:11434/api/chat", "online": true },
+    "pc1_embed": { "url": "http://localhost:11434/api/embed", "online": true },
+    "pc2_chat":  { "url": "http://NITRO-AN51755:11434/api/chat", "online": true },
+    "pc2_embed": { "url": "http://NITRO-AN51755:11434/api/embed", "online": true }
+  }
+}
+```
+
+---
+
+### 2. What do `1206 tokens`, `checkpoints: 0`, and `37.702 MiB` mean?
+
+| Metric | What it Measures | Details & Formula |
+| :--- | :--- | :--- |
+| __`1,206 tokens`__ | __Ollama Batch Prompt Evaluation Size__ | When the sidecar sends a batch of ~6–8 text chunks to `snowflake-arctic-embed2`, Ollama reports `prompt_eval_count: 1206`. This is the exact token load processed per GPU forward-pass. |
+| __`checkpoints: 0`__ | __SQLite WAL Checkpoint Status__ | The return status code of `PRAGMA wal_checkpoint(PASSIVE)`. `0` represents `SQLITE_OK`, confirming the SQLite Write-Ahead Log is cleanly syncing without lock contention or queue blocking. |
+| __`37.702 MiB`__ *(now ~184.8 MiB)* | __Dense Float32 Tensor LAN Volume__ | Each vector produced by `snowflake-arctic-embed2` has __1,024 dimensions__ of 32-bit floats ($1,024 \times 4\text{ bytes} = 4,096\text{ bytes per chunk}$). For 9,651 chunks: $\frac{9,651 \times 4,096}{1024^2} \approx \mathbf{37.702\text{ MiB}}$ streamed across the LAN from PC2 back to PC1. For 47,326 chunks, this volume is now __184.867 MiB__. |
+
+---
+
+### 3. Animated Third Card in Frontend (`#node-card-throughput`)
+
+In [`index.html`](file:///c:/Dev/RepoScroller/reposcroller/api/static/index.html#L205), [`style.css`](file:///c:/Dev/RepoScroller/reposcroller/api/static/style.css), and [`app.js`](file:///c:/Dev/RepoScroller/reposcroller/api/static/app.js), the third card __"Dual-Node Bridge (Throughput & Ingestion)"__ is placed in between the two PC cards:
+
+```
+[ PC1 Host Engine (CPU) ] ⇄ [ Dual-Node Bridge Throughput ] ⇄ [ PC2 CUDA Node (RTX 3060) ]
+```
+
+#### Key Visual & Telemetry Features
+
+1. __Directional Animated Stream Pipelines__:
+   - __Outbound Stream (`PC1 ➔ PC2 [api/embed]`)__: An animated glowing cyan/indigo pulse (`streamOutboundAnim`) flowing left-to-right representing text chunk dispatches.
+   - __Inbound Stream (`PC2 ➔ PC1 [Tensors 1024d]`)__: An animated glowing emerald pulse (`streamInboundAnim`) flowing right-to-left representing dense float32 vector tensor payloads.
+2. __Endpoints Ping Matrix__: Displays live latency pills for all 4 Ollama endpoints:
+   - `PC1 Chat` & `PC1 Embed`
+   - `PC2 Chat` & `PC2 Embed`
+3. __5 Throughput Metrics__:
+   - __Ingestion Rate__: Live `files/min`
+   - __Chunk Velocity__: Live `chunks/min`
+   - __Batch Size__: `1,206 tok` (with total tokens processed in tooltip)
+   - __Checkpoints__: `0 (WAL)`
+   - __Tensor Payload__: `184.87 MiB` (total volume of 1,024-dim tensors received)

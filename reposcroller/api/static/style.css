@@ -2751,6 +2751,142 @@ body.resizing-table-col .th-resizer {
   display: inline-block;
 }
 
+/* ==============================================================================
+   Dual-Node Bridge Throughput Card & Animated Directional Pipelines
+   ============================================================================== */
+.workload-node-card.throughput-card {
+  background: linear-gradient(135deg, rgba(30, 27, 75, 0.45) 0%, rgba(15, 23, 42, 0.85) 50%, rgba(6, 78, 59, 0.28) 100%);
+  border-color: rgba(99, 102, 241, 0.28);
+  box-shadow: inset 0 0 24px -8px rgba(99, 102, 241, 0.2);
+}
+
+.workload-node-card.throughput-card::before {
+  background: linear-gradient(90deg, #6366f1 0%, #06b6d4 50%, #10b981 100%);
+  box-shadow: 0 0 10px rgba(6, 182, 212, 0.6);
+}
+
+.node-role-pill.bridge {
+  background: linear-gradient(90deg, rgba(99, 102, 241, 0.22), rgba(6, 182, 212, 0.22));
+  color: #38bdf8;
+  border-color: rgba(6, 182, 212, 0.4);
+}
+
+.throughput-pipeline-box {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+  padding: 0.55rem 0.75rem;
+}
+
+.stream-channel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.stream-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+}
+
+.stream-channel.outbound .stream-dir-label {
+  color: #818cf8;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.stream-channel.inbound .stream-dir-label {
+  color: #34d399;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.stream-payload-label {
+  color: var(--text-faint);
+  font-size: 0.62rem;
+}
+
+.stream-track {
+  position: relative;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 999px;
+  overflow: hidden;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+.stream-pulse {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  width: 32%;
+  border-radius: 999px;
+}
+
+.stream-pulse.pulse-outbound {
+  background: linear-gradient(90deg, transparent 0%, #6366f1 50%, #38bdf8 100%);
+  box-shadow: 0 0 10px #38bdf8;
+  animation: streamOutboundAnim 1.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+.stream-pulse.pulse-inbound {
+  background: linear-gradient(90deg, #34d399 0%, #10b981 50%, transparent 100%);
+  box-shadow: 0 0 10px #34d399;
+  animation: streamInboundAnim 1.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+.throughput-pipeline-box.paused .stream-pulse {
+  animation-play-state: paused;
+  opacity: 0.25;
+}
+
+@keyframes streamOutboundAnim {
+  0% { left: -35%; opacity: 0; }
+  20% { opacity: 1; }
+  80% { opacity: 1; }
+  100% { left: 105%; opacity: 0; }
+}
+
+@keyframes streamInboundAnim {
+  0% { right: -35%; opacity: 0; }
+  20% { opacity: 1; }
+  80% { opacity: 1; }
+  100% { right: 105%; opacity: 0; }
+}
+
+.endpoint-tags .mini-tag {
+  cursor: default;
+  transition: all 0.2s ease;
+}
+
+.endpoint-tags .mini-tag.online {
+  border-color: rgba(16, 185, 129, 0.35);
+  color: #34d399;
+}
+
+.endpoint-tags .mini-tag.offline {
+  border-color: rgba(239, 68, 68, 0.35);
+  color: #f87171;
+  opacity: 0.7;
+}
+
+@media (min-width: 1200px) {
+  .workload-nodes-grid {
+    grid-template-columns: 1fr 1.15fr 1fr;
+  }
+}
+
+
 /* Continuous Sidecar Button & Live Session Strip */
 .btn-emerald {
   background: linear-gradient(135deg, #059669 0%, #10b981 100%);

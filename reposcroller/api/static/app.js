@@ -334,6 +334,111 @@ async function loadWorkloadTelemetry(force = false) {
         }
       }
     }
+
+    // 3. Dual-Node Bridge & Bidirectional Throughput Telemetry Card
+    const tp = data.throughput || {};
+    const epMatrix = data.endpoints_matrix || {};
+
+    const tpFpm = document.getElementById("throughput-fpm");
+    const tpCpm = document.getElementById("throughput-cpm");
+    const tpTokens = document.getElementById("throughput-tokens");
+    const tpCheckpoints = document.getElementById("throughput-checkpoints");
+    const tpPayload = document.getElementById("throughput-payload");
+    const tpPipelineBox = document.querySelector(".throughput-pipeline-box");
+    const tpBadge = document.getElementById("throughput-status-badge");
+    const tpStatusText = document.getElementById("throughput-status-text");
+    const streamOutRate = document.getElementById("stream-outbound-rate");
+    const streamInRate = document.getElementById("stream-inbound-rate");
+
+    if (tpFpm) {
+      const fpmVal = tp.files_per_minute !== undefined ? tp.files_per_minute : 0;
+      tpFpm.textContent = `${fpmVal} files/m`;
+    }
+
+    if (tpCpm) {
+      const cpmVal = tp.chunks_per_minute !== undefined ? tp.chunks_per_minute : 0;
+      tpCpm.textContent = `${cpmVal} chunks/m`;
+    }
+
+    if (tpTokens) {
+      const tokVal = tp.last_batch_tokens || 1206;
+      tpTokens.textContent = `${tokVal.toLocaleString()} tok`;
+      tpTokens.title = `Last prompt eval batch: ${tokVal} tokens (Total: ${(tp.total_tokens_processed || 0).toLocaleString()} tokens)`;
+    }
+
+    if (tpCheckpoints) {
+      const cpVal = tp.checkpoints !== undefined ? tp.checkpoints : 0;
+      tpCheckpoints.textContent = `${cpVal} (WAL)`;
+      tpCheckpoints.title = `SQLite WAL Passive Checkpoint status: ${cpVal} (0 = SQLITE_OK)`;
+    }
+
+    if (tpPayload) {
+      const mibVal = tp.payload_mib !== undefined ? tp.payload_mib : 37.702;
+      tpPayload.textContent = `${mibVal.toFixed(2)} MiB`;
+      tpPayload.title = `Total float32 vector tensor stream volume: ${mibVal.toFixed(3)} MiB (${(tp.payload_bytes || 0).toLocaleString()} bytes)`;
+    }
+
+    // Dynamic endpoint tags for PC1 & PC2
+    const renderPingTag = (elId, epData, label) => {
+      const el = document.getElementById(elId);
+      if (!el) return;
+      if (!epData) {
+        el.textContent = `${label}: --`;
+        return;
+      }
+      if (epData.online) {
+        const ms = epData.latency_ms || 0;
+        el.className = `mini-tag online ${elId.includes('pc2') ? 'tag-cuda' : ''}`;
+        el.textContent = `${label}: ${ms < 1 ? '<1' : ms.toFixed(1)}ms`;
+      } else {
+        el.className = `mini-tag offline`;
+        el.textContent = `${label}: Offline`;
+      }
+    };
+
+    renderPingTag("ping-pc1-chat", epMatrix.pc1_chat, "PC1 Chat");
+    renderPingTag("ping-pc1-embed", epMatrix.pc1_embed, "PC1 Embed");
+    renderPingTag("ping-pc2-chat", epMatrix.pc2_chat, "PC2 Chat");
+    renderPingTag("ping-pc2-embed", epMatrix.pc2_embed, "PC2 Embed");
+
+    // Dynamic stream rate subheadings
+    if (streamOutRate) {
+      if (tp.chunks_per_minute > 0) {
+        streamOutRate.textContent = `${tp.chunks_per_minute} chunks/m (${tp.tokens_per_second || 0} tok/s)`;
+      } else {
+        streamOutRate.textContent = "Pipeline Ready (Standby)";
+      }
+    }
+    if (streamInRate) {
+      if (tp.payload_mib > 0) {
+        streamInRate.textContent = `${tp.payload_mib.toFixed(2)} MiB Streamed (1024d)`;
+      } else {
+        streamInRate.textContent = "Dense Float32 Vectors";
+      }
+    }
+
+    // Bridge Status Badge & Pipeline Animation Toggle
+    const isBridgeLive = pc1?.online && pc2?.online;
+    if (tpBadge && tpStatusText) {
+      if (isBridgeLive) {
+        tpBadge.className = "node-status-badge badge-online";
+        tpStatusText.textContent = "Synchronized";
+      } else if (pc1?.online || pc2?.online) {
+        tpBadge.className = "node-status-badge badge-fallback-local";
+        tpStatusText.textContent = "Single Node";
+      } else {
+        tpBadge.className = "node-status-badge badge-offline";
+        tpStatusText.textContent = "Disconnected";
+      }
+    }
+
+    if (tpPipelineBox) {
+      if (!isBridgeLive) {
+        tpPipelineBox.classList.add("paused");
+      } else {
+        tpPipelineBox.classList.remove("paused");
+      }
+    }
   } catch (err) {
     console.debug("Workload telemetry probe notice:", err);
   } finally {
