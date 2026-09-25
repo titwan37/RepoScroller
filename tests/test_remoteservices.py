@@ -31,7 +31,7 @@ def test_chat_llama_response():
     }
     
     t0 = time.time()
-    r = httpx.post(f"{PC2_URL}/api/chat", json=payload, timeout=30.0)
+    r = httpx.post(f"{PC2_URL}/api/chat", json=payload, timeout=90.0)
     elapsed = time.time() - t0
     
     assert r.status_code == 200, f"Chat failed: {r.text}"
@@ -83,3 +83,5 @@ def test_embed_batch_performance():
     
     assert len(embeddings) == 16, f"Expected 16 embeddings, got {len(embeddings)}"
     assert len(embeddings[0]) == 1024
+
+

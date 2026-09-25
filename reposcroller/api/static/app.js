@@ -222,28 +222,31 @@ async function loadWorkloadTelemetry(force = false) {
       }
 
       if (pc1Latency) {
-        if (pc1.stats?.last_latency_ms > 0) {
-          pc1Latency.textContent = `${pc1.stats.last_latency_ms.toFixed(1)} ms (avg ${pc1.stats.avg_latency_ms.toFixed(1)} ms)`;
-        } else if (pc1.stats?.requests > 0) {
-          pc1Latency.textContent = `${pc1.stats.avg_latency_ms.toFixed(1)} ms`;
-        } else {
-          pc1Latency.textContent = 'Ready';
-        }
+        pc1Latency.textContent = `${pc1.processor || '100% CPU'} (${pc1.vram_formatted || '0 MB'})`;
+        pc1Latency.title = `Host Processor: ${pc1.processor} | VRAM: ${pc1.vram_formatted}`;
       }
 
       if (pc1Activity) {
         const act = pc1.stats?.last_active || (pc1.online ? 'idle' : 'offline');
+        const ctxStr = pc1.context_length > 0 ? ` (${(pc1.context_length >= 1024 ? (pc1.context_length / 1024).toFixed(0) + 'k' : pc1.context_length)} ctx)` : '';
         if (act === 'active') {
-          pc1Activity.innerHTML = `<span class="pulse-dot-emerald"></span> active`;
+          pc1Activity.innerHTML = `<span class="pulse-dot-emerald"></span> active${ctxStr}`;
         } else if (pc1.online) {
-          pc1Activity.innerHTML = `<span class="idle-dot"></span> idle`;
+          pc1Activity.innerHTML = `<span class="idle-dot"></span> idle${ctxStr}`;
         } else {
           pc1Activity.textContent = 'offline';
         }
       }
 
-      if (pc1ModelsList && pc1.models_loaded) {
-        if (Array.isArray(pc1.models_loaded) && pc1.models_loaded.length > 0) {
+      if (pc1ModelsList && pc1.online) {
+        const details = Array.isArray(pc1.models_detail) ? pc1.models_detail : [];
+        if (details.length > 0) {
+          pc1ModelsList.innerHTML = details.map(d => {
+            const shortName = d.name.split(':')[0];
+            const meta = d.quantization && d.quantization !== 'Unknown' ? ` (${d.quantization})` : '';
+            return `<span class="mini-tag" title="${d.name}: ${d.size_total_mb}MB RAM | ${d.processor}">${shortName}${meta}</span>`;
+          }).join('');
+        } else if (Array.isArray(pc1.models_loaded) && pc1.models_loaded.length > 0) {
           pc1ModelsList.innerHTML = pc1.models_loaded.map(m => `<span class="mini-tag">${m}</span>`).join('');
         } else {
           pc1ModelsList.innerHTML = `<span class="mini-tag text-faint">None loaded</span>`;
@@ -306,10 +309,13 @@ async function loadWorkloadTelemetry(force = false) {
       }
 
       if (pc2Latency) {
-        if (pc2.stats?.last_latency_ms > 0) {
-          pc2Latency.textContent = `${pc2.stats.last_latency_ms.toFixed(1)} ms (avg ${pc2.stats.avg_latency_ms.toFixed(1)} ms)`;
-        } else if (pc2.stats?.requests > 0) {
-          pc2Latency.textContent = `${pc2.stats.avg_latency_ms.toFixed(1)} ms`;
+        if (pc2.online && pc2.total_vram_mb > 0) {
+          pc2Latency.textContent = `${pc2.vram_formatted} (${pc2.processor || '100% GPU'})`;
+          pc2Latency.title = `Active GPU VRAM Allocated: ${pc2.vram_formatted} | Architecture: ${pc2.processor} on NVIDIA RTX 3060`;
+          pc2Latency.className = "node-metric-val text-emerald font-bold";
+        } else if (pc2.stats?.last_latency_ms > 0) {
+          pc2Latency.textContent = `${pc2.stats.last_latency_ms.toFixed(1)} ms`;
+          pc2Latency.className = "node-metric-val text-amber";
         } else {
           pc2Latency.textContent = effectiveTier === "cuda" ? 'VRAM Hot' : 'Ready';
         }
@@ -317,20 +323,48 @@ async function loadWorkloadTelemetry(force = false) {
 
       if (pc2Activity) {
         const act = pc2.stats?.last_active || (pc2.online ? 'active' : 'offline');
+        const ctxStr = pc2.context_length > 0 ? ` (${pc2.context_length.toLocaleString()} ctx)` : '';
         if (act === 'active' || (pc2.online && effectiveTier === 'cuda')) {
-          pc2Activity.innerHTML = `<span class="pulse-dot-emerald"></span> active`;
+          pc2Activity.innerHTML = `<span class="pulse-dot-emerald"></span> active${ctxStr}`;
+          pc2Activity.className = "node-metric-val text-cyan font-bold";
         } else if (pc2.online) {
-          pc2Activity.innerHTML = `<span class="idle-dot"></span> idle`;
+          pc2Activity.innerHTML = `<span class="idle-dot"></span> idle${ctxStr}`;
         } else {
           pc2Activity.textContent = 'offline';
         }
       }
 
-      if (pc2ModelsList && pc2.models_loaded) {
-        if (Array.isArray(pc2.models_loaded) && pc2.models_loaded.length > 0) {
-          pc2ModelsList.innerHTML = pc2.models_loaded.map(m => `<span class="mini-tag tag-cuda">⚡ ${m}</span>`).join('');
+      if (pc2ModelsList) {
+        if (!pc2.online) {
+          pc2ModelsList.innerHTML = `<span class="mini-tag text-faint">Offline</span>`;
         } else {
-          pc2ModelsList.innerHTML = `<span class="mini-tag text-faint">VRAM Standby</span>`;
+          const details = Array.isArray(pc2.models_detail) ? pc2.models_detail : [];
+          const embedModel = pc2.target_model || "snowflake-arctic-embed2:latest";
+          const chatModel = pc2.chat_model || "llama3.2:3b";
+
+          // Match details from /api/ps
+          const embedDetail = details.find(d => d.name.includes(embedModel.split(':')[0]));
+          const chatDetail = details.find(d => d.name.includes(chatModel.split(':')[0]));
+
+          const isEmbedHot = !!embedDetail;
+          const isChatHot = !!chatDetail;
+
+          const embedVramMeta = embedDetail ? ` • ${embedDetail.size_vram_mb}MB ${embedDetail.quantization}` : '';
+          const chatVramMeta = chatDetail ? ` • ${(chatDetail.size_vram_mb >= 1024 ? (chatDetail.size_vram_mb / 1024).toFixed(1) + 'GB' : chatDetail.size_vram_mb + 'MB')} ${chatDetail.quantization}` : '';
+
+          let tagsHtml = `
+            <span class="mini-tag tag-cuda" title="${isEmbedHot ? 'VRAM Resident (Active on GPU)' : 'Configured CUDA Tensor Embeddings'}">${isEmbedHot ? '⚡ ' : ''}${embedModel}${embedVramMeta}</span>
+            <span class="mini-tag tag-chat" title="${isChatHot ? 'VRAM Resident (Active on GPU)' : 'Configured CUDA Chat Reasoning'}">${isChatHot ? '⚡ ' : ''}${chatModel}${chatVramMeta}</span>
+          `;
+
+          // Append any extra models running in VRAM on PC2
+          details.forEach(d => {
+            if (!d.name.includes(embedModel.split(':')[0]) && !d.name.includes(chatModel.split(':')[0])) {
+              tagsHtml += `<span class="mini-tag tag-cuda" title="${d.name}: ${d.size_vram_mb}MB VRAM">⚡ ${d.name} (${d.size_vram_mb}MB)</span>`;
+            }
+          });
+
+          pc2ModelsList.innerHTML = tagsHtml;
         }
       }
       

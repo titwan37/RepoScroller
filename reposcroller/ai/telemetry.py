@@ -366,6 +366,11 @@ class WorkloadTelemetry:
                     "online": local_node["online"],
                     "ping_ms": local_node["ping_ms"],
                     "models_loaded": local_node["models_loaded"],
+                    "models_detail": local_node.get("models_detail", []),
+                    "vram_formatted": local_node.get("vram_formatted", "0 MB (CPU)"),
+                    "total_vram_mb": local_node.get("total_vram_mb", 0.0),
+                    "processor": local_node.get("processor", "100% CPU"),
+                    "context_length": local_node.get("context_length", 0),
                     "stats": {
                         "requests": self.chat_pc1_requests,
                         "last_latency_ms": self.chat_last_latency_ms if self.chat_active_node == "pc1" else 0.0,
@@ -384,6 +389,12 @@ class WorkloadTelemetry:
                     "online": cuda_node["online"],
                     "ping_ms": cuda_node["ping_ms"],
                     "models_loaded": cuda_node["models_loaded"],
+                    "models_detail": cuda_node.get("models_detail", []),
+                    "vram_formatted": cuda_node.get("vram_formatted", "VRAM Standby"),
+                    "total_vram_mb": cuda_node.get("total_vram_mb", 0.0),
+                    "total_vram_gb": cuda_node.get("total_vram_gb", 0.0),
+                    "processor": cuda_node.get("processor", "100% GPU"),
+                    "context_length": cuda_node.get("context_length", 0),
                     "effective_tier": effective_tier,
                     "tier_color": tier_color,
                     "stats": {
@@ -405,19 +416,64 @@ class WorkloadTelemetry:
             return result
 
     def _probe_single_node(self, base_url: str, expected_role: str) -> Dict[str, Any]:
-        """Test reachability and list running models on a single Ollama instance with robust LAN timeout."""
+        """Test reachability and extract running model details from /api/ps with robust LAN timeout."""
         t0 = time.time()
-        # 1. First attempt /api/ps (running models in VRAM/RAM)
+        # 1. First attempt /api/ps (running models in VRAM/RAM with full specs)
         try:
             with httpx.Client(timeout=3.5) as client:
                 r = client.get(f"{base_url.rstrip('/')}/api/ps")
                 elapsed_ms = round((time.time() - t0) * 1000, 2)
                 if r.status_code == 200:
-                    loaded_models = [m.get("name", "") for m in r.json().get("models", [])]
+                    raw_models = r.json().get("models", [])
+                    loaded_models = []
+                    models_detail = []
+                    total_vram_bytes = 0
+                    total_size_bytes = 0
+                    max_ctx = 0
+
+                    for m in raw_models:
+                        m_name = m.get("name", "")
+                        loaded_models.append(m_name)
+                        sz_vram = m.get("size_vram", 0)
+                        sz_total = m.get("size", 0)
+                        ctx = m.get("context_length", 0)
+                        details = m.get("details", {})
+
+                        total_vram_bytes += sz_vram
+                        total_size_bytes += sz_total
+                        if ctx > max_ctx:
+                            max_ctx = ctx
+
+                        models_detail.append({
+                            "name": m_name,
+                            "size_vram_bytes": sz_vram,
+                            "size_vram_mb": round(sz_vram / (1024 * 1024), 1),
+                            "size_total_mb": round(sz_total / (1024 * 1024), 1),
+                            "context_length": ctx,
+                            "quantization": details.get("quantization_level", "Unknown"),
+                            "param_size": details.get("parameter_size", ""),
+                            "processor": "100% GPU" if sz_vram > 0 and sz_vram >= sz_total * 0.9 else ("100% CPU" if sz_vram == 0 else f"{round(sz_vram/max(1, sz_total)*100)}% GPU"),
+                            "expires_at": m.get("expires_at", "")
+                        })
+
+                    total_vram_mb = round(total_vram_bytes / (1024 * 1024), 1)
+                    total_vram_gb = round(total_vram_bytes / (1024 * 1024 * 1024), 2)
+                    is_gpu = total_vram_bytes > 0
+
+                    vram_formatted = f"{total_vram_gb} GB" if total_vram_gb >= 1.0 else (f"{total_vram_mb} MB" if total_vram_mb > 0 else "0 MB (CPU)")
+
                     return {
                         "online": True,
                         "ping_ms": elapsed_ms,
-                        "models_loaded": loaded_models
+                        "models_loaded": loaded_models,
+                        "models_detail": models_detail,
+                        "total_vram_bytes": total_vram_bytes,
+                        "total_vram_mb": total_vram_mb,
+                        "total_vram_gb": total_vram_gb,
+                        "vram_formatted": vram_formatted,
+                        "processor": "100% GPU" if is_gpu else "100% CPU",
+                        "context_length": max_ctx,
+                        "raw_models_count": len(raw_models)
                     }
         except Exception:
             pass
@@ -432,7 +488,15 @@ class WorkloadTelemetry:
                     return {
                         "online": True,
                         "ping_ms": elapsed_ms,
-                        "models_loaded": models[:3] if models else ["(idle / on-demand)"]
+                        "models_loaded": models[:3] if models else ["(idle / on-demand)"],
+                        "models_detail": [],
+                        "total_vram_bytes": 0,
+                        "total_vram_mb": 0.0,
+                        "total_vram_gb": 0.0,
+                        "vram_formatted": "Standby",
+                        "processor": "Standby",
+                        "context_length": 0,
+                        "raw_models_count": len(models)
                     }
         except Exception:
             pass
@@ -440,7 +504,15 @@ class WorkloadTelemetry:
         return {
             "online": False,
             "ping_ms": None,
-            "models_loaded": []
+            "models_loaded": [],
+            "models_detail": [],
+            "total_vram_bytes": 0,
+            "total_vram_mb": 0.0,
+            "total_vram_gb": 0.0,
+            "vram_formatted": "Offline",
+            "processor": "Offline",
+            "context_length": 0,
+            "raw_models_count": 0
         }
 
     def get_zoo_overview(self) -> Dict[str, Any]:

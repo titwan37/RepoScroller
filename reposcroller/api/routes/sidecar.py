@@ -63,6 +63,12 @@ def get_sidecar_stats():
         "payload_mib": throughput["payload_mib"],
         "model": workload_telemetry.active_tier_model or settings.OLLAMA_EMBEDDING_MODEL,
         "embed_url": workload_telemetry.active_tier_url or settings.embed_url,
+        "chat_model": settings.OLLAMA_MODEL_PC2,
+        "chat_url": settings.chat_url,
+        "dual_models": {
+            "embedding": workload_telemetry.active_tier_model or settings.OLLAMA_EMBEDDING_MODEL,
+            "chat": settings.OLLAMA_MODEL_PC2
+        },
         "embedding_tier": {
             "tier": tier,
             "color": tier_color,
