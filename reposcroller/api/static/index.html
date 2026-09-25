@@ -62,6 +62,44 @@
     </div>
   </section>
 
+  <!-- Metrics KPI Cards -->
+  <section class="metrics-grid">
+    <div class="metric-card">
+      <div class="metric-label">🏷️ Unique Documents</div>
+      <div id="metric-unique" class="metric-value">--</div>
+      <div class="metric-sub">Single source of truth</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">📁 Physical Locations</div>
+      <div id="metric-locations" class="metric-value">--</div>
+      <div class="metric-sub">Distributed files mapped</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">🕒 Version Links</div>
+      <div id="metric-lineage" class="metric-value text-cyan">--</div>
+      <div class="metric-sub">Evolved & draft chains</div>
+    </div>
+    <div class="metric-card metric-interactive" id="card-duplicates" onclick="toggleDuplicatesFilter()"
+      title="Click to view all duplicate files in the repository">
+      <div class="metric-header-row">
+        <div class="metric-label">📄 Deduplicated Savings</div>
+        <span id="duplicates-badge" class="badge-filter-active hidden">Active Filter</span>
+      </div>
+      <div id="metric-savings" class="metric-value text-emerald">--</div>
+      <div class="metric-sub" id="duplicates-sub">Exact duplicate copies (click to filter)</div>
+    </div>
+    <div class="metric-card metric-interactive" id="card-kb-metric" onclick="switchTab('graph')"
+      title="Click to inspect Snowflake Arctic Vectors & Property Graph">
+      <div class="metric-header-row">
+        <div class="metric-label">🧠 Knowledge Base</div>
+        <span id="kb-status-dot" class="badge-filter-active"
+          style="background: rgba(99,102,241,0.2); color: var(--accent-primary);">Active</span>
+      </div>
+      <div id="metric-kb-chunks" class="metric-value text-indigo">--</div>
+      <div class="metric-sub" id="metric-kb-sub">Vectors & Graph Nodes</div>
+    </div>
+  </section>
+
   <!-- Split Workload Telemetry HUD (PC1 Localhost vs PC2 CUDA GPU) -->
   <section class="workload-hud-bar" id="workload-hud-bar">
     <div class="workload-hud-header">
@@ -141,55 +179,39 @@
     </div>
   </section>
 
-  <!-- Main Container -->
-  <main class="dashboard-grid">
-    
-    <!-- Left Column: Metrics, Pre-flight Dropzone, and Ledger -->
+  <!-- Top Workspace Switcher Bar -->
+  <nav class="workspace-nav-bar">
+    <div class="workspace-tabs-group">
+      <button id="ws-btn-ledger" class="ws-tab-btn active" onclick="switchWorkspace('ledger')">
+        <span class="ws-tab-icon">🗄️</span>
+        <span class="ws-tab-title">Document Ledger</span>
+        <span class="ws-tab-pill">Single Source of Truth</span>
+      </button>
+      <button id="ws-btn-graphrag" class="ws-tab-btn" onclick="switchWorkspace('graphrag')">
+        <span class="ws-tab-icon">🧠</span>
+        <span class="ws-tab-title">GraphRAG Sovereign Studio</span>
+        <span class="ws-tab-pill pill-ai">CUDA Hybrid Search</span>
+      </button>
+      <button id="ws-btn-chat" class="ws-tab-btn" onclick="switchWorkspace('chat')">
+        <span class="ws-tab-icon">💬</span>
+        <span class="ws-tab-title">AI Interrogation Assistant</span>
+        <span class="ws-tab-pill pill-chat">Grounded Reasoning</span>
+      </button>
+    </div>
+  </nav>
+
+  <!-- =========================================================================
+       WORKSPACE 1: DOCUMENT LEDGER & LINEAGE EXPLORER
+       ========================================================================= -->
+  <main id="ws-pane-ledger" class="workspace-pane active dashboard-grid">
+    <!-- Left Column: Pre-flight Dropzone and Ledger Table -->
     <div class="main-column">
-      
-      <!-- Metrics KPI Cards -->
-      <section class="metrics-grid">
-        <div class="metric-card">
-          <div class="metric-label">🏷️ Unique Documents</div>
-          <div id="metric-unique" class="metric-value">--</div>
-          <div class="metric-sub">Single source of truth</div>
-        </div>
-        <div class="metric-card">
-          <div class="metric-label">📁 Physical Locations</div>
-          <div id="metric-locations" class="metric-value">--</div>
-          <div class="metric-sub">Distributed files mapped</div>
-        </div>
-        <div class="metric-card metric-interactive" id="card-duplicates" onclick="toggleDuplicatesFilter()" title="Click to view all duplicate files in the repository">
-          <div class="metric-header-row">
-            <div class="metric-label">📄 Deduplicated Savings</div>
-            <span id="duplicates-badge" class="badge-filter-active hidden">Active Filter</span>
-          </div>
-          <div id="metric-savings" class="metric-value text-emerald">--</div>
-          <div class="metric-sub" id="duplicates-sub">Exact duplicate copies (click to filter)</div>
-        </div>
-        <div class="metric-card">
-          <div class="metric-label">🕒 Version Links</div>
-          <div id="metric-lineage" class="metric-value text-cyan">--</div>
-          <div class="metric-sub">Evolved & draft chains</div>
-        </div>
-        <div class="metric-card metric-interactive" id="card-kb-metric" onclick="switchTab('graph')" title="Click to inspect Snowflake Arctic Vectors & Property Graph">
-          <div class="metric-header-row">
-            <div class="metric-label">🧠 Knowledge Base</div>
-            <span id="kb-status-dot" class="badge-filter-active" style="background: rgba(99,102,241,0.2); color: var(--accent-primary);">Active</span>
-          </div>
-          <div id="metric-kb-chunks" class="metric-value text-indigo">--</div>
-          <div class="metric-sub" id="metric-kb-sub">Vectors & Graph Nodes</div>
-        </div>
-      </section>
-
-
-
       <!-- Document Ledger Explorer -->
       <section class="ledger-section">
         <div class="section-header">
           <div class="section-title">Document Ledger (WAL)</div>
           <div class="filter-controls">
-            <input type="text" id="search-box" placeholder="Filter filename..." oninput="handleSearch(event)">
+            <input type="text" id="search-box" placeholder="Search filename or snippet (e.g. touran)..." oninput="handleSearch(event)">
             <select id="category-filter" onchange="handleCategoryChange()" title="Filter by dynamic taxonomy category">
               <option value="">All Categories (Taxonomy)</option>
             </select>
@@ -250,15 +272,12 @@
       <div class="resizer-handle-grip"></div>
     </div>
 
-    <!-- Right Column: Dual Pane Detail & Chatbot -->
+    <!-- Right Column: Document Lineage Detail Panel -->
     <aside class="side-column" id="side-column">
       <div class="tabs-header">
-        <button id="tab-btn-detail" class="tab-btn active" onclick="switchTab('detail')">Lineage Detail</button>
-        <button id="tab-btn-chat" class="tab-btn" onclick="switchTab('chat')">AI Interrogation</button>
-        <button id="tab-btn-graph" class="tab-btn" onclick="switchTab('graph')">Knowledge Base & Graph</button>
+        <button id="tab-btn-detail" class="tab-btn active">Lineage & Cryptographic Detail</button>
       </div>
 
-      <!-- Tab 1: Document Detail & Lineage -->
       <div id="tab-detail" class="tab-content active">
         <div id="detail-empty" class="empty-state">
           <div class="empty-icon">🔍</div>
@@ -268,188 +287,256 @@
           <!-- Populated dynamically via app.js -->
         </div>
       </div>
-
-      <!-- Tab 2: Chatbot Interrogation -->
-      <div id="tab-chat" class="tab-content">
-        <div class="chat-container">
-          <!-- Active Document Context Banner -->
-          <div id="chat-context-banner" class="chat-context-banner hidden">
-            <div class="chat-context-info">
-              <span class="chat-context-icon">📄</span>
-              <span class="chat-context-label">Focus:</span>
-              <span id="chat-context-name" class="chat-context-name" title="Current document in interrogation context"></span>
-            </div>
-            <button class="chat-context-clear" onclick="clearChatDocumentContext()"
-              title="Clear document focus to query across all repositories">✕</button>
-          </div>
-
-          <div id="chat-messages" class="chat-messages">
-            <div class="chat-msg bot">
-              <div class="msg-bubble">
-                Hello! I am your <strong>RepoScroller Interrogation Assistant</strong>. Ask me if a document or draft exists, e.g.:
-                <div class="suggestion-chips">
-                  <span class="chip suggestion" onclick="sendSuggestion('Do we have the 2024 Kantonsgericht decision?')">Decision 2024</span>
-                  <span class="chip suggestion" onclick="sendSuggestion('Do we have any contract for Acme?')">Acme Contract</span>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div class="chat-input-row">
-            <input type="text" id="chat-input" placeholder="Ask about any document copy..." onkeydown="if(event.key==='Enter') sendChatMessage()">
-            <button id="btn-send-chat" class="btn btn-primary" onclick="sendChatMessage()">Send</button>
-          </div>
-        </div>
-      </div>
-
-      <!-- Tab 3: Knowledge Base & Property Graph Explorer -->
-      <div id="tab-graph" class="tab-content">
-        <div class="kb-container">
-          <!-- Sidecar & Queue Status Card -->
-          <div class="kb-card">
-            <div class="kb-card-header">
-              <div class="kb-card-title">
-                <span>⚡ Sidecar Indexing Pipeline</span>
-                <span id="kb-engine-tag" class="kb-engine-badge">snowflake-arctic-embed:latest</span>
-              </div>
-              <button id="btn-kb-refresh" class="btn btn-outline btn-xs" onclick="loadSidecarStats()" title="Refresh Sidecar Stats">🔄</button>
-            </div>
-
-            <!-- Queue Progress Track -->
-            <div class="kb-progress-section">
-              <div class="kb-progress-labels">
-                <span class="kb-progress-label-main">Ingestion Progress</span>
-                <span id="kb-progress-pct" class="kb-progress-pct">0%</span>
-              </div>
-              <div class="kb-progress-bar-multi">
-                <div id="kb-bar-completed" class="kb-bar-seg seg-completed" style="width: 0%;" title="Completed"></div>
-                <div id="kb-bar-processing" class="kb-bar-seg seg-processing" style="width: 0%;" title="Processing"></div>
-                <div id="kb-bar-pending" class="kb-bar-seg seg-pending" style="width: 0%;" title="Pending"></div>
-                <div id="kb-bar-failed" class="kb-bar-seg seg-failed" style="width: 0%;" title="Failed"></div>
-              </div>
-              <div class="kb-queue-legend">
-                <span class="legend-item"><span class="dot dot-completed"></span> Completed: <strong id="kb-stat-completed">0</strong></span>
-                <span class="legend-item"><span class="dot dot-processing"></span> Active: <strong id="kb-stat-processing">0</strong></span>
-                <span class="legend-item"><span class="dot dot-pending"></span> Queue: <strong id="kb-stat-pending">0</strong></span>
-                <span class="legend-item"><span class="dot dot-failed"></span> Failed: <strong id="kb-stat-failed">0</strong></span>
-              </div>
-            </div>
-
-            <!-- Vector & Chunks Metrics -->
-            <div class="kb-metrics-mini">
-              <div class="kb-mini-stat">
-                <span class="kb-stat-num" id="kb-stat-chunks">0</span>
-                <span class="kb-stat-lbl">Chunks Embedded</span>
-              </div>
-              <div class="kb-mini-stat">
-                <span class="kb-stat-num" id="kb-stat-docs-chunked">0</span>
-                <span class="kb-stat-lbl">Docs Processed</span>
-              </div>
-              <div class="kb-mini-stat actions-group">
-                <button id="btn-sidecar-toggle" class="btn btn-emerald btn-xs" onclick="toggleContinuousSidecar()" title="Start/Stop continuous background ingestion">
-                  <span id="sidecar-toggle-icon">▶</span> <span id="sidecar-toggle-text">Start Continuous Ingestion</span>
-                </button>
-                <button id="btn-trigger-batch" class="btn btn-outline btn-xs" onclick="triggerSidecarBatch()" title="Process a single batch immediately">
-                  ⚡ Single Batch
-                </button>
-              </div>
-            </div>
-
-            <!-- Live Session Status Strip -->
-            <div id="kb-session-strip" class="kb-session-strip">
-              <div class="kb-session-left">
-                <span class="kb-worker-dot" id="kb-worker-dot"></span>
-                <span id="kb-worker-status-text" class="kb-worker-status-text">Pipeline Idle</span>
-              </div>
-              <div class="kb-session-right">
-                <span id="kb-session-counter" class="kb-session-counter">Session: 0 docs • 0 chunks</span>
-                <span id="kb-session-uptime" class="kb-session-uptime"></span>
-              </div>
-            </div>
-          </div>
-
-          <!-- Property Graph Knowledge Topology Card -->
-          <div class="kb-card">
-            <div class="kb-card-header">
-              <div class="kb-card-title">
-                <span>🕸️ Property Knowledge Graph</span>
-                <span class="kb-engine-badge" style="background: rgba(16,185,129,0.15); color: var(--accent-emerald);">Hybrid Neo4j/SQLite</span>
-              </div>
-            </div>
-
-            <div class="kb-graph-summary">
-              <div class="kb-graph-metric">
-                <span class="kb-graph-val" id="kb-graph-nodes">0</span>
-                <span class="kb-graph-lbl">Entities (Nodes)</span>
-              </div>
-              <div class="kb-graph-metric">
-                <span class="kb-graph-val" id="kb-graph-edges">0</span>
-                <span class="kb-graph-lbl">Relations (Edges)</span>
-              </div>
-              <div class="kb-graph-metric">
-                <span class="kb-graph-val" id="kb-graph-doclinks">0</span>
-                <span class="kb-graph-lbl">Document Links</span>
-              </div>
-            </div>
-
-            <div class="kb-nodetypes-wrap">
-              <div class="kb-nodetypes-header">
-                <div class="kb-sub-title">Entity Distribution</div>
-                <span class="kb-hint-text">Click type to toggle entities</span>
-              </div>
-              <div id="kb-nodetypes-list" class="kb-chips-row">
-                <!-- Prebuilt & dynamically loaded entity type toggle chips -->
-                <button class="kb-type-chip" data-type="contract_type" onclick="toggleEntityType('contract_type')">📄 <strong>contract_type</strong>: <span class="badge-count">11</span></button>
-                <button class="kb-type-chip" data-type="location" onclick="toggleEntityType('location')">📍 <strong>location</strong>: <span class="badge-count">9</span></button>
-                <button class="kb-type-chip" data-type="organization" onclick="toggleEntityType('organization')">🏢 <strong>organization</strong>: <span class="badge-count">214</span></button>
-                <button class="kb-type-chip" data-type="person" onclick="toggleEntityType('person')">👤 <strong>person</strong>: <span class="badge-count">110</span></button>
-                <button class="kb-type-chip" data-type="statute" onclick="toggleEntityType('statute')">🏷️ <strong>statute</strong>: <span class="badge-count">28</span></button>
-              </div>
-
-              <!-- Collapsible / Toggleable Entity List Drawer -->
-              <div id="kb-entity-drawer" class="kb-entity-drawer hidden">
-                <div class="kb-drawer-header">
-                  <div class="kb-drawer-title-row">
-                    <span id="kb-drawer-title" class="kb-drawer-title">🏢 Organization Entities</span>
-                    <span id="kb-drawer-count" class="badge badge-sm badge-info">214</span>
-                  </div>
-                  <button class="kb-drawer-close" onclick="closeEntityDrawer()" title="Close list">✕</button>
-                </div>
-                <div class="kb-drawer-search">
-                  <input type="text" id="kb-entity-filter-input" placeholder="Filter entities in list..." oninput="filterEntityList(this.value)">
-                </div>
-                <div id="kb-entity-items" class="kb-entity-items-grid">
-                  <!-- Populated dynamically -->
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Interactive GraphRAG Explorer Card -->
-          <div class="kb-card kb-card-grow">
-            <div class="kb-card-header">
-              <div class="kb-card-title">
-                <span>🔍 Multi-Signal GraphRAG Explorer</span>
-              </div>
-            </div>
-            <p class="kb-desc-text">Performs dense vector retrieval + BM25 keyword matching + 1-hop graph neighborhood expansion with Reciprocal Rank Fusion (RRF).</p>
-            
-            <div class="kb-search-row">
-              <input type="text" id="kb-rag-input" placeholder="Query knowledge base (e.g. contrat, decision, acme)..." onkeydown="if(event.key==='Enter') executeGraphRAGSearch()">
-              <button id="btn-graphrag-search" class="btn btn-primary" onclick="executeGraphRAGSearch()">Search</button>
-            </div>
-
-            <!-- GraphRAG Results Container -->
-            <div id="kb-rag-results" class="kb-rag-results">
-              <div class="empty-state" style="padding: 1.5rem 0.5rem;">
-                <div class="empty-icon" style="font-size: 1.6rem;">🔬</div>
-                <div class="empty-text" style="font-size: 0.8rem;">Enter a query above to test real-time hybrid GraphRAG signals.</div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
     </aside>
+  </main>
+
+  <!-- =========================================================================
+       WORKSPACE 2: GRAPHRAG SOVEREIGN STUDIO (FULL-WIDTH HERO VIEW)
+       ========================================================================= -->
+  <main id="ws-pane-graphrag" class="workspace-pane hidden graphrag-studio-layout">
+    <!-- Hero GraphRAG Search Section -->
+    <section class="studio-hero-search-card">
+      <div class="studio-search-header">
+        <div class="studio-title-group">
+          <span class="studio-icon">🧠</span>
+          <div>
+            <h2 class="studio-title">Multi-Signal GraphRAG Sovereign Explorer</h2>
+            <p class="studio-subtitle">Deep hybrid retrieval combining dense RTX 3060 CUDA vector embeddings, BM25 keyword matching, and 1-hop Property Knowledge Graph expansion with Reciprocal Rank Fusion (RRF).</p>
+          </div>
+        </div>
+        <div class="studio-badge-pill">⚡ NVIDIA RTX 3060 CUDA Accelerated</div>
+      </div>
+
+      <div class="studio-search-bar-row">
+        <div class="studio-search-input-wrap">
+          <span class="search-input-icon">🔍</span>
+          <input type="text" id="studio-rag-input" placeholder="Query semantic knowledge base (e.g. touran assurance, contrat de bail genève, decision kantonsgericht)..." onkeydown="if(event.key==='Enter') executeStudioGraphRAGSearch()">
+          <button id="btn-studio-rag-clear" class="btn-clear-search hidden" onclick="clearStudioRAGSearch()">✕</button>
+        </div>
+        <button id="btn-studio-rag-search" class="btn btn-primary btn-studio-search" onclick="executeStudioGraphRAGSearch()">
+          <span>⚡ Execute Hybrid Retrieval</span>
+        </button>
+      </div>
+
+      <!-- Quick Suggestion Chips -->
+      <div class="studio-suggestion-chips">
+        <span class="chips-label">Quick Prompts:</span>
+        <button class="suggestion-chip" onclick="executeStudioSuggestedQuery('touran')">🚗 Touran Documents</button>
+        <button class="suggestion-chip" onclick="executeStudioSuggestedQuery('contrat de travail')">📄 Contrats de travail</button>
+        <button class="suggestion-chip" onclick="executeStudioSuggestedQuery('gericht urteil entscheid')">⚖️ Court Judgments</button>
+        <button class="suggestion-chip" onclick="executeStudioSuggestedQuery('allianz versicherung')">🛡️ Allianz Policies</button>
+        <button class="suggestion-chip" onclick="executeStudioSuggestedQuery('steuerveranlagung')">🏷️ Tax Assessments</button>
+      </div>
+    </section>
+
+    <!-- 2-Column Studio Grid: Left Results / Right Topology & Sidecar Ingestion -->
+    <div class="studio-content-grid">
+      <!-- Left Column: Multi-Signal Ranked Results -->
+      <div class="studio-results-column">
+        <div class="studio-column-header">
+          <div class="column-title">
+            <span>📊 Retrieved Candidates & Signal Breakdown</span>
+            <span id="studio-results-count" class="badge badge-sm badge-info">0 candidates</span>
+          </div>
+          <div id="studio-signals-summary" class="studio-signals-summary">
+            <!-- Dynamic signals stats -->
+          </div>
+        </div>
+
+        <div id="studio-rag-results-container" class="studio-results-list">
+          <div class="studio-empty-state">
+            <div class="empty-icon">🔬</div>
+            <div class="empty-title">Ready for Multi-Signal Retrieval</div>
+            <div class="empty-text">Enter a query above or click one of the quick prompts to execute dense vector search on PC2 CUDA, BM25 scoring, and graph entity neighborhood expansion.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Column: Knowledge Topology & Sidecar Ingestion Controls -->
+      <div class="studio-controls-column">
+        <!-- Sidecar Indexing Pipeline & Telemetry Card -->
+        <div class="studio-card">
+          <div class="studio-card-header">
+            <div class="studio-card-title">
+              <span>⚡ Sidecar Indexing Pipeline</span>
+              <span id="studio-kb-engine-tag" class="kb-engine-badge">snowflake-arctic-embed2:latest</span>
+            </div>
+            <button class="btn btn-outline btn-xs" onclick="loadSidecarStats()" title="Refresh Sidecar Stats">🔄</button>
+          </div>
+
+          <!-- Queue Progress Track -->
+          <div class="kb-progress-section">
+            <div class="kb-progress-labels">
+              <span class="kb-progress-label-main">Ingestion Progress</span>
+              <span id="studio-kb-progress-pct" class="kb-progress-pct">0%</span>
+            </div>
+            <div class="kb-progress-bar-multi">
+              <div id="studio-kb-bar-completed" class="kb-bar-seg seg-completed" style="width: 0%;" title="Completed"></div>
+              <div id="studio-kb-bar-processing" class="kb-bar-seg seg-processing" style="width: 0%;" title="Processing"></div>
+              <div id="studio-kb-bar-pending" class="kb-bar-seg seg-pending" style="width: 0%;" title="Pending"></div>
+              <div id="studio-kb-bar-failed" class="kb-bar-seg seg-failed" style="width: 0%;" title="Failed"></div>
+            </div>
+            <div class="kb-queue-legend">
+              <span class="legend-item"><span class="dot dot-completed"></span> Completed: <strong id="studio-kb-stat-completed">0</strong></span>
+              <span class="legend-item"><span class="dot dot-processing"></span> Active: <strong id="studio-kb-stat-processing">0</strong></span>
+              <span class="legend-item"><span class="dot dot-pending"></span> Queue: <strong id="studio-kb-stat-pending">0</strong></span>
+              <span class="legend-item"><span class="dot dot-failed"></span> Failed: <strong id="studio-kb-stat-failed">0</strong></span>
+            </div>
+          </div>
+
+          <!-- Vector & Chunks Metrics -->
+          <div class="kb-metrics-mini">
+            <div class="kb-mini-stat">
+              <span class="kb-stat-num" id="studio-kb-stat-chunks">0</span>
+              <span class="kb-stat-lbl">Chunks Embedded</span>
+            </div>
+            <div class="kb-mini-stat">
+              <span class="kb-stat-num" id="studio-kb-stat-docs-chunked">0</span>
+              <span class="kb-stat-lbl">Docs Processed</span>
+            </div>
+            <div class="kb-mini-stat actions-group">
+              <button id="studio-btn-sidecar-toggle" class="btn btn-emerald btn-xs" onclick="toggleContinuousSidecar()" title="Start/Stop continuous background ingestion">
+                <span id="studio-sidecar-toggle-icon">▶</span> <span id="studio-sidecar-toggle-text">Start Continuous Ingestion</span>
+              </button>
+              <button id="studio-btn-trigger-batch" class="btn btn-outline btn-xs" onclick="triggerSidecarBatch()" title="Process a single batch immediately">
+                ⚡ Single Batch
+              </button>
+            </div>
+          </div>
+
+          <!-- Live Session Status Strip -->
+          <div id="studio-kb-session-strip" class="kb-session-strip">
+            <div class="kb-session-left">
+              <span class="kb-worker-dot" id="studio-kb-worker-dot"></span>
+              <span id="studio-kb-worker-status-text" class="kb-worker-status-text">Pipeline Idle</span>
+            </div>
+            <div class="kb-session-right">
+              <span id="studio-kb-session-counter" class="kb-session-counter">Session: 0 docs • 0 chunks</span>
+              <span id="studio-kb-session-uptime" class="kb-session-uptime"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Property Graph Knowledge Topology Card -->
+        <div class="studio-card">
+          <div class="studio-card-header">
+            <div class="studio-card-title">
+              <span>🕸️ Property Knowledge Graph</span>
+              <span class="kb-engine-badge" style="background: rgba(16,185,129,0.15); color: var(--accent-emerald);">Hybrid Neo4j/SQLite</span>
+            </div>
+          </div>
+
+          <div class="kb-graph-summary">
+            <div class="kb-graph-metric">
+              <span class="kb-graph-val" id="studio-kb-graph-nodes">0</span>
+              <span class="kb-graph-lbl">Entities (Nodes)</span>
+            </div>
+            <div class="kb-graph-metric">
+              <span class="kb-graph-val" id="studio-kb-graph-edges">0</span>
+              <span class="kb-graph-lbl">Relations (Edges)</span>
+            </div>
+            <div class="kb-graph-metric">
+              <span class="kb-graph-val" id="studio-kb-graph-doclinks">0</span>
+              <span class="kb-graph-lbl">Document Links</span>
+            </div>
+          </div>
+
+          <div class="kb-nodetypes-wrap">
+            <div class="kb-nodetypes-header">
+              <div class="kb-sub-title">Entity Distribution</div>
+              <span class="kb-hint-text">Click type to inspect entities</span>
+            </div>
+            <div id="studio-kb-nodetypes-list" class="kb-chips-row">
+              <button class="kb-type-chip" data-type="contract_type" onclick="toggleEntityType('contract_type')">📄 <strong>contract_type</strong>: <span class="badge-count">--</span></button>
+              <button class="kb-type-chip" data-type="location" onclick="toggleEntityType('location')">📍 <strong>location</strong>: <span class="badge-count">--</span></button>
+              <button class="kb-type-chip" data-type="organization" onclick="toggleEntityType('organization')">🏢 <strong>organization</strong>: <span class="badge-count">--</span></button>
+              <button class="kb-type-chip" data-type="person" onclick="toggleEntityType('person')">👤 <strong>person</strong>: <span class="badge-count">--</span></button>
+              <button class="kb-type-chip" data-type="statute" onclick="toggleEntityType('statute')">🏷️ <strong>statute</strong>: <span class="badge-count">--</span></button>
+            </div>
+
+            <!-- Collapsible Entity List Drawer -->
+            <div id="studio-kb-entity-drawer" class="kb-entity-drawer hidden">
+              <div class="kb-drawer-header">
+                <div class="kb-drawer-title-row">
+                  <span id="studio-kb-drawer-title" class="kb-drawer-title">🏢 Organization Entities</span>
+                  <span id="studio-kb-drawer-count" class="badge badge-sm badge-info">0</span>
+                </div>
+                <button class="kb-drawer-close" onclick="closeEntityDrawer()" title="Close list">✕</button>
+              </div>
+              <div class="kb-drawer-search">
+                <input type="text" id="studio-kb-entity-filter-input" placeholder="Filter entities in list..." oninput="filterEntityList(this.value)">
+              </div>
+              <div id="studio-kb-entity-items" class="kb-entity-items-grid">
+                <!-- Populated dynamically -->
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- =========================================================================
+       WORKSPACE 3: AI INTERROGATION & REASONING ROOM (FULL-WIDTH CHAT)
+       ========================================================================= -->
+  <main id="ws-pane-chat" class="workspace-pane hidden ai-interrogation-layout">
+    <div class="ai-chat-studio-container">
+      <!-- Chat Header -->
+      <div class="ai-chat-header-bar">
+        <div class="ai-chat-title-group">
+          <span class="ai-chat-icon">💬</span>
+          <div>
+            <h2 class="ai-chat-title">GraphRAG-Powered AI Interrogation Assistant</h2>
+            <p class="ai-chat-subtitle">Verified multi-document reasoning grounded in vector embeddings, knowledge graph entities, and ALCOA+ ledger records via llama3.2 on PC1.</p>
+          </div>
+        </div>
+        <div class="ai-chat-badges">
+          <span class="badge-pill-chat">🧠 GraphRAG Grounded</span>
+          <span class="badge-pill-model">💻 PC1 llama3.2</span>
+        </div>
+      </div>
+
+      <!-- Active Document Context Banner -->
+      <div id="chat-context-banner" class="chat-context-banner hidden">
+        <div class="chat-context-info">
+          <span class="chat-context-icon">📄</span>
+          <span class="chat-context-label">Active Document Focus:</span>
+          <span id="chat-context-name" class="chat-context-name" title="Current document in interrogation context"></span>
+        </div>
+        <button class="chat-context-clear" onclick="clearChatDocumentContext()"
+          title="Clear document focus to query across all repositories">✕ Query Entire Repository</button>
+      </div>
+
+      <!-- Chat Stream Messages Body -->
+      <div id="chat-messages" class="chat-messages ai-studio-messages">
+        <div class="chat-msg bot">
+          <div class="msg-bubble">
+            <p>Hello! I am your <strong>RepoScroller Sovereign Interrogation Assistant</strong>.</p>
+            <p>I can analyze version lineages, search for duplicate drafts, and answer complex cross-repository inquiries grounded in your <strong>Knowledge Graph and Vector Store</strong>.</p>
+            <div class="suggestion-chips-container">
+              <div class="chips-title">Suggested questions:</div>
+              <div class="suggestion-chips">
+                <span class="chip suggestion" onclick="sendSuggestion('What agreements or contracts exist with Allianz?')">🛡️ Allianz Agreements</span>
+                <span class="chip suggestion" onclick="sendSuggestion('Find all court judgments from Kantonsgericht')">⚖️ Kantonsgericht Decisions</span>
+                <span class="chip suggestion" onclick="sendSuggestion('Do we have any vehicle inspection or tax assessment for Touran?')">🚗 Touran Records</span>
+                <span class="chip suggestion" onclick="sendSuggestion('List all duplicates across Google Drive and SyNAS')">📁 Find Cross-Drive Duplicates</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Chat Input Toolbar -->
+      <div class="ai-chat-input-container">
+        <div class="ai-chat-input-wrap">
+          <textarea id="chat-input" placeholder="Ask any question about your documents, contracts, drafts, or counterparties..." rows="1" onkeydown="handleChatInputKey(event)"></textarea>
+          <button id="btn-send-chat" class="btn btn-primary btn-chat-send" onclick="sendChatMessage()">
+            <span>Send ➔</span>
+          </button>
+        </div>
+        <div class="ai-chat-footer-hint">Press <strong>Enter</strong> to send, <strong>Shift+Enter</strong> for a new line. Answers are grounded in dense vectors and property graph entities.</div>
+      </div>
+    </div>
   </main>
 
   <!-- Toast Notification Container -->

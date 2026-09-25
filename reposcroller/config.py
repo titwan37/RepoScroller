@@ -78,7 +78,9 @@ class Settings(BaseSettings):
     # Split Workload LLM & Embedding Routing
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     OLLAMA_CHAT_BASE_URL: Optional[str] = "http://localhost:11434"  # PC1 Localhost (CPU / Reasoning)
-    OLLAMA_EMBED_BASE_URL: Optional[str] = "http://192.168.192.9:11434"  # PC2 Remote Node (CUDA GPU RTX 3060)
+    OLLAMA_EMBED_BASE_URL: Optional[str] = "http://NITRO-AN51755:11434"  # PC2 Remote Node (CUDA GPU RTX 3060)
+    OLLAMA_LOCAL_EMBED_BASE_URL: Optional[str] = "http://localhost:11434"  # Tier 2 Local CPU Fallback
+    OLLAMA_LOCAL_EMBEDDING_MODEL: str = "snowflake-arctic-embed:latest"
 
     # LLM Categorization & Analysis settings
     LLM_PROVIDER: str = "auto"  # 'auto', 'openrouter', 'ollama', or 'heuristic'
@@ -104,8 +106,13 @@ class Settings(BaseSettings):
 
     @property
     def embed_url(self) -> str:
-        """Endpoint for dense vector embeddings on remote CUDA GPU."""
+        """Endpoint for dense vector embeddings on remote CUDA GPU (Tier 1)."""
         return (self.OLLAMA_EMBED_BASE_URL or self.OLLAMA_BASE_URL).rstrip("/")
+
+    @property
+    def local_embed_url(self) -> str:
+        """Endpoint for secondary local embedding fallback on PC1 CPU (Tier 2)."""
+        return (self.OLLAMA_LOCAL_EMBED_BASE_URL or self.chat_url).rstrip("/")
 
     # Vector Store Backend Type ('sqlite' or 'qdrant')
     VECTOR_STORE_TYPE: str = "sqlite"  # 'sqlite' or 'qdrant'

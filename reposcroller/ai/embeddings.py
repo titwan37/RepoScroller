@@ -4,11 +4,12 @@ import math
 import hashlib
 import time
 import logging
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Tuple
 import httpx
 from reposcroller.config import settings
 
 logger = logging.getLogger("reposcroller.ai.embeddings")
+
 
 def cosine_similarity(v1: List[float], v2: List[float]) -> float:
     """Compute cosine similarity between two normalized or raw floating point vectors."""
@@ -23,28 +24,41 @@ def cosine_similarity(v1: List[float], v2: List[float]) -> float:
 
 
 class EmbeddingAdapter:
-    """Generates dense vector embeddings using Ollama (e.g. snowflake-arctic-embed:latest) or fallback."""
+    """Generates dense vector embeddings using a 3-tier resilient hierarchy:
+       - Tier 1 (Primary): Remote CUDA GPU Node (e.g. snowflake-arctic-embed2:latest on PC2 RTX 3060) [GREEN]
+       - Tier 2 (Secondary Fallback): Localhost CPU Ollama (e.g. snowflake-arctic-embed:latest on PC1) [ORANGE]
+       - Tier 3 (Tertiary Fallback): Deterministic Offline Pseudo-Embedding [RED]
+    """
 
     def __init__(self,
                  provider: Optional[str] = None,
                  model_name: Optional[str] = None,
                  base_url: Optional[str] = None,
+                 local_url: Optional[str] = None,
+                 local_model_name: Optional[str] = None,
                  dimension: int = 1024,
                  timeout: Optional[float] = None,
                  keep_alive: Optional[str] = None,
                  sub_batch_size: Optional[int] = None):
         self.provider = provider or settings.EMBEDDING_PROVIDER
-        self.model_name = model_name or settings.OLLAMA_EMBEDDING_MODEL
+        
+        # Tier 1 (Remote CUDA GPU Node)
         self.base_url = (base_url or settings.embed_url).rstrip("/")
+        self.model_name = model_name or settings.OLLAMA_EMBEDDING_MODEL
+
+        # Tier 2 (Local CPU Fallback Node)
+        self.local_url = (local_url or settings.local_embed_url).rstrip("/")
+        self.local_model_name = local_model_name or settings.OLLAMA_LOCAL_EMBEDDING_MODEL
+
         self.dimension = dimension
         self.timeout = timeout if timeout is not None else getattr(settings, "OLLAMA_TIMEOUT", 60.0)
         self.keep_alive = keep_alive or getattr(settings, "OLLAMA_KEEP_ALIVE", "24h")
         self.sub_batch_size = sub_batch_size or getattr(settings, "OLLAMA_SUB_BATCH_SIZE", 32)
         
-        # Reuse persistent client connection pool with reasonable timeouts
+        # Persistent client connection pool with generous connect timeout for cold VRAM model loads
         self._client = httpx.Client(
-            timeout=httpx.Timeout(self.timeout, connect=5.0, read=self.timeout, write=10.0),
-            limits=httpx.Limits(max_keepalive_connections=5, max_connections=10)
+            timeout=httpx.Timeout(self.timeout, connect=12.0, read=self.timeout, write=15.0),
+            limits=httpx.Limits(max_keepalive_connections=8, max_connections=16)
         )
 
     def _fallback_pseudo_embedding(self, text: str) -> List[float]:
@@ -64,104 +78,226 @@ class EmbeddingAdapter:
             vec = [v / norm for v in vec]
         return vec
 
+    def _try_single_ollama(self, url: str, model: str, text: str) -> Optional[List[float]]:
+        """Attempt single text embedding on a specific Ollama node."""
+        # 1. Try modern Ollama /api/embed
+        try:
+            resp = self._client.post(
+                f"{url}/api/embed",
+                json={
+                    "model": model,
+                    "input": text,
+                    "keep_alive": self.keep_alive
+                }
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                embeddings = data.get("embeddings", [])
+                if embeddings and isinstance(embeddings[0], list):
+                    return embeddings[0]
+        except Exception:
+            pass
+
+        # 2. Try legacy Ollama /api/embeddings
+        try:
+            resp_legacy = self._client.post(
+                f"{url}/api/embeddings",
+                json={
+                    "model": model,
+                    "prompt": text,
+                    "keep_alive": self.keep_alive
+                }
+            )
+            if resp_legacy.status_code == 200:
+                data = resp_legacy.json()
+                emb = data.get("embedding", [])
+                if emb:
+                    return emb
+        except Exception:
+            pass
+
+        return None
+
+    def _try_batch_ollama(self, url: str, model: str, texts: List[str]) -> Optional[List[List[float]]]:
+        """Attempt batch text embedding on a specific Ollama node."""
+        try:
+            resp = self._client.post(
+                f"{url}/api/embed",
+                json={
+                    "model": model,
+                    "input": texts,
+                    "keep_alive": self.keep_alive
+                }
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                embeddings = data.get("embeddings", [])
+                if embeddings and len(embeddings) == len(texts):
+                    return embeddings
+        except Exception:
+            pass
+
+        return None
+
     def embed_text(self, text: str) -> List[float]:
-        """Embed a single string with keep_alive and extended timeout."""
+        """Embed a single string through the 3-tier resilient embedding hierarchy."""
         if not text or not text.strip():
             return [0.0] * self.dimension
 
         if self.provider in ["auto", "ollama"]:
+            from reposcroller.ai.telemetry import workload_telemetry
+
+            # --- TIER 1: Remote CUDA GPU Node (PC2) ---
             t0 = time.time()
             try:
-                # 1. Try modern Ollama /api/embed endpoint
-                resp = self._client.post(
-                    f"{self.base_url}/api/embed",
-                    json={
-                        "model": self.model_name,
-                        "input": text,
-                        "keep_alive": self.keep_alive
-                    }
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    embeddings = data.get("embeddings", [])
-                    if embeddings and isinstance(embeddings[0], list):
-                        elapsed_ms = (time.time() - t0) * 1000
-                        from reposcroller.ai.telemetry import workload_telemetry
-                        workload_telemetry.record_embedding(chunk_count=1, latency_ms=elapsed_ms, success=True)
-                        return embeddings[0]
-
-                # 2. Try legacy Ollama /api/embeddings endpoint
-                resp_legacy = self._client.post(
-                    f"{self.base_url}/api/embeddings",
-                    json={
-                        "model": self.model_name,
-                        "prompt": text,
-                        "keep_alive": self.keep_alive
-                    }
-                )
-                if resp_legacy.status_code == 200:
-                    data = resp_legacy.json()
-                    emb = data.get("embedding", [])
-                    if emb:
-                        elapsed_ms = (time.time() - t0) * 1000
-                        from reposcroller.ai.telemetry import workload_telemetry
-                        workload_telemetry.record_embedding(chunk_count=1, latency_ms=elapsed_ms, success=True)
-                        return emb
-                else:
-                    logger.warning(f"Ollama returned HTTP {resp_legacy.status_code} for model '{self.model_name}' at {self.base_url}")
+                emb = self._try_single_ollama(self.base_url, self.model_name, text)
+                if emb:
+                    elapsed_ms = (time.time() - t0) * 1000
+                    workload_telemetry.record_embedding(
+                        chunk_count=1,
+                        latency_ms=elapsed_ms,
+                        success=True,
+                        tier="cuda",
+                        target_url=self.base_url,
+                        model=self.model_name
+                    )
+                    return emb
             except Exception as exc:
-                elapsed_ms = (time.time() - t0) * 1000
-                from reposcroller.ai.telemetry import workload_telemetry
-                workload_telemetry.record_embedding(chunk_count=1, latency_ms=elapsed_ms, success=False)
-                logger.warning(f"Ollama embedding request failed at {self.base_url} ({exc}). Using pseudo-embedding fallback.")
+                err_pc2 = str(exc)
+                logger.warning(f"Tier 1 (Remote CUDA Node at {self.base_url}) failed: {err_pc2}. Trying Tier 2 Local CPU Fallback...")
+            else:
+                err_pc2 = "HTTP error or empty response"
+
+            # --- TIER 2: Localhost CPU Fallback Node (PC1) ---
+            t1 = time.time()
+            try:
+                emb_local = self._try_single_ollama(self.local_url, self.local_model_name, text)
+                if not emb_local and self.model_name != self.local_model_name:
+                    # Also check if the primary model name happens to be installed locally
+                    emb_local = self._try_single_ollama(self.local_url, self.model_name, text)
+
+                if emb_local:
+                    elapsed_ms = (time.time() - t1) * 1000
+                    workload_telemetry.record_embedding(
+                        chunk_count=1,
+                        latency_ms=elapsed_ms,
+                        success=True,
+                        tier="local",
+                        target_url=self.local_url,
+                        model=self.local_model_name,
+                        error_msg=f"PC2 unreachable ({err_pc2}). Active on PC1 Localhost."
+                    )
+                    return emb_local
+            except Exception as exc:
+                err_pc1 = str(exc)
+                logger.warning(f"Tier 2 (Local CPU Node at {self.local_url}) failed: {err_pc1}. Falling back to Tier 3 Pseudo-Embedding...")
+            else:
+                err_pc1 = "HTTP error or model missing locally"
+
+            # --- TIER 3: Deterministic Offline Pseudo-Embedding Fallback ---
+            elapsed_ms = (time.time() - t0) * 1000
+            workload_telemetry.record_embedding(
+                chunk_count=1,
+                latency_ms=elapsed_ms,
+                success=False,
+                tier="fallback",
+                target_url="offline",
+                model="pseudo-sha256",
+                error_msg=f"Tier 1 PC2 failed ({err_pc2}) & Tier 2 PC1 failed ({err_pc1})"
+            )
 
         return self._fallback_pseudo_embedding(text)
 
     def embed_batch(self, texts: List[str]) -> List[List[float]]:
-        """Embed a list of strings using sliced sub-batching to prevent Ollama timeouts."""
+        """Embed a list of strings through the 3-tier resilient hierarchy using sliced sub-batching."""
         if not texts:
             return []
 
         if self.provider in ["auto", "ollama"]:
-            results: List[List[float]] = []
+            from reposcroller.ai.telemetry import workload_telemetry
             chunk_step = max(1, self.sub_batch_size)
-            batch_t0 = time.time()
+
+            # --- TIER 1: Remote CUDA GPU Node (PC2) ---
+            t0 = time.time()
+            tier1_results: List[List[float]] = []
+            tier1_success = True
+            err_pc2 = None
 
             for i in range(0, len(texts), chunk_step):
                 sub_slice = texts[i:i + chunk_step]
-                t_slice = time.time()
-                try:
-                    resp = self._client.post(
-                        f"{self.base_url}/api/embed",
-                        json={
-                            "model": self.model_name,
-                            "input": sub_slice,
-                            "keep_alive": self.keep_alive
-                        }
-                    )
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        embeddings = data.get("embeddings", [])
-                        if embeddings and len(embeddings) == len(sub_slice):
-                            elapsed_slice = (time.time() - t_slice) * 1000
-                            from reposcroller.ai.telemetry import workload_telemetry
-                            workload_telemetry.record_embedding(chunk_count=len(sub_slice), latency_ms=elapsed_slice, success=True)
-                            results.extend(embeddings)
-                            continue
-                    
-                    # If endpoint returned non-200 or incomplete, fall back for this sub_slice
-                    logger.warning(f"Ollama sub-batch embed returned HTTP {resp.status_code}. Processing sub-slice sequentially.")
-                    results.extend([self.embed_text(t) for t in sub_slice])
-                except Exception as exc:
-                    elapsed_slice = (time.time() - t_slice) * 1000
-                    from reposcroller.ai.telemetry import workload_telemetry
-                    workload_telemetry.record_embedding(chunk_count=len(sub_slice), latency_ms=elapsed_slice, success=False)
-                    logger.warning(f"Ollama sub-batch embed failed for slice [{i}:{i+len(sub_slice)}] ({exc}). Processing sequentially.")
-                    results.extend([self.embed_text(t) for t in sub_slice])
+                emb_slice = self._try_batch_ollama(self.base_url, self.model_name, sub_slice)
+                if emb_slice:
+                    tier1_results.extend(emb_slice)
+                else:
+                    tier1_success = False
+                    err_pc2 = f"Failed batch slice [{i}:{i+len(sub_slice)}] on {self.base_url}"
+                    break
 
-            if len(results) == len(texts):
-                return results
+            if tier1_success and len(tier1_results) == len(texts):
+                elapsed_ms = (time.time() - t0) * 1000
+                workload_telemetry.record_embedding(
+                    chunk_count=len(texts),
+                    latency_ms=elapsed_ms,
+                    success=True,
+                    tier="cuda",
+                    target_url=self.base_url,
+                    model=self.model_name
+                )
+                return tier1_results
 
-        return [self.embed_text(t) for t in texts]
+            logger.warning(f"Tier 1 (Remote CUDA Node at {self.base_url}) failed: {err_pc2}. Attempting Tier 2 Localhost CPU Fallback ({self.local_url})...")
+
+            # --- TIER 2: Localhost CPU Fallback Node (PC1) ---
+            t1 = time.time()
+            tier2_results: List[List[float]] = []
+            tier2_success = True
+            err_pc1 = None
+            active_local_model = self.local_model_name
+
+            for i in range(0, len(texts), chunk_step):
+                sub_slice = texts[i:i + chunk_step]
+                emb_slice = self._try_batch_ollama(self.local_url, self.local_model_name, sub_slice)
+                if not emb_slice and self.model_name != self.local_model_name:
+                    emb_slice = self._try_batch_ollama(self.local_url, self.model_name, sub_slice)
+                    if emb_slice:
+                        active_local_model = self.model_name
+
+                if emb_slice:
+                    tier2_results.extend(emb_slice)
+                else:
+                    tier2_success = False
+                    err_pc1 = f"Failed local slice [{i}:{i+len(sub_slice)}] on {self.local_url}"
+                    break
+
+            if tier2_success and len(tier2_results) == len(texts):
+                elapsed_ms = (time.time() - t1) * 1000
+                workload_telemetry.record_embedding(
+                    chunk_count=len(texts),
+                    latency_ms=elapsed_ms,
+                    success=True,
+                    tier="local",
+                    target_url=self.local_url,
+                    model=active_local_model,
+                    error_msg=f"PC2 unreachable ({err_pc2}). Running on Localhost CPU."
+                )
+                logger.info(f"⚡ Successfully embedded {len(texts)} chunks using Tier 2 Localhost CPU Fallback ({active_local_model}) at {self.local_url}.")
+                return tier2_results
+
+            logger.error(f"Tier 2 (Localhost CPU at {self.local_url}) failed: {err_pc1}. Degrading to Tier 3 Offline Pseudo-Embedding...")
+
+            # --- TIER 3: Deterministic Offline Pseudo-Embedding Fallback ---
+            elapsed_ms = (time.time() - t0) * 1000
+            workload_telemetry.record_embedding(
+                chunk_count=len(texts),
+                latency_ms=elapsed_ms,
+                success=False,
+                tier="fallback",
+                target_url="offline",
+                model="pseudo-sha256",
+                error_msg=f"Tier 1 failed ({err_pc2}) & Tier 2 failed ({err_pc1})"
+            )
+
+        return [self._fallback_pseudo_embedding(t) for t in texts]
+
 
 

@@ -11,7 +11,7 @@ logger = logging.getLogger("reposcroller.ai.telemetry")
 
 
 class WorkloadTelemetry:
-    """Thread-safe telemetry tracker for dual-node split workload execution."""
+    """Thread-safe telemetry tracker for dual-node split workload execution with 3-tier fallback."""
 
     def __init__(self):
         self.lock = threading.RLock()
@@ -23,7 +23,7 @@ class WorkloadTelemetry:
         self.chat_errors = 0
         self.chat_last_timestamp = None
 
-        # Embedding Telemetry (PC2 Remote CUDA GPU)
+        # Embedding Telemetry (3-Tiered Hierarchy)
         self.embed_requests = 0
         self.embed_total_chunks = 0
         self.embed_total_latency_ms = 0.0
@@ -31,7 +31,20 @@ class WorkloadTelemetry:
         self.embed_errors = 0
         self.embed_last_timestamp = None
 
-        # Health / Probe Cache (5s TTL)
+        # Tier breakdown: cuda (Tier 1), local (Tier 2), fallback (Tier 3)
+        self.embed_cuda_chunks = 0
+        self.embed_cuda_requests = 0
+        self.embed_local_chunks = 0
+        self.embed_local_requests = 0
+        self.embed_fallback_chunks = 0
+        self.embed_fallback_requests = 0
+
+        self.active_tier = "cuda"  # "cuda" (green), "local" (orange), "fallback" (red)
+        self.active_tier_model = settings.OLLAMA_EMBEDDING_MODEL
+        self.active_tier_url = settings.embed_url
+        self.last_fallback_reason: Optional[str] = None
+
+        # Health / Probe Cache (4s TTL)
         self._cache_time = 0.0
         self._cached_nodes: Dict[str, Any] = {}
 
@@ -46,31 +59,93 @@ class WorkloadTelemetry:
                 self.chat_errors += 1
             self.chat_last_timestamp = time.strftime("%H:%M:%S")
 
-    def record_embedding(self, chunk_count: int, latency_ms: float, success: bool = True):
-        """Record an api/embed or vector tensor generation event."""
+    def record_embedding(self,
+                         chunk_count: int,
+                         latency_ms: float,
+                         success: bool = True,
+                         tier: str = "cuda",
+                         target_url: str = "",
+                         model: str = "",
+                         error_msg: Optional[str] = None):
+        """Record an api/embed vector generation event with tier categorization."""
         with self.lock:
             self.embed_requests += 1
+            self.embed_total_chunks += chunk_count
+            self.active_tier = tier
+            if target_url:
+                self.active_tier_url = target_url
+            if model:
+                self.active_tier_model = model
+            if error_msg:
+                self.last_fallback_reason = error_msg
+            elif tier == "cuda":
+                self.last_fallback_reason = None
+
             if success:
-                self.embed_total_chunks += chunk_count
                 self.embed_total_latency_ms += latency_ms
                 self.embed_last_latency_ms = round(latency_ms, 2)
             else:
                 self.embed_errors += 1
+
+            if tier == "cuda":
+                self.embed_cuda_requests += 1
+                self.embed_cuda_chunks += chunk_count
+            elif tier == "local":
+                self.embed_local_requests += 1
+                self.embed_local_chunks += chunk_count
+            else:
+                self.embed_fallback_requests += 1
+                self.embed_fallback_chunks += chunk_count
+
             self.embed_last_timestamp = time.strftime("%H:%M:%S")
 
+    @property
+    def active_tier_color(self) -> str:
+        if self.active_tier == "cuda":
+            return "green"
+        elif self.active_tier == "local":
+            return "orange"
+        return "red"
+
+    @property
+    def active_tier_label(self) -> str:
+        if self.active_tier == "cuda":
+            return "⚡ CUDA Remote Node (PC2)"
+        elif self.active_tier == "local":
+            return "🟠 Localhost CPU Fallback (PC1)"
+        return "🔴 Offline Pseudo-Vectors (Degraded)"
+
     def get_node_probes(self, force: bool = False) -> Dict[str, Any]:
-        """Probe both PC1 (Localhost) and PC2 (Remote CUDA) endpoints with caching."""
+        """Probe both PC1 (Localhost) and PC2 (Remote CUDA) endpoints with caching and tier awareness."""
         now = time.time()
-        if not force and (now - self._cache_time < 4.0) and self._cached_nodes:
+        if not force and (now - self._cache_time < 3.5) and self._cached_nodes:
             return self._cached_nodes
 
         chat_url = settings.chat_url
         embed_url = settings.embed_url
+        local_embed_url = settings.local_embed_url
 
         local_node = self._probe_single_node(chat_url, expected_role="chat")
         cuda_node = self._probe_single_node(embed_url, expected_role="embed")
 
         with self.lock:
+            # If PC2 is offline, update active tier indicator accordingly if not currently set
+            effective_tier = self.active_tier
+            if not cuda_node["online"]:
+                if local_node["online"]:
+                    effective_tier = "local"
+                else:
+                    effective_tier = "fallback"
+            elif self.active_tier == "cuda":
+                effective_tier = "cuda"
+
+            tier_color = "green" if effective_tier == "cuda" else ("orange" if effective_tier == "local" else "red")
+            tier_label = (
+                "⚡ CUDA Remote Node (PC2)" if effective_tier == "cuda"
+                else ("🟠 Localhost CPU Fallback (PC1)" if effective_tier == "local"
+                      else "🔴 Offline Pseudo-Vector Fallback")
+            )
+
             avg_chat_latency = (
                 round(self.chat_total_latency_ms / (self.chat_requests - self.chat_errors), 2)
                 if (self.chat_requests - self.chat_errors) > 0 else 0.0
@@ -83,6 +158,18 @@ class WorkloadTelemetry:
             result = {
                 "timestamp": time.strftime("%H:%M:%S"),
                 "architecture": "split_workload",
+                "embedding_tier": {
+                    "active_tier": effective_tier,
+                    "tier_color": tier_color,
+                    "tier_label": tier_label,
+                    "active_url": self.active_tier_url,
+                    "active_model": self.active_tier_model,
+                    "last_fallback_reason": self.last_fallback_reason,
+                    "cuda_chunks": self.embed_cuda_chunks,
+                    "local_chunks": self.embed_local_chunks,
+                    "fallback_chunks": self.embed_fallback_chunks,
+                    "total_chunks": self.embed_total_chunks,
+                },
                 "localhost_node": {
                     "name": "PC1 Host Engine (CPU / Chat)",
                     "url": chat_url,
@@ -107,9 +194,14 @@ class WorkloadTelemetry:
                     "online": cuda_node["online"],
                     "ping_ms": cuda_node["ping_ms"],
                     "models_loaded": cuda_node["models_loaded"],
+                    "effective_tier": effective_tier,
+                    "tier_color": tier_color,
                     "stats": {
                         "requests": self.embed_requests,
                         "chunks_embedded": self.embed_total_chunks,
+                        "cuda_chunks": self.embed_cuda_chunks,
+                        "local_chunks": self.embed_local_chunks,
+                        "fallback_chunks": self.embed_fallback_chunks,
                         "last_latency_ms": self.embed_last_latency_ms,
                         "avg_latency_ms": avg_embed_latency,
                         "errors": self.embed_errors,
@@ -122,10 +214,11 @@ class WorkloadTelemetry:
             return result
 
     def _probe_single_node(self, base_url: str, expected_role: str) -> Dict[str, Any]:
-        """Test reachability and list running models on a single Ollama instance."""
+        """Test reachability and list running models on a single Ollama instance with robust LAN timeout."""
         t0 = time.time()
+        # 1. First attempt /api/ps (running models in VRAM/RAM)
         try:
-            with httpx.Client(timeout=1.5) as client:
+            with httpx.Client(timeout=3.5) as client:
                 r = client.get(f"{base_url.rstrip('/')}/api/ps")
                 elapsed_ms = round((time.time() - t0) * 1000, 2)
                 if r.status_code == 200:
@@ -138,16 +231,17 @@ class WorkloadTelemetry:
         except Exception:
             pass
 
-        # Try tags fallback
+        # 2. Try /api/tags fallback (installed models)
         try:
-            with httpx.Client(timeout=1.5) as client:
+            with httpx.Client(timeout=3.5) as client:
                 r2 = client.get(f"{base_url.rstrip('/')}/api/tags")
                 elapsed_ms = round((time.time() - t0) * 1000, 2)
                 if r2.status_code == 200:
+                    models = [m.get("name", "") for m in r2.json().get("models", [])]
                     return {
                         "online": True,
                         "ping_ms": elapsed_ms,
-                        "models_loaded": ["(idle / on-demand)"]
+                        "models_loaded": models[:3] if models else ["(idle / on-demand)"]
                     }
         except Exception:
             pass
@@ -161,3 +255,4 @@ class WorkloadTelemetry:
 
 # Global singleton instance
 workload_telemetry = WorkloadTelemetry()
+

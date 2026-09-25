@@ -183,8 +183,11 @@ async function loadWorkloadTelemetry(force = false) {
       }
     }
 
-    // PC2 CUDA GPU Node
+    // PC2 CUDA GPU Node & Multi-Tier Embedding Engine
     const pc2 = data.cuda_gpu_node;
+    const tierData = data.embedding_tier || {};
+    const effectiveTier = pc2?.effective_tier || tierData.active_tier || (pc2?.online ? "cuda" : "local");
+
     if (pc2) {
       const pc2Badge = document.getElementById("pc2-node-badge");
       const pc2Url = document.getElementById("pc2-node-url");
@@ -193,30 +196,57 @@ async function loadWorkloadTelemetry(force = false) {
       const pc2ChunksCount = document.getElementById("pc2-chunks-count");
       const pc2Latency = document.getElementById("pc2-latency-ms");
       
-      if (pc2Url) pc2Url.textContent = pc2.url;
+      if (pc2Url) {
+        if (effectiveTier === "local") {
+          pc2Url.textContent = `${tierData.active_url || 'http://127.0.0.1:11434'} (Fallback)`;
+        } else {
+          pc2Url.textContent = pc2.url;
+        }
+      }
+
       if (pc2Model) {
-        const rawModel = pc2.target_model || "snowflake-arctic-embed2:latest";
+        const rawModel = (effectiveTier === "local" ? tierData.active_model : pc2.target_model) || "snowflake-arctic-embed2:latest";
         pc2Model.textContent = rawModel.includes(":") ? rawModel.split(":")[0] : rawModel;
       }
-      if (pc2Ping) pc2Ping.textContent = pc2.online ? `${pc2.ping_ms || '<1'} ms` : 'Disconnected';
-      if (pc2ChunksCount) pc2ChunksCount.textContent = `${pc2.stats?.chunks_embedded || 0} chunks`;
+
+      if (pc2Ping) {
+        if (effectiveTier === "cuda" && pc2.online) {
+          pc2Ping.textContent = `${pc2.ping_ms || '<1'} ms`;
+        } else if (effectiveTier === "local") {
+          pc2Ping.textContent = "Local Host (CPU)";
+        } else {
+          pc2Ping.textContent = "Offline";
+        }
+      }
+
+      if (pc2ChunksCount) {
+        const total = pc2.stats?.chunks_embedded || 0;
+        pc2ChunksCount.textContent = `${total} chunks`;
+      }
+
       if (pc2Latency) {
         if (pc2.stats?.last_latency_ms > 0) {
           pc2Latency.textContent = `${pc2.stats.last_latency_ms} ms`;
         } else if (pc2.stats?.requests > 0) {
           pc2Latency.textContent = `${pc2.stats.avg_latency_ms} ms`;
         } else {
-          pc2Latency.textContent = 'VRAM Hot';
+          pc2Latency.textContent = effectiveTier === "cuda" ? 'VRAM Hot' : 'Ready';
         }
       }
       
       if (pc2Badge) {
-        if (pc2.online) {
+        if (effectiveTier === "cuda" && pc2.online) {
           pc2Badge.className = "node-status-badge badge-online";
           pc2Badge.innerHTML = `<span class="dot"></span> ⚡ CUDA Ready`;
+          pc2Badge.title = "Embedding running on PC2 NVIDIA RTX 3060 CUDA GPU";
+        } else if (effectiveTier === "local") {
+          pc2Badge.className = "node-status-badge badge-fallback-local";
+          pc2Badge.innerHTML = `<span class="dot"></span> 🟠 Local CPU Fallback`;
+          pc2Badge.title = tierData.last_fallback_reason || "PC2 unreachable. Operating on PC1 Local CPU with snowflake-arctic-embed.";
         } else {
-          pc2Badge.className = "node-status-badge badge-offline";
-          pc2Badge.innerHTML = `<span class="dot"></span> Disconnected`;
+          pc2Badge.className = "node-status-badge badge-fallback-pseudo";
+          pc2Badge.innerHTML = `<span class="dot"></span> 🔴 Offline Pseudo-Vectors`;
+          pc2Badge.title = "No Ollama instances available. Operating in offline pseudo-vector mode.";
         }
       }
     }
@@ -1104,28 +1134,55 @@ function clearChatDocumentContext() {
   showToast("Cleared document focus. Next questions will search globally.", "info");
 }
 
-function switchTab(tab) {
-  const btnDetail = document.getElementById("tab-btn-detail");
-  const btnChat = document.getElementById("tab-btn-chat");
-  const btnGraph = document.getElementById("tab-btn-graph");
-  const tabDetail = document.getElementById("tab-detail");
-  const tabChat = document.getElementById("tab-chat");
-  const tabGraph = document.getElementById("tab-graph");
+// ==========================================
+// 12. Workspace Navigation (Ledger, GraphRAG Studio, AI Room)
+// ==========================================
+let activeWorkspace = "ledger";
 
-  if (btnDetail) btnDetail.classList.toggle("active", tab === "detail");
-  if (btnChat) btnChat.classList.toggle("active", tab === "chat");
-  if (btnGraph) btnGraph.classList.toggle("active", tab === "graph");
-  if (tabDetail) tabDetail.classList.toggle("active", tab === "detail");
-  if (tabChat) tabChat.classList.toggle("active", tab === "chat");
-  if (tabGraph) tabGraph.classList.toggle("active", tab === "graph");
+function switchWorkspace(ws) {
+  activeWorkspace = ws;
 
-  if (tab === "graph") {
+  const btnLedger = document.getElementById("ws-btn-ledger");
+  const btnGraphrag = document.getElementById("ws-btn-graphrag");
+  const btnChat = document.getElementById("ws-btn-chat");
+
+  const paneLedger = document.getElementById("ws-pane-ledger");
+  const paneGraphrag = document.getElementById("ws-pane-graphrag");
+  const paneChat = document.getElementById("ws-pane-chat");
+
+  if (btnLedger) btnLedger.classList.toggle("active", ws === "ledger");
+  if (btnGraphrag) btnGraphrag.classList.toggle("active", ws === "graphrag");
+  if (btnChat) btnChat.classList.toggle("active", ws === "chat");
+
+  if (paneLedger) paneLedger.classList.toggle("hidden", ws !== "ledger");
+  if (paneGraphrag) paneGraphrag.classList.toggle("hidden", ws !== "graphrag");
+  if (paneChat) paneChat.classList.toggle("hidden", ws !== "chat");
+
+  if (ws === "graphrag") {
     loadSidecarStats();
+    const studioInput = document.getElementById("studio-rag-input");
+    if (studioInput) studioInput.focus();
+  } else if (ws === "chat") {
+    const chatInput = document.getElementById("chat-input");
+    if (chatInput) chatInput.focus();
+  } else if (ws === "ledger") {
+    loadLedger();
+  }
+}
+
+// Backward compatibility alias for any older triggers
+function switchTab(tab) {
+  if (tab === "graph") {
+    switchWorkspace("graphrag");
+  } else if (tab === "chat") {
+    switchWorkspace("chat");
+  } else {
+    switchWorkspace("ledger");
   }
 }
 
 // ==========================================
-// 12.5 Knowledge Base Sidecar & GraphRAG UI
+// 12.5 Knowledge Base Sidecar & GraphRAG Studio UI
 // ==========================================
 async function loadSidecarStats() {
   try {
@@ -1156,29 +1213,38 @@ async function loadSidecarStats() {
       metricKbSub.textContent = `${g.total_nodes || 0} nodes • ${g.total_edges || 0} edges`;
     }
 
-    // Update Progress Bars
-    const pctEl = document.getElementById("kb-progress-pct");
-    if (pctEl) pctEl.textContent = `${pct}%`;
+    // Update Progress Bars (both studio and mini widgets)
+    const setTxt = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+    const setWidth = (id, widthVal) => { const el = document.getElementById(id); if (el) el.style.width = widthVal; };
 
-    const barCompleted = document.getElementById("kb-bar-completed");
-    const barProcessing = document.getElementById("kb-bar-processing");
-    const barPending = document.getElementById("kb-bar-pending");
-    const barFailed = document.getElementById("kb-bar-failed");
+    setTxt("studio-kb-progress-pct", `${pct}%`);
+    setTxt("kb-progress-pct", `${pct}%`);
 
-    if (barCompleted && totalQueueItems > 0) {
-      barCompleted.style.width = `${(completed / totalQueueItems) * 100}%`;
-      barProcessing.style.width = `${(processing / totalQueueItems) * 100}%`;
-      barPending.style.width = `${(pending / totalQueueItems) * 100}%`;
-      barFailed.style.width = `${(failed / totalQueueItems) * 100}%`;
-    } else if (barCompleted) {
-      barCompleted.style.width = "100%";
-      barProcessing.style.width = "0%";
-      barPending.style.width = "0%";
-      barFailed.style.width = "0%";
-    }
+    const barWidths = totalQueueItems > 0 ? {
+      completed: `${(completed / totalQueueItems) * 100}%`,
+      processing: `${(processing / totalQueueItems) * 100}%`,
+      pending: `${(pending / totalQueueItems) * 100}%`,
+      failed: `${(failed / totalQueueItems) * 100}%`
+    } : { completed: "100%", processing: "0%", pending: "0%", failed: "0%" };
+
+    setWidth("studio-kb-bar-completed", barWidths.completed);
+    setWidth("studio-kb-bar-processing", barWidths.processing);
+    setWidth("studio-kb-bar-pending", barWidths.pending);
+    setWidth("studio-kb-bar-failed", barWidths.failed);
+
+    setWidth("kb-bar-completed", barWidths.completed);
+    setWidth("kb-bar-processing", barWidths.processing);
+    setWidth("kb-bar-pending", barWidths.pending);
+    setWidth("kb-bar-failed", barWidths.failed);
 
     // Update Queue Counts
-    const setTxt = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+    setTxt("studio-kb-stat-completed", completed);
+    setTxt("studio-kb-stat-processing", processing);
+    setTxt("studio-kb-stat-pending", pending);
+    setTxt("studio-kb-stat-failed", failed);
+    setTxt("studio-kb-stat-chunks", totalChunks);
+    setTxt("studio-kb-stat-docs-chunked", totalDocsChunked);
+
     setTxt("kb-stat-completed", completed);
     setTxt("kb-stat-processing", processing);
     setTxt("kb-stat-pending", pending);
@@ -1187,6 +1253,10 @@ async function loadSidecarStats() {
     setTxt("kb-stat-docs-chunked", totalDocsChunked);
 
     // Update Graph Metrics
+    setTxt("studio-kb-graph-nodes", g.total_nodes || 0);
+    setTxt("studio-kb-graph-edges", g.total_edges || 0);
+    setTxt("studio-kb-graph-doclinks", g.total_document_links || 0);
+
     setTxt("kb-graph-nodes", g.total_nodes || 0);
     setTxt("kb-graph-edges", g.total_edges || 0);
     setTxt("kb-graph-doclinks", g.total_document_links || 0);
@@ -1196,46 +1266,79 @@ async function loadSidecarStats() {
     sidecarContinuousRunning = !!w.is_running;
     updateSidecarToggleButton();
 
-    const dot = document.getElementById("kb-worker-dot");
-    const statusText = document.getElementById("kb-worker-status-text");
-    const sessionCounter = document.getElementById("kb-session-counter");
-    const sessionUptime = document.getElementById("kb-session-uptime");
-    const engineTag = document.getElementById("kb-engine-tag");
-
+    const tierInfo = data.embedding_tier || {};
+    const tier = tierInfo.tier || "cuda";
+    const tierColor = tierInfo.color || "green";
+    
+    const engineTag = document.getElementById("studio-kb-engine-tag");
     if (engineTag && data.model) {
       const urlHost = data.embed_url ? data.embed_url.replace(/https?:\/\//, '') : 'PC2 CUDA';
       engineTag.textContent = `${data.model} (${urlHost})`;
     }
 
-    if (dot) dot.className = sidecarContinuousRunning ? "kb-worker-dot active" : "kb-worker-dot";
-    if (statusText) {
-      statusText.className = sidecarContinuousRunning ? "kb-worker-status-text active" : "kb-worker-status-text";
-      statusText.textContent = sidecarContinuousRunning ? "⚡ Ingestion Active (CUDA Node)" : "Pipeline Idle";
-    }
-    if (sessionCounter) {
-      sessionCounter.textContent = `Session: ${w.session_docs_processed || 0} docs • ${w.session_chunks_embedded || 0} chunks`;
-    }
-    if (sessionUptime) {
-      sessionUptime.textContent = w.uptime_formatted ? `(uptime: ${w.uptime_formatted})` : "";
-    }
+    const dot1 = document.getElementById("studio-kb-worker-dot");
+    const dot2 = document.getElementById("kb-worker-dot");
+    const st1 = document.getElementById("studio-kb-worker-status-text");
+    const st2 = document.getElementById("kb-worker-status-text");
+    const sc1 = document.getElementById("studio-kb-session-counter");
+    const sc2 = document.getElementById("kb-session-counter");
+    const su1 = document.getElementById("studio-kb-session-uptime");
+    const su2 = document.getElementById("kb-session-uptime");
 
-    // Update Node Types Distribution Chips
-    const nodeTypesWrap = document.getElementById("kb-nodetypes-list");
-    if (nodeTypesWrap && g.node_types) {
-      const typeEntries = Object.entries(g.node_types);
-      if (typeEntries.length > 0) {
-        nodeTypesWrap.innerHTML = typeEntries.map(([type, count]) => {
-          let icon = "🏷️";
-          if (type === "organization") icon = "🏢";
-          else if (type === "person") icon = "👤";
-          else if (type === "contract_type") icon = "📄";
-          else if (type === "location") icon = "📍";
-          else if (type === "statute") icon = "⚖️";
-          const isActive = activeEntityType === type ? "active" : "";
-          return `<button class="kb-type-chip ${isActive}" data-type="${escapeHtml(type)}" onclick="toggleEntityType('${escapeHtml(type)}')">${icon} <strong>${escapeHtml(type)}</strong>: <span class="badge-count">${count}</span></button>`;
-        }).join("");
+    let statusText = "Pipeline Idle";
+    let dotClass = "kb-worker-dot";
+    let textClass = "kb-worker-status-text";
+
+    if (sidecarContinuousRunning) {
+      if (tier === "cuda") {
+        statusText = "⚡ Ingestion Active (CUDA Node)";
+        dotClass = "kb-worker-dot active";
+        textClass = "kb-worker-status-text active tier-cuda";
+      } else if (tier === "local") {
+        statusText = "🟠 Ingestion Active (Local CPU Fallback)";
+        dotClass = "kb-worker-dot active tier-local";
+        textClass = "kb-worker-status-text active tier-local";
+      } else {
+        statusText = "🔴 Ingestion Active (Offline Pseudo-Vectors)";
+        dotClass = "kb-worker-dot active tier-fallback";
+        textClass = "kb-worker-status-text active tier-fallback";
       }
     }
+
+    [dot1, dot2].forEach(d => { if (d) d.className = dotClass; });
+    [st1, st2].forEach(s => { 
+      if (s) {
+        s.className = textClass;
+        s.textContent = statusText;
+        if (tierInfo.fallback_reason) {
+          s.title = tierInfo.fallback_reason;
+        }
+      }
+    });
+    [sc1, sc2].forEach(sc => { if (sc) sc.textContent = `Session: ${w.session_docs_processed || 0} docs • ${w.session_chunks_embedded || 0} chunks`; });
+    [su1, su2].forEach(su => { if (su) su.textContent = w.uptime_formatted ? `(uptime: ${w.uptime_formatted})` : ""; });
+
+    // Update Node Types Distribution Chips
+    const updateChips = (wrapId) => {
+      const wrap = document.getElementById(wrapId);
+      if (wrap && g.node_types) {
+        const typeEntries = Object.entries(g.node_types);
+        if (typeEntries.length > 0) {
+          wrap.innerHTML = typeEntries.map(([type, count]) => {
+            let icon = "🏷️";
+            if (type === "organization") icon = "🏢";
+            else if (type === "person") icon = "👤";
+            else if (type === "contract_type") icon = "📄";
+            else if (type === "location") icon = "📍";
+            else if (type === "statute") icon = "⚖️";
+            const isActive = activeEntityType === type ? "active" : "";
+            return `<button class="kb-type-chip ${isActive}" data-type="${escapeHtml(type)}" onclick="toggleEntityType('${escapeHtml(type)}')">${icon} <strong>${escapeHtml(type)}</strong>: <span class="badge-count">${count}</span></button>`;
+          }).join("");
+        }
+      }
+    };
+    updateChips("studio-kb-nodetypes-list");
+    updateChips("kb-nodetypes-list");
   } catch (err) {
     console.error("Failed loading sidecar stats:", err);
   }
@@ -1261,10 +1364,9 @@ async function fetchSidecarEntities() {
 }
 
 async function toggleEntityType(type) {
-  const drawer = document.getElementById("kb-entity-drawer");
+  const drawer = document.getElementById("studio-kb-entity-drawer") || document.getElementById("kb-entity-drawer");
   if (!drawer) return;
 
-  // If clicking the same active type, close drawer
   if (activeEntityType === type) {
     closeEntityDrawer();
     return;
@@ -1272,20 +1374,14 @@ async function toggleEntityType(type) {
 
   activeEntityType = type;
 
-  // Update active class on chips
   document.querySelectorAll(".kb-type-chip").forEach(chip => {
-    if (chip.getAttribute("data-type") === type) {
-      chip.classList.add("active");
-    } else {
-      chip.classList.remove("active");
-    }
+    chip.classList.toggle("active", chip.getAttribute("data-type") === type);
   });
 
-  // Setup Drawer Header
-  const titleEl = document.getElementById("kb-drawer-title");
-  const countEl = document.getElementById("kb-drawer-count");
-  const itemsContainer = document.getElementById("kb-entity-items");
-  const searchInput = document.getElementById("kb-entity-filter-input");
+  const titleEl = document.getElementById("studio-kb-drawer-title") || document.getElementById("kb-drawer-title");
+  const countEl = document.getElementById("studio-kb-drawer-count") || document.getElementById("kb-drawer-count");
+  const itemsContainer = document.getElementById("studio-kb-entity-items") || document.getElementById("kb-entity-items");
+  const searchInput = document.getElementById("studio-kb-entity-filter-input") || document.getElementById("kb-entity-filter-input");
 
   if (searchInput) searchInput.value = "";
 
@@ -1312,8 +1408,10 @@ async function toggleEntityType(type) {
 
 function closeEntityDrawer() {
   activeEntityType = null;
-  const drawer = document.getElementById("kb-entity-drawer");
-  if (drawer) drawer.classList.add("hidden");
+  const drawer1 = document.getElementById("studio-kb-entity-drawer");
+  const drawer2 = document.getElementById("kb-entity-drawer");
+  if (drawer1) drawer1.classList.add("hidden");
+  if (drawer2) drawer2.classList.add("hidden");
   document.querySelectorAll(".kb-type-chip").forEach(chip => chip.classList.remove("active"));
 }
 
@@ -1324,7 +1422,7 @@ function filterEntityList(query) {
 }
 
 function renderEntityList(entities, filterQuery) {
-  const itemsContainer = document.getElementById("kb-entity-items");
+  const itemsContainer = document.getElementById("studio-kb-entity-items") || document.getElementById("kb-entity-items");
   if (!itemsContainer) return;
 
   const filtered = filterQuery
@@ -1338,7 +1436,7 @@ function renderEntityList(entities, filterQuery) {
 
   itemsContainer.innerHTML = filtered.map(e => {
     const docTag = e.doc_count > 0 ? `<span class="kb-entity-pill-doccount">${e.doc_count} doc${e.doc_count > 1 ? 's' : ''}</span>` : "";
-    return `<button class="kb-entity-pill" data-name="${escapeHtml(e.name)}" onclick="selectEntityForSearch(this.getAttribute('data-name'))" title="Click to search in GraphRAG & ledger">
+    return `<button class="kb-entity-pill" data-name="${escapeHtml(e.name)}" onclick="selectEntityForSearch(this.getAttribute('data-name'))" title="Click to search in GraphRAG Studio">
       <span>${escapeHtml(e.name)}</span>
       ${docTag}
     </button>`;
@@ -1346,205 +1444,279 @@ function renderEntityList(entities, filterQuery) {
 }
 
 function selectEntityForSearch(name) {
-  const ragInput = document.getElementById("kb-rag-input");
-  if (ragInput) {
-    ragInput.value = name;
-    ragInput.focus();
-    executeGraphRAGSearch();
+  const studioInput = document.getElementById("studio-rag-input");
+  if (studioInput) {
+    studioInput.value = name;
+    executeStudioGraphRAGSearch(name);
   }
 }
-
 
 let sidecarContinuousRunning = false;
 
 function updateSidecarToggleButton() {
-  const btn = document.getElementById("btn-sidecar-toggle");
-  const icon = document.getElementById("sidecar-toggle-icon");
-  const text = document.getElementById("sidecar-toggle-text");
-  if (!btn) return;
+  const btns = [document.getElementById("studio-btn-sidecar-toggle"), document.getElementById("btn-sidecar-toggle")].filter(Boolean);
+  const icons = [document.getElementById("studio-sidecar-toggle-icon"), document.getElementById("sidecar-toggle-icon")].filter(Boolean);
+  const texts = [document.getElementById("studio-sidecar-toggle-text"), document.getElementById("sidecar-toggle-text")].filter(Boolean);
 
-  if (sidecarContinuousRunning) {
-    btn.className = "btn btn-rose btn-xs";
-    if (icon) icon.textContent = "⏹";
-    if (text) text.textContent = "Stop Continuous Ingestion";
-    btn.title = "Click to stop the continuous sidecar worker";
-  } else {
-    btn.className = "btn btn-emerald btn-xs";
-    if (icon) icon.textContent = "▶";
-    if (text) text.textContent = "Start Continuous Ingestion";
-    btn.title = "Click to start continuous background ingestion on PC2 CUDA GPU";
-  }
+  btns.forEach(btn => {
+    if (sidecarContinuousRunning) {
+      btn.className = "btn btn-rose btn-xs";
+      btn.title = "Click to stop the continuous sidecar worker";
+    } else {
+      btn.className = "btn btn-emerald btn-xs";
+      btn.title = "Click to start continuous background ingestion on PC2 CUDA GPU";
+    }
+  });
+
+  icons.forEach(icon => { icon.textContent = sidecarContinuousRunning ? "⏹" : "▶"; });
+  texts.forEach(text => { text.textContent = sidecarContinuousRunning ? "Stop Continuous Ingestion" : "Start Continuous Ingestion"; });
 }
 
 async function toggleContinuousSidecar() {
-  const btn = document.getElementById("btn-sidecar-toggle");
-  if (btn) btn.disabled = true;
+  const btns = [document.getElementById("studio-btn-sidecar-toggle"), document.getElementById("btn-sidecar-toggle")].filter(Boolean);
+  btns.forEach(b => b.disabled = true);
 
   try {
     if (!sidecarContinuousRunning) {
-      // START
       const res = await fetch("/api/v1/sidecar/start", { method: "POST" });
       const data = await res.json();
       sidecarContinuousRunning = true;
       updateSidecarToggleButton();
-      
-      const startMsg = `▶ Started continuous Knowledge Base Sidecar ingestion on PC2 CUDA GPU (${data.embed_url || 'CUDA Node'}).`;
-      logDiagnosticEntry({
-        source: "backend",
-        level: "INFO",
-        logger: "reposcroller.kb_sidecar",
-        message: startMsg
-      });
-      showToast("🚀 Sidecar Indexing Pipeline started! Vectorizing queue continuously...", "success", 4000);
+      showToast("🚀 Sidecar Indexing Pipeline active on PC2 CUDA GPU!", "success", 4000);
     } else {
-      // STOP
       const res = await fetch("/api/v1/sidecar/stop", { method: "POST" });
       const data = await res.json();
       sidecarContinuousRunning = false;
       updateSidecarToggleButton();
-
       const docs = data.session_docs_processed || 0;
       const chunks = data.session_chunks_embedded || 0;
       const dur = data.duration_formatted || "0s";
-
-      const stopMsg = `⏹ Stopped continuous Sidecar ingestion. Session total: ${docs} documents (${chunks} vectors) processed in ${dur}.`;
-      logDiagnosticEntry({
-        source: "backend",
-        level: "INFO",
-        logger: "reposcroller.kb_sidecar",
-        message: stopMsg
-      });
-      showToast(`⏹ Sidecar ingestion stopped! Processed ${docs} documents (${chunks} vectors) in ${dur}.`, "info", 5000);
+      showToast(`⏹ Sidecar stopped: ${docs} docs (${chunks} vectors) in ${dur}.`, "info", 5000);
     }
     await loadSidecarStats();
   } catch (err) {
     showToast(`Sidecar control error: ${err.message}`, "error", 5000);
   } finally {
-    if (btn) btn.disabled = false;
+    btns.forEach(b => b.disabled = false);
   }
 }
 
 async function triggerSidecarBatch() {
-  const btn = document.getElementById("btn-trigger-batch");
-  if (btn) {
-    btn.disabled = true;
-    btn.textContent = "⏳ Processing...";
-  }
+  const btns = [document.getElementById("studio-btn-trigger-batch"), document.getElementById("btn-trigger-batch")].filter(Boolean);
+  btns.forEach(b => { b.disabled = true; b.textContent = "⏳ Processing..."; });
 
   try {
     const res = await fetch("/api/v1/sidecar/process", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ limit: 20 })
+      body: JSON.stringify({ limit: 32 })
     });
     const data = await res.json();
     const count = data.processed_count || 0;
-    const msg = `⚡ Step Batch: Processed ${count} queued document(s) into Snowflake Arctic Knowledge Base.`;
-    
-    logDiagnosticEntry({
-      source: "backend",
-      level: "INFO",
-      logger: "reposcroller.kb_sidecar",
-      message: msg
-    });
-    showToast(msg, "success", 4000);
+    showToast(`⚡ Processed batch of ${count} document(s) on PC2 CUDA Node.`, "success", 4000);
     await loadSidecarStats();
   } catch (err) {
-    showToast(`Sidecar processing failed: ${err.message}`, "error", 5000);
+    showToast(`Sidecar batch failed: ${err.message}`, "error", 5000);
   } finally {
-    if (btn) {
-      btn.disabled = false;
-      btn.textContent = "⚡ Single Batch";
-    }
+    btns.forEach(b => { b.disabled = false; b.textContent = "⚡ Single Batch"; });
   }
 }
 
-async function executeGraphRAGSearch() {
-  const input = document.getElementById("kb-rag-input");
-  const query = (input ? input.value : "").trim();
+// ==========================================
+// 12.6 Full-Width GraphRAG Sovereign Studio Execution
+// ==========================================
+function executeStudioSuggestedQuery(query) {
+  const input = document.getElementById("studio-rag-input");
+  if (input) input.value = query;
+  executeStudioGraphRAGSearch(query);
+}
+
+function clearStudioRAGSearch() {
+  const input = document.getElementById("studio-rag-input");
+  const clearBtn = document.getElementById("btn-studio-rag-clear");
+  if (input) input.value = "";
+  if (clearBtn) clearBtn.classList.add("hidden");
+  
+  const resultsContainer = document.getElementById("studio-rag-results-container");
+  if (resultsContainer) {
+    resultsContainer.innerHTML = `
+      <div class="studio-empty-state">
+        <div class="empty-icon">🔬</div>
+        <div class="empty-title">Ready for Multi-Signal Retrieval</div>
+        <div class="empty-text">Enter a query above or click one of the quick prompts to execute dense vector search on PC2 CUDA, BM25 scoring, and graph entity neighborhood expansion.</div>
+      </div>
+    `;
+  }
+  const countBadge = document.getElementById("studio-results-count");
+  if (countBadge) countBadge.textContent = "0 candidates";
+  const signalsSummary = document.getElementById("studio-signals-summary");
+  if (signalsSummary) signalsSummary.textContent = "";
+}
+
+async function executeStudioGraphRAGSearch(explicitQuery = null) {
+  const input = document.getElementById("studio-rag-input");
+  const query = (explicitQuery != null ? explicitQuery : (input ? input.value : "")).trim();
   if (!query) {
     showToast("Please enter a search query", "info");
     return;
   }
 
-  const resultsDiv = document.getElementById("kb-rag-results");
-  const btn = document.getElementById("btn-graphrag-search");
+  const clearBtn = document.getElementById("btn-studio-rag-clear");
+  if (clearBtn) clearBtn.classList.remove("hidden");
+
+  const resultsContainer = document.getElementById("studio-rag-results-container");
+  const countBadge = document.getElementById("studio-results-count");
+  const signalsSummary = document.getElementById("studio-signals-summary");
+  const btn = document.getElementById("btn-studio-rag-search");
 
   if (btn) {
     btn.disabled = true;
-    btn.textContent = "Searching...";
+    btn.innerHTML = `<span>⏳ Searching CUDA Vectors & Graph...</span>`;
   }
 
-  resultsDiv.innerHTML = `
-    <div class="empty-state" style="padding: 1.5rem 0.5rem;">
-      <div class="empty-icon">⏳</div>
-      <div class="empty-text">Executing Multi-Signal GraphRAG Retrieval (Dense + BM25 + Graph Expansion)...</div>
-    </div>
-  `;
+  if (resultsContainer) {
+    resultsContainer.innerHTML = `
+      <div class="studio-empty-state">
+        <div class="empty-icon">⚡</div>
+        <div class="empty-title">Computing 3-Signal Hybrid Retrieval...</div>
+        <div class="empty-text">Generating dense embeddings on PC2 CUDA GPU, querying BM25 index, and traversing 1-hop Property Knowledge Graph...</div>
+      </div>
+    `;
+  }
 
   try {
-    const res = await fetch(`/api/v1/sidecar/graph-rag?query=${encodeURIComponent(query)}&top_k=5&expand_graph_hops=1`);
+    const res = await fetch(`/api/v1/sidecar/graph-rag?query=${encodeURIComponent(query)}&top_k=8&expand_graph_hops=1`);
     if (!res.ok) {
       const errJson = await res.json().catch(() => ({}));
       throw new Error(errJson.detail || `HTTP ${res.status}`);
     }
     const data = await res.json();
     const hits = data.ranked_results || data.top_candidates || [];
+    const signals = data.retrieval_signals || {};
+
+    if (countBadge) countBadge.textContent = `${hits.length} candidate${hits.length !== 1 ? 's' : ''}`;
+    if (signalsSummary) {
+      signalsSummary.textContent = `Vectors: ${signals.dense_hits_count || 0} • BM25: ${signals.sparse_hits_count || 0} • Entities: ${signals.graph_entities_expanded || 0}`;
+    }
 
     if (hits.length === 0) {
-      resultsDiv.innerHTML = `
-        <div class="empty-state" style="padding: 1.5rem 0.5rem;">
+      resultsContainer.innerHTML = `
+        <div class="studio-empty-state">
           <div class="empty-icon">🔍</div>
-          <div class="empty-text">No matches for "${escapeHtml(query)}".</div>
-          <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.4rem;">
-            Tip: Click <strong>▶ Process Batch</strong> above to index more documents into Snowflake Arctic Vectors and Knowledge Graph.
-          </div>
+          <div class="empty-title">No candidates matching "${escapeHtml(query)}"</div>
+          <div class="empty-text">Try broader terms or verify that documents are indexed in the Sidecar Pipeline.</div>
         </div>
       `;
       return;
     }
 
-    resultsDiv.innerHTML = hits.map((hit, idx) => {
+    resultsContainer.innerHTML = hits.map((hit, idx) => {
       const doc = hit.document || {};
       const chunk = hit.chunk || {};
-      const signals = hit.signals || {};
-
-      const hasVector = signals.dense_vector_match ? `⚡ Vector (${(signals.vector_similarity * 100).toFixed(1)}%)` : '';
-      const hasBm25 = signals.lexical_fts_match ? `🔍 BM25 Rank #${signals.bm25_rank}` : '';
-      const hasGraph = signals.graph_neighborhood_expansion ? `🕸️ Graph (+${signals.connected_entities_count || 0} entities)` : '';
-
-      const tagsHtml = [hasVector, hasBm25, hasGraph].filter(Boolean).map(t => `<span class="kb-signal-tag">${t}</span>`).join("");
+      const sigs = hit.signals || {};
       const filename = doc.canonical_filename || chunk.canonical_filename || `Document #${idx + 1}`;
       const sha = doc.sha256_hash || chunk.sha256_hash || "";
+      const score = (hit.composite_score || 0).toFixed(4);
+      const text = chunk.chunk_text || doc.text_snippet || "No text available";
+
+      const vectorPill = sigs.dense_vector_match 
+        ? `<span class="signal-pill vector">⚡ CUDA Vector: ${(sigs.vector_similarity * 100).toFixed(1)}%</span>` 
+        : '';
+      const bm25Pill = sigs.lexical_fts_match 
+        ? `<span class="signal-pill bm25">📄 BM25 Rank #${sigs.bm25_rank}</span>` 
+        : '';
+      const graphPill = sigs.graph_neighborhood_expansion 
+        ? `<span class="signal-pill graph">🕸️ Graph: ${sigs.connected_entities_count || 0} Links</span>` 
+        : '';
+
+      const entityBadges = (sigs.entities || []).slice(0, 4).map(e => 
+        `<span class="entity-micro-badge">${escapeHtml(e.replace(/^[a-z]+_/, ''))}</span>`
+      ).join("");
 
       return `
-        <div class="kb-result-card" data-sha="${escapeHtml(sha || '')}" onclick="const s = this.getAttribute('data-sha'); if (s) selectDocument(s);" style="cursor: pointer;" title="Click to view document in ledger">
-          <div class="kb-result-header">
-            <span class="kb-result-title">📄 ${escapeHtml(filename)}</span>
-            <span class="kb-score-badge">RRF Score: ${(hit.composite_score || 0).toFixed(4)}</span>
+        <div class="studio-candidate-card" data-sha="${escapeHtml(sha)}">
+          <div class="candidate-header-row">
+            <div class="candidate-title-group">
+              <span class="candidate-filename">📄 ${escapeHtml(filename)}</span>
+              <div class="candidate-meta-line">
+                <span>Category: <strong>${escapeHtml(doc.doc_type || 'doc')}</strong></span>
+                <span>•</span>
+                <span>Date: ${escapeHtml(doc.doc_date || '--')}</span>
+                <span>•</span>
+                <span>Status: ${escapeHtml(doc.lifecycle_status || 'final')}</span>
+              </div>
+            </div>
+            <span class="signal-pill rrf" title="Reciprocal Rank Fusion Score">RRF Rank #${idx + 1} (${score})</span>
           </div>
-          <div class="kb-signals-row">
-            ${tagsHtml}
+
+          <div class="signal-pills-row">
+            ${vectorPill}
+            ${bm25Pill}
+            ${graphPill}
           </div>
-          <div class="kb-result-snippet">
-            ${escapeHtml(chunk.chunk_text || doc.text_snippet || 'No text snippet available')}
+
+          <div class="candidate-snippet-box">
+            "${escapeHtml(text.slice(0, 300))}${text.length > 300 ? '...' : ''}"
+          </div>
+
+          <div class="candidate-actions-row">
+            <div class="candidate-entities-badges">
+              ${entityBadges ? `<span style="font-size: 0.68rem; color: var(--text-faint);">Entities:</span> ${entityBadges}` : ''}
+            </div>
+            <div class="candidate-action-buttons">
+              <button class="btn btn-outline btn-xs" onclick="selectDocument('${escapeHtml(sha)}'); switchWorkspace('ledger');" title="Inspect full document in ledger">
+                🗄️ View in Ledger
+              </button>
+              <button class="btn btn-primary btn-xs" onclick="interrogateAboutDocument('${escapeHtml(sha)}', '${escapeHtml(filename)}')" title="Ask AI about this specific document">
+                💬 Ask AI
+              </button>
+            </div>
           </div>
         </div>
       `;
     }).join("");
 
   } catch (err) {
-    resultsDiv.innerHTML = `
-      <div class="empty-state text-rose" style="padding: 1rem 0.5rem;">
-        <div class="empty-icon">❌</div>
-        <div class="empty-text">GraphRAG retrieval error: ${escapeHtml(err.message)}</div>
-      </div>
-    `;
+    if (resultsContainer) {
+      resultsContainer.innerHTML = `
+        <div class="studio-empty-state text-rose">
+          <div class="empty-icon">❌</div>
+          <div class="empty-title">Retrieval Error</div>
+          <div class="empty-text">${escapeHtml(err.message)}</div>
+        </div>
+      `;
+    }
   } finally {
     if (btn) {
       btn.disabled = false;
-      btn.textContent = "Search";
+      btn.innerHTML = `<span>⚡ Execute Hybrid Retrieval</span>`;
     }
+  }
+}
+
+function interrogateAboutDocument(sha, filename) {
+  activeDocumentSha = sha;
+  activeDocumentFilename = filename;
+  
+  const banner = document.getElementById("chat-context-banner");
+  const nameEl = document.getElementById("chat-context-name");
+  if (banner && nameEl) {
+    nameEl.textContent = filename;
+    banner.classList.remove("hidden");
+  }
+  
+  switchWorkspace("chat");
+  const chatInput = document.getElementById("chat-input");
+  if (chatInput) {
+    chatInput.value = `Summarize key clauses and verify parties in this document: ${filename}`;
+    chatInput.focus();
+  }
+}
+
+function handleChatInputKey(event) {
+  if (event.key === "Enter" && !event.shiftKey) {
+    event.preventDefault();
+    sendChatMessage();
   }
 }
 

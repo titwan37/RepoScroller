@@ -38,16 +38,30 @@ class GraphRAGRequest(BaseModel):
 @router.get("/stats")
 def get_sidecar_stats():
     """Retrieve queue status, vector indexing, graph statistics, and continuous worker state."""
+    from reposcroller.ai.telemetry import workload_telemetry
     queue_stats = _repo.get_kb_queue_stats()
     graph_stats = _graph_store.get_graph_stats()
     worker_status = _worker.get_continuous_status()
+    
+    tier = workload_telemetry.active_tier
+    tier_color = workload_telemetry.active_tier_color
+    tier_label = workload_telemetry.active_tier_label
+
     return {
         "status": "active",
         "queue": queue_stats,
         "graph": graph_stats,
         "worker": worker_status,
-        "model": settings.OLLAMA_EMBEDDING_MODEL,
-        "embed_url": settings.embed_url,
+        "model": workload_telemetry.active_tier_model or settings.OLLAMA_EMBEDDING_MODEL,
+        "embed_url": workload_telemetry.active_tier_url or settings.embed_url,
+        "embedding_tier": {
+            "tier": tier,
+            "color": tier_color,
+            "label": tier_label,
+            "active_url": workload_telemetry.active_tier_url,
+            "active_model": workload_telemetry.active_tier_model,
+            "fallback_reason": workload_telemetry.last_fallback_reason
+        }
     }
 
 
