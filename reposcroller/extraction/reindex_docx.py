@@ -11,7 +11,7 @@ docs = repo.get_all_documents(limit=500)
 for doc in docs:
     fname = doc.get("canonical_filename", "")
     sha = doc["sha256_hash"]
-    if fname.lower().endswith(".docx"):
+    if fname.lower().endswith(".docx") and not Path(fname).name.startswith("~$"):
         doc_details = repo.get_document_by_sha256(sha)
         locs = (doc_details.get("locations") if doc_details else []) or []
         for loc in locs:

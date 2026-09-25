@@ -16,6 +16,11 @@ def extract_document_data(file_path: Path) -> Tuple[str, Dict[str, Any]]:
     """Extract raw text and structural metadata from a supported document file."""
     import time
     t0 = time.time()
+    
+    # Ignore temporary/lock files (e.g., Microsoft Word ~$ files)
+    if file_path.name.startswith("~$"):
+        return "", {"extraction_error": "Skipped temporary lock file"}
+
     ext = file_path.suffix.lower()
 
     if ext == ".pdf":

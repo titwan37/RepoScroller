@@ -5,6 +5,7 @@
 
 param (
     [string]$Model = "snowflake-arctic-embed2:latest",
+    [string]$ChatModel = "llama3.1:8b",
     [string]$Port = "11434",
     [switch]$SkipModelPull = $false
 )
@@ -101,12 +102,14 @@ if ($listening) {
 
 # 6. Pre-pull Embedding Models to VRAM
 Write-Host ""
-Write-Host "[5/5] Checking embedding model '$Model'..." -ForegroundColor Cyan
+Write-Host "[5/5] Checking embedding model '$Model' and chat model '$ChatModel'..." -ForegroundColor Cyan
 if (-not $SkipModelPull) {
     Write-Host "  -> Pulling / verifying '$Model' on GPU..." -ForegroundColor Gray
     ollama pull $Model
     # Also ensure snowflake-arctic-embed is ready if needed
     ollama pull snowflake-arctic-embed:latest
+    Write-Host "  -> Pulling / verifying '$ChatModel' on GPU..." -ForegroundColor Gray
+    ollama pull $ChatModel
 }
 
 # 7. Display LAN IPs and Ready Summary
