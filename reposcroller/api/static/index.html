@@ -207,12 +207,12 @@
             <div class="node-metric-val text-indigo" id="pc1-chat-count">0 calls</div>
           </div>
           <div class="node-metric-item">
-            <div class="node-metric-label">Inference Latency</div>
-            <div class="node-metric-val" id="pc1-latency-ms">Ready</div>
-            </div>
-            <div class="node-metric-item">
-              <div class="node-metric-label">Host Status</div>
-              <div class="node-metric-val" id="pc1-activity-status">idle</div>
+            <div class="node-metric-label">Processor / RAM</div>
+            <div class="node-metric-val" id="pc1-latency-ms">100% CPU</div>
+          </div>
+          <div class="node-metric-item">
+            <div class="node-metric-label">Host Status / Context</div>
+            <div class="node-metric-val" id="pc1-activity-status">idle</div>
           </div>
         </div>
       </div>
@@ -356,7 +356,7 @@
           <span class="models-label">VRAM Loaded:</span>
           <div class="models-tag-list" id="pc2-models-list">
             <span class="mini-tag tag-cuda">snowflake-arctic-embed2:latest</span>
-            <span class="mini-tag tag-chat">llama3.1:8b</span>
+            <span class="mini-tag tag-chat">llama3.2:3b</span>
           </div>
         </div>
 
@@ -374,12 +374,12 @@
             <div class="node-metric-val text-emerald font-bold" id="pc2-chunks-count">0 chunks</div>
           </div>
           <div class="node-metric-item">
-            <div class="node-metric-label">Tensor Latency</div>
-            <div class="node-metric-val text-amber" id="pc2-latency-ms">--</div>
+            <div class="node-metric-label">VRAM Loaded</div>
+            <div class="node-metric-val text-emerald font-bold" id="pc2-latency-ms">VRAM Standby</div>
           </div>
           <div class="node-metric-item">
-            <div class="node-metric-label">CUDA Activity</div>
-            <div class="node-metric-val text-emerald" id="pc2-activity-status">active</div>
+            <div class="node-metric-label">CUDA & Context</div>
+            <div class="node-metric-val text-cyan" id="pc2-activity-status">100% GPU</div>
           </div>
         </div>
       </div>
