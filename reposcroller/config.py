@@ -95,6 +95,7 @@ class Settings(BaseSettings):
     OLLAMA_EMBEDDING_MODEL: str = "snowflake-arctic-embed2:latest"
     OLLAMA_TIMEOUT: float = 300.0  # Timeout in seconds for Ollama model load & embedding (patient for CPU/GPU)
     OLLAMA_KEEP_ALIVE: str = "24h"  # Keep model resident in VRAM/RAM
+    OLLAMA_NUM_CTX: int = 2048  # Context length (2048 tokens allows dual 3B chat + embed models in 6GB VRAM)
     OLLAMA_SUB_BATCH_SIZE: int = 16  # Max chunks sent per HTTP batch slice to ensure fast, reliable responses
     CHUNK_SIZE_TOKENS: int = 600
     CHUNK_OVERLAP_TOKENS: int = 80

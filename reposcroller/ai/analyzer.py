@@ -185,7 +185,10 @@ Return ONLY a valid JSON object matching this schema:
             "format": "json",
             "stream": False,
             "keep_alive": settings.OLLAMA_KEEP_ALIVE,
-            "options": {"temperature": 0.1}
+            "options": {
+                "temperature": 0.1,
+                "num_ctx": getattr(settings, "OLLAMA_NUM_CTX", 2048)
+            }
         }
         try:
             with httpx.Client(timeout=settings.OLLAMA_TIMEOUT) as client:

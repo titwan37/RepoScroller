@@ -102,7 +102,7 @@ try {
     } | ConvertTo-Json
     
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
-    $res = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/embed" -Method Post -Body $warmupPayload -ContentType "application/json" -TimeoutSec 45
+    $res = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/embed" -Method Post -Body $warmupPayload -ContentType "application/json" -TimeoutSec 120
     $sw.Stop()
     
     if ($res.embeddings) {
@@ -130,7 +130,7 @@ try {
     } | ConvertTo-Json -Depth 5
 
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
-    $null = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/chat" -Method Post -Body $warmupPayloadChat -ContentType "application/json" -TimeoutSec 60
+    $null = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/chat" -Method Post -Body $warmupPayloadChat -ContentType "application/json" -TimeoutSec 120
     $sw.Stop()
     Write-Host "  -> Chat model '$chatModel' loaded into VRAM (took $($sw.ElapsedMilliseconds)ms)" -ForegroundColor Green
 } catch {

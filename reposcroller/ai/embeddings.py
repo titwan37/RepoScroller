@@ -88,7 +88,8 @@ class EmbeddingAdapter:
                 json={
                     "model": model,
                     "input": text,
-                    "keep_alive": self.keep_alive
+                    "keep_alive": self.keep_alive,
+                    "options": {"num_ctx": getattr(settings, "OLLAMA_NUM_CTX", 2048)}
                 }
             )
             if resp.status_code == 200:
@@ -112,7 +113,8 @@ class EmbeddingAdapter:
                 json={
                     "model": model,
                     "prompt": text,
-                    "keep_alive": self.keep_alive
+                    "keep_alive": self.keep_alive,
+                    "options": {"num_ctx": getattr(settings, "OLLAMA_NUM_CTX", 2048)}
                 }
             )
             if resp_legacy.status_code == 200:
@@ -137,7 +139,8 @@ class EmbeddingAdapter:
                 json={
                     "model": model,
                     "input": texts,
-                    "keep_alive": self.keep_alive
+                    "keep_alive": self.keep_alive,
+                    "options": {"num_ctx": getattr(settings, "OLLAMA_NUM_CTX", 2048)}
                 }
             )
             if resp.status_code == 200:
