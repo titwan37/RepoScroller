@@ -28,11 +28,23 @@ class EmbeddingAdapter:
                  provider: Optional[str] = None,
                  model_name: Optional[str] = None,
                  base_url: Optional[str] = None,
-                 dimension: int = 1024):
+                 dimension: int = 1024,
+                 timeout: Optional[float] = None,
+                 keep_alive: Optional[str] = None,
+                 sub_batch_size: Optional[int] = None):
         self.provider = provider or settings.EMBEDDING_PROVIDER
         self.model_name = model_name or settings.OLLAMA_EMBEDDING_MODEL
         self.base_url = (base_url or settings.OLLAMA_BASE_URL).rstrip("/")
         self.dimension = dimension
+        self.timeout = timeout if timeout is not None else getattr(settings, "OLLAMA_TIMEOUT", 60.0)
+        self.keep_alive = keep_alive or getattr(settings, "OLLAMA_KEEP_ALIVE", "1h")
+        self.sub_batch_size = sub_batch_size or getattr(settings, "OLLAMA_SUB_BATCH_SIZE", 16)
+        
+        # Reuse persistent client connection pool with reasonable timeouts
+        self._client = httpx.Client(
+            timeout=httpx.Timeout(self.timeout, connect=5.0, read=self.timeout, write=10.0),
+            limits=httpx.Limits(max_keepalive_connections=5, max_connections=10)
+        )
 
     def _fallback_pseudo_embedding(self, text: str) -> List[float]:
         """Deterministic, normalized pseudo-embedding based on character n-grams for offline/fallback."""
@@ -52,17 +64,20 @@ class EmbeddingAdapter:
         return vec
 
     def embed_text(self, text: str) -> List[float]:
-        """Embed a single string."""
+        """Embed a single string with keep_alive and extended timeout."""
         if not text or not text.strip():
             return [0.0] * self.dimension
 
         if self.provider in ["auto", "ollama"]:
             try:
                 # 1. Try modern Ollama /api/embed endpoint
-                resp = httpx.post(
+                resp = self._client.post(
                     f"{self.base_url}/api/embed",
-                    json={"model": self.model_name, "input": text},
-                    timeout=5.0
+                    json={
+                        "model": self.model_name,
+                        "input": text,
+                        "keep_alive": self.keep_alive
+                    }
                 )
                 if resp.status_code == 200:
                     data = resp.json()
@@ -71,10 +86,13 @@ class EmbeddingAdapter:
                         return embeddings[0]
 
                 # 2. Try legacy Ollama /api/embeddings endpoint
-                resp_legacy = httpx.post(
+                resp_legacy = self._client.post(
                     f"{self.base_url}/api/embeddings",
-                    json={"model": self.model_name, "prompt": text},
-                    timeout=5.0
+                    json={
+                        "model": self.model_name,
+                        "prompt": text,
+                        "keep_alive": self.keep_alive
+                    }
                 )
                 if resp_legacy.status_code == 200:
                     data = resp_legacy.json()
@@ -89,26 +107,42 @@ class EmbeddingAdapter:
         return self._fallback_pseudo_embedding(text)
 
     def embed_batch(self, texts: List[str]) -> List[List[float]]:
-        """Embed a list of strings in batch."""
+        """Embed a list of strings using sliced sub-batching to prevent Ollama timeouts."""
         if not texts:
             return []
 
         if self.provider in ["auto", "ollama"]:
-            try:
-                resp = httpx.post(
-                    f"{self.base_url}/api/embed",
-                    json={"model": self.model_name, "input": texts},
-                    timeout=10.0
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    embeddings = data.get("embeddings", [])
-                    if embeddings and len(embeddings) == len(texts):
-                        return embeddings
-                else:
-                    logger.warning(f"Ollama batch embed returned HTTP {resp.status_code} for {len(texts)} chunks")
-            except Exception as exc:
-                logger.warning(f"Ollama batch embedding failed ({exc}). Falling back to sequential embedding.")
+            results: List[List[float]] = []
+            chunk_step = max(1, self.sub_batch_size)
+
+            for i in range(0, len(texts), chunk_step):
+                sub_slice = texts[i:i + chunk_step]
+                try:
+                    resp = self._client.post(
+                        f"{self.base_url}/api/embed",
+                        json={
+                            "model": self.model_name,
+                            "input": sub_slice,
+                            "keep_alive": self.keep_alive
+                        }
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        embeddings = data.get("embeddings", [])
+                        if embeddings and len(embeddings) == len(sub_slice):
+                            results.extend(embeddings)
+                            continue
+                    
+                    # If endpoint returned non-200 or incomplete, fall back for this sub_slice
+                    logger.warning(f"Ollama sub-batch embed returned HTTP {resp.status_code}. Processing sub-slice sequentially.")
+                    results.extend([self.embed_text(t) for t in sub_slice])
+                except Exception as exc:
+                    logger.warning(f"Ollama sub-batch embed failed for slice [{i}:{i+len(sub_slice)}] ({exc}). Processing sequentially.")
+                    results.extend([self.embed_text(t) for t in sub_slice])
+
+            if len(results) == len(texts):
+                return results
 
         return [self.embed_text(t) for t in texts]
+
 

@@ -103,7 +103,7 @@ class KnowledgeBaseSidecarWorker:
             "results": results,
         }
 
-    def run_worker_loop(self, poll_interval: float = 3.0, stop_event=None) -> None:
+    def run_worker_loop(self, poll_interval: float = 4.0, stop_event=None) -> None:
         """Run continuous daemon worker processing pending queue items."""
         logger.info(f"Starting Knowledge Base Sidecar Worker with embedding model '{settings.OLLAMA_EMBEDDING_MODEL}'...")
         while not (stop_event and stop_event.is_set()):

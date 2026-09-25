@@ -85,6 +85,9 @@ class Settings(BaseSettings):
     # Dense Vector Embeddings & Knowledge Base Sidecar Settings
     EMBEDDING_PROVIDER: str = "auto"  # 'auto', 'ollama', 'openrouter', or 'mock'
     OLLAMA_EMBEDDING_MODEL: str = "snowflake-arctic-embed:latest"
+    OLLAMA_TIMEOUT: float = 60.0  # Timeout in seconds for Ollama model load & embedding
+    OLLAMA_KEEP_ALIVE: str = "1h"  # Keep model resident in VRAM/RAM
+    OLLAMA_SUB_BATCH_SIZE: int = 16  # Max chunks sent per HTTP batch request to avoid timeouts
     CHUNK_SIZE_TOKENS: int = 600
     CHUNK_OVERLAP_TOKENS: int = 80
     VECTOR_STORE_PATH: Path = Field(default=Path("reposcroller_vectors"))

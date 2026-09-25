@@ -61,25 +61,48 @@ foreach ($root in $roots) {
 Write-Host "  -> $onlineCount sur $($roots.Count) referentiels en ligne." -ForegroundColor Gray
 Write-Host ""
 
-# 3. Verification d Ollama (Service / Processus)
+# 3. Verification d Ollama (Local ou Node distant PC2)
+$envFile = Join-Path $devPath ".env"
+$configuredOllamaUrl = "http://127.0.0.1:11434"
+if (Test-Path $envFile) {
+    Get-Content $envFile | ForEach-Object {
+        $line = $_.Trim()
+        if ($line -and -not $line.StartsWith("#")) {
+            $parts = $line.Split('=', 2)
+            if ($parts.Count -eq 2 -and $parts[0].Trim() -eq "OLLAMA_BASE_URL") {
+                $configuredOllamaUrl = $parts[1].Split('#')[0].Trim()
+            }
+        }
+    }
+}
+
+$isRemote = ($configuredOllamaUrl -notlike "*127.0.0.1*" -and $configuredOllamaUrl -notlike "*localhost*")
 $hasOllamaInstalled = (Get-Command ollama.exe -ErrorAction SilentlyContinue) -ne $null
-$isOllamaListening = $false
+$needStartOllama = $false
 
-if ($hasOllamaInstalled) {
-    $listeningCheck = netstat -ano | findstr :11434 | findstr LISTENING
-    if ($listeningCheck) {
-        $isOllamaListening = $true
-        Write-Host "[DETECTE] Serveur Ollama deja actif et en ecoute (http://127.0.0.1:11434)." -ForegroundColor Green
+if ($isRemote) {
+    Write-Host "[CONFIG] Node GPU distant configure : $configuredOllamaUrl" -ForegroundColor Cyan
+    try {
+        $checkRemote = Invoke-RestMethod -Uri "$configuredOllamaUrl/api/tags" -Method Get -TimeoutSec 2 -ErrorAction Stop
+        Write-Host "  -> [CONNECTE] PC2 CUDA Node actif ($configuredOllamaUrl)." -ForegroundColor Green
+    } catch {
+        Write-Host "  -> [ATTENTION] PC2 CUDA Node non joignable a $configuredOllamaUrl." -ForegroundColor Yellow
     }
-    else {
-        Write-Host "[DETECTE] Ollama installe mais non actif. Il sera demarre dans un onglet." -ForegroundColor Yellow
+} else {
+    $isOllamaListening = $false
+    if ($hasOllamaInstalled) {
+        $listeningCheck = netstat -ano | findstr :11434 | findstr LISTENING
+        if ($listeningCheck) {
+            $isOllamaListening = $true
+            Write-Host "[DETECTE] Serveur Ollama local deja actif et en ecoute (http://127.0.0.1:11434)." -ForegroundColor Green
+        } else {
+            Write-Host "[DETECTE] Ollama installe mais non actif. Il sera demarre dans un onglet." -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host "[INFO] Ollama non present sur cette machine (fallback RAG distant/heuristique actif)." -ForegroundColor DarkGray
     }
+    $needStartOllama = $hasOllamaInstalled -and (-not $isOllamaListening -or $ForceOllamaTab)
 }
-else {
-    Write-Host "[INFO] Ollama non present sur cette machine (fallback RAG distant/heuristique actif)." -ForegroundColor DarkGray
-}
-
-$needStartOllama = $hasOllamaInstalled -and (-not $isOllamaListening -or $ForceOllamaTab)
 
 Write-Host ""
 
