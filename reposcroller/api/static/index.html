@@ -447,28 +447,8 @@
 
     <!-- 2-Column Studio Grid: Left Results / Right Topology & Sidecar Ingestion -->
     <div class="studio-content-grid">
-      <!-- Left Column: Multi-Signal Ranked Results -->
-      <div class="studio-results-column">
-        <div class="studio-column-header">
-          <div class="column-title">
-            <span>📊 Retrieved Candidates & Signal Breakdown</span>
-            <span id="studio-results-count" class="badge badge-sm badge-info">0 candidates</span>
-          </div>
-          <div id="studio-signals-summary" class="studio-signals-summary">
-            <!-- Dynamic signals stats -->
-          </div>
-        </div>
 
-        <div id="studio-rag-results-container" class="studio-results-list">
-          <div class="studio-empty-state">
-            <div class="empty-icon">🔬</div>
-            <div class="empty-title">Ready for Multi-Signal Retrieval</div>
-            <div class="empty-text">Enter a query above or click one of the quick prompts to execute dense vector search on PC2 CUDA, BM25 scoring, and graph entity neighborhood expansion.</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Right Column: Knowledge Topology & Sidecar Ingestion Controls -->
+      <!-- Left Column: Knowledge Topology & Sidecar Ingestion Controls -->
       <div class="studio-controls-column">
         <!-- Sidecar Indexing Pipeline & Telemetry Card -->
         <div class="studio-card">
@@ -589,6 +569,28 @@
           </div>
         </div>
       </div>
+<!-- Right Column -->
+<div id="studio-rag-results-container" class="studio-results-list">
+  <div class="studio-empty-state">
+    <div class="empty-icon">🔬</div>
+    <div class="empty-title">Ready for Multi-Signal Retrieval</div>
+    <div class="empty-text">Enter a query above or click one of the quick prompts to execute dense vector search on PC2
+      CUDA, BM25 scoring, and graph entity neighborhood expansion.</div>
+  </div>
+</div>
+</div>
+
+<!-- Right Column: Multi-Signal Ranked Results -->
+<div class="studio-results-column">
+  <div class="studio-column-header">
+    <div class="column-title">
+      <span>📊 Retrieved Candidates & Signal Breakdown</span>
+      <span id="studio-results-count" class="badge badge-sm badge-info">0 candidates</span>
+    </div>
+    <div id="studio-signals-summary" class="studio-signals-summary">
+      <!-- Dynamic signals stats -->
+    </div>
+  </div>
     </div>
   </main>
 

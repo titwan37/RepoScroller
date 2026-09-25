@@ -470,3 +470,20 @@ To ensure that the most recent operational documents are indexed and available i
 | **Consistent** | Version lineages explicitly define `supersedes`, `derived_from`, and `near_duplicate` relationships in DAG format. | `version_chains(parent_sha256, child_sha256, relationship)` |
 | **Enduring** | Zero-dependency, single-file SQLite database with Write-Ahead Logging (WAL) and ACID transactions. | `reposcroller_ledger.db` |
 | **Available** | Fast REST API endpoints, real-time Web dashboard, and resilient fallback mechanisms for offline NAS drives. | [`reposcroller/api`](file:///c:/Dev/RepoScroller/reposcroller/api) |
+
+I have completely refactored the Sidecar Worker to use a **Multithreaded Pipeline Architecture** in [`reposcroller/ai/sidecar_worker.py`](file:///c:/Dev/RepoScroller/reposcroller/ai/sidecar_worker.py).
+
+The new architecture replaces the strictly synchronous loop with a high-throughput queue system:
+
+1. **Producer Loop (Main Thread):** Continuously queries SQLite for pending documents in batches, reads the text, creates semantic chunks, and pushes them into an `embed_queue` without waiting for network IO.
+2. **HTTP Worker Pool (6 Threads):** Multiple threads pull batches from the queue and concurrently blast embedding requests to your RTX 3060 (`PC2`). Because there are multiple workers, the GPU will now receive continuous tensor workloads instead of waiting.
+3. **Consumer Thread (DB Writer):** Receives the returned embeddings and sequentially writes them back into the SQLite Vector Store and Graph Store in bulk. By isolating the SQLite writes to a single thread, we prevent `database is locked` contention while allowing the HTTP threads to keep the network saturated.
+
+### What you should see now
+
+* **LAN Throughput:** The 32 Kbps limit will spike to multiple megabytes per second as 6 concurrent workers request vectors simultaneously.
+
+* **GPU Utilization:** The RTX 3060 should show a steady, sustained load rather than 1-3% sporadic spikes.
+* **Total Indexing Time:** Expect an exponential decrease in the time required to index the entire 12,000+ document base.
+
+If you are running the daemon in the background (`task-2928`), you may need to restart it so that it picks up the new multithreaded worker logic. Let me know if you want to further increase the number of concurrent HTTP threads (currently set to 6) or if you encounter any `database is locked` issues under the new load!

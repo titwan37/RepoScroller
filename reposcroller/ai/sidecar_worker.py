@@ -273,60 +273,167 @@ class KnowledgeBaseSidecarWorker:
                 "start_time": time.strftime("%H:%M:%S", time.localtime(self.session_start_time)) if self.session_start_time else None
             }
 
-    def _run_loop(self, poll_interval: float = 2.0) -> None:
-        """Internal worker loop running continuously until stop event is signaled."""
-        logger.info(f"Sidecar worker thread active (poll interval: {poll_interval}s)...")
-        last_reported_hundred = 0
-        while not self._stop_event.is_set():
-            try:
-                batch_res = self.process_pending_batch(limit=settings.KB_SIDECAR_BATCH_SIZE)
-                if batch_res["processed_count"] > 0:
-                    current_hundred = self.session_docs_processed // 100
-                    if current_hundred > last_reported_hundred:
-                        last_reported_hundred = current_hundred
-                        logger.info(f"⚡ Sidecar Milestone: {self.session_docs_processed} docs processed ({self.session_chunks_embedded} chunks/vectors in VRAM) | Model: {settings.OLLAMA_EMBEDDING_MODEL}")
-                else:
-                    if self.session_docs_processed > 0 and self.session_docs_processed != last_reported_hundred * 100:
-                        last_reported_hundred = self.session_docs_processed // 100
-                        logger.info(f"✅ Sidecar Cycle Complete: All queued documents processed ({self.session_docs_processed} total docs, {self.session_chunks_embedded} chunks indexed).")
-                    self._stop_event.wait(timeout=poll_interval)
-            except Exception as e:
-                logger.error(f"Error in KB Sidecar loop: {e}")
-                self._stop_event.wait(timeout=poll_interval)
-
-        logger.info("Sidecar continuous loop exited gracefully.")
-
-    def run_worker_loop(self, poll_interval: float = 3.0, stop_event=None) -> None:
-        """CLI entrypoint for standalone background sidecar daemon."""
+    def _pipeline_loop(self, poll_interval: float, external_stop_event=None) -> None:
+        """Multithreaded pipeline: Producer (DB read) -> HTTP Workers (Embed) -> DB Writer (Persist)."""
+        import queue
         from reposcroller.ai.telemetry import workload_telemetry
-        logger.info(f"Knowledge Base Sidecar daemon started | Model: {settings.OLLAMA_EMBEDDING_MODEL} | Target: {settings.embed_url}")
+        
+        stop_evt = external_stop_event if external_stop_event else self._stop_event
+        
+        logger.info(f"Starting Multi-Threaded Sidecar Pipeline (Producer, HTTP Pool, DB Writer) | Target: {settings.embed_url}")
+        
+        embed_queue = queue.Queue(maxsize=100)
+        db_queue = queue.Queue(maxsize=100)
+        
         last_reported_hundred = 0
         is_idle_reported = False
 
-        while not (stop_event and stop_event.is_set()):
-            try:
-                batch_res = self.process_pending_batch(limit=settings.KB_SIDECAR_BATCH_SIZE)
-                processed = batch_res.get("processed_count", 0)
-                if processed > 0:
-                    is_idle_reported = False
-                    batch_chunks = sum(r.get("chunks_count", 0) for r in batch_res.get("results", []))
-                    tier_label = workload_telemetry.active_tier_label
-                    logger.info(
-                        f"⚡ [BATCH] Processed {processed} docs ({batch_chunks} chunks) -> Session: {self.session_docs_processed} docs ({self.session_chunks_embedded} chunks) | Tier: {tier_label}"
-                    )
+        def db_writer_loop():
+            while not stop_evt.is_set():
+                try:
+                    task = db_queue.get(timeout=poll_interval)
+                except queue.Empty:
+                    continue
+                if task is None:
+                    break
+                try:
+                    docs_to_embed = task["docs_to_embed"]
+                    doc_graphs = task["doc_graphs"]
+                    completed_shas = task["completed_shas"]
+                    total_batch_chunks = task["total_batch_chunks"]
 
-                    current_hundred = self.session_docs_processed // 100
-                    if current_hundred > last_reported_hundred:
-                        last_reported_hundred = current_hundred
-                        logger.info(
-                            f"🏆 [MILESTONE] {self.session_docs_processed} documents indexed into Knowledge Base & Vector Index!"
-                        )
-                else:
+                    # SQLite persistence (this calls vector_store and graph_store)
+                    if docs_to_embed:
+                        self.vector_store.index_batch_document_chunks(docs_to_embed)
+                    if doc_graphs:
+                        self.graph_store.save_graphs_batch(doc_graphs)
+                    if completed_shas:
+                        self.repo.mark_kb_queue_batch_status(completed_shas, "completed")
+                        workload_telemetry.record_document_completed(count=len(completed_shas), chunks=total_batch_chunks)
+                    
+                    with self._lock:
+                        self.session_docs_processed += len(completed_shas)
+                        self.session_chunks_embedded += total_batch_chunks
+                except Exception as e:
+                    logger.error(f"Pipeline DB Writer error: {e}")
+                finally:
+                    db_queue.task_done()
+
+        def http_worker_loop():
+            while not stop_evt.is_set():
+                try:
+                    batch = embed_queue.get(timeout=poll_interval)
+                except queue.Empty:
+                    continue
+                if batch is None:
+                    break
+                try:
+                    docs_to_embed = batch["docs_to_embed"]
+                    all_texts_to_embed = []
+                    chunk_ptrs = []
+                    
+                    # Extract texts that need embeddings
+                    for sha, chunks, _meta in docs_to_embed:
+                        for c in chunks:
+                            if not c.get("embedding"):
+                                all_texts_to_embed.append(c["chunk_text"])
+                                chunk_ptrs.append(c)
+
+                    # HTTP requests are fully concurrent now, without blocking SQLite
+                    if all_texts_to_embed:
+                        embeddings = self.embedder.embed_batch(all_texts_to_embed)
+                        for chunk_obj, emb in zip(chunk_ptrs, embeddings):
+                            chunk_obj["embedding"] = emb
+                            
+                    db_queue.put(batch)
+                except Exception as e:
+                    logger.error(f"Pipeline HTTP worker error: {e}")
+                    failed_shas = [sha for sha, _, _ in batch["docs_to_embed"]]
+                    self.repo.mark_kb_queue_batch_status(failed_shas, "failed")
+                finally:
+                    embed_queue.task_done()
+
+        # Launch Thread Pool
+        num_http_workers = 6
+        http_threads = []
+        for i in range(num_http_workers):
+            t = threading.Thread(target=http_worker_loop, name=f"HTTP-Worker-{i}", daemon=True)
+            t.start()
+            http_threads.append(t)
+            
+        writer_thread = threading.Thread(target=db_writer_loop, name="DB-Writer", daemon=True)
+        writer_thread.start()
+
+        # Producer Loop (Main Thread)
+        while not stop_evt.is_set():
+            try:
+                pending_items = self.repo.fetch_pending_kb_queue(limit=settings.KB_SIDECAR_BATCH_SIZE)
+                if not pending_items:
                     if not is_idle_reported:
                         logger.info("⏳ [IDLE] All queued documents processed. Waiting for new files...")
                         is_idle_reported = True
                     time.sleep(poll_interval)
+                    continue
+
+                is_idle_reported = False
+                batch_shas = [item["sha256_hash"] for item in pending_items]
+                self.repo.mark_kb_queue_batch_status(batch_shas, "processing")
+
+                docs_to_embed = []
+                doc_graphs = []
+                completed_shas = []
+                total_batch_chunks = 0
+
+                for item in pending_items:
+                    sha = item["sha256_hash"]
+                    fname = item.get("canonical_filename", "")
+                    doc_type = item.get("doc_type", "")
+                    doc_date = item.get("doc_date", "")
+
+                    full_text = self.repo.get_document_full_text(sha) or item.get("text_snippet", "")
+                    if not full_text:
+                        completed_shas.append(sha)
+                        continue
+
+                    chunks = self.chunker.chunk_document(full_text, sha, fname, doc_type, doc_date)
+                    docs_to_embed.append((sha, chunks, item))
+
+                    doc_graph = self.graph_extractor.extract_knowledge_graph(full_text, sha, fname, doc_type, doc_date)
+                    doc_graphs.append(doc_graph)
+                    completed_shas.append(sha)
+                    total_batch_chunks += len(chunks)
+
+                batch = {
+                    "docs_to_embed": docs_to_embed,
+                    "doc_graphs": doc_graphs,
+                    "completed_shas": completed_shas,
+                    "total_batch_chunks": total_batch_chunks
+                }
+                
+                # Hand over to HTTP workers (Blocks if queue is full)
+                embed_queue.put(batch)
+
+                current_hundred = self.session_docs_processed // 100
+                if current_hundred > last_reported_hundred:
+                    last_reported_hundred = current_hundred
+                    logger.info(f"⚡ Sidecar Milestone: {self.session_docs_processed} docs processed ({self.session_chunks_embedded} chunks/vectors) | Tier: {workload_telemetry.active_tier_label}")
+
             except Exception as e:
-                logger.error(f"Error in standalone KB Sidecar loop: {e}")
+                logger.error(f"Error in Pipeline Producer loop: {e}")
                 time.sleep(poll_interval)
+
+        # Graceful Teardown
+        for _ in range(num_http_workers):
+            embed_queue.put(None)
+        db_queue.put(None)
+        
+        logger.info("Sidecar Multithreaded pipeline exited gracefully.")
+
+    def _run_loop(self, poll_interval: float = 2.0) -> None:
+        """Internal worker loop running continuously until stop event is signaled."""
+        self._pipeline_loop(poll_interval)
+
+    def run_worker_loop(self, poll_interval: float = 3.0, stop_event=None) -> None:
+        """CLI entrypoint for standalone background sidecar daemon."""
+        self._pipeline_loop(poll_interval, stop_event)
 
