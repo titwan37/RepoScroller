@@ -28,6 +28,7 @@ if (Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue) {
 $env:OLLAMA_HOST = "0.0.0.0:$Port"
 $env:OLLAMA_KEEP_ALIVE = "24h"
 $env:OLLAMA_NUM_PARALLEL = "4"
+$env:OLLAMA_MAX_LOADED_MODELS = "3"
 $env:OLLAMA_FLASH_ATTENTION = "1"
 
 # 3. Check / Start Ollama Server
@@ -68,7 +69,7 @@ if ($isListening) {
     exit 1
 }
 
-# 4. Pre-warm Embedding Model in VRAM
+# 4. Pre-warm Embedding & Chat Models simultaneously in VRAM
 Write-Host ""
 Write-Host "[3/4] Pre-warming embedding model '$Model' into VRAM..." -ForegroundColor Cyan
 try {
@@ -79,10 +80,33 @@ try {
     } | ConvertTo-Json
     
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
-    $res = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/embed" -Method Post -Body $warmupPayload -ContentType "application/json" -TimeoutSec 30
+    $res = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/embed" -Method Post -Body $warmupPayload -ContentType "application/json" -TimeoutSec 45
     $sw.Stop()
     
     if ($res.embeddings) {
+        $dim = $res.embeddings[0].Count
+        Write-Host "  -> Embedding model loaded ($dim-dim, warm-up took $($sw.ElapsedMilliseconds)ms)" -ForegroundColor Green
+    }
+} catch {
+    Write-Host "  -> Embedding warm-up notice: $($_.Exception.Message)" -ForegroundColor Yellow
+}
+
+Write-Host "  -> Pre-warming chat model 'llama3.2:latest' into VRAM..." -ForegroundColor Cyan
+try {
+    $chatPayload = @{
+        model = "llama3.2:latest"
+        messages = @(@{ role = "user"; content = "ok" })
+        stream = $false
+        keep_alive = "24h"
+    } | ConvertTo-Json
+    
+    $sw2 = [System.Diagnostics.Stopwatch]::StartNew()
+    $resChat = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/chat" -Method Post -Body $chatPayload -ContentType "application/json" -TimeoutSec 45
+    $sw2.Stop()
+    Write-Host "  -> Chat model loaded (took $($sw2.ElapsedMilliseconds)ms)" -ForegroundColor Green
+} catch {
+    Write-Host "  -> Chat warm-up notice: $($_.Exception.Message)" -ForegroundColor DarkGray
+}
         $dim = $res.embeddings[0].Count
         Write-Host "  -> Model loaded into VRAM ($dim-dim vectors, warm-up took $($sw.ElapsedMilliseconds)ms)" -ForegroundColor Green
     }

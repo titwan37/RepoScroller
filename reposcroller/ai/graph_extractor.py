@@ -154,16 +154,17 @@ Output strictly valid JSON adhering to this schema:
 Do NOT include preamble or explanations.
 """
                 resp_text = None
-                if self.provider in ["auto", "ollama"]:
+                if self.provider in ["ollama", "openrouter"]:
                     resp = httpx.post(
                         f"{settings.OLLAMA_BASE_URL.rstrip('/')}/api/chat",
                         json={
                             "model": settings.OLLAMA_MODEL,
                             "messages": [{"role": "user", "content": prompt}],
                             "stream": False,
+                            "keep_alive": settings.OLLAMA_KEEP_ALIVE,
                             "options": {"temperature": 0.1}
                         },
-                        timeout=5.0
+                        timeout=settings.OLLAMA_TIMEOUT
                     )
                     if resp.status_code == 200:
                         resp_text = resp.json().get("message", {}).get("content", "")

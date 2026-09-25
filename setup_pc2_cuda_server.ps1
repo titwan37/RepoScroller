@@ -37,17 +37,20 @@ Write-Host "[2/5] Setting Ollama environment variables for LAN GPU access..." -F
 [Environment]::SetEnvironmentVariable("OLLAMA_HOST", "0.0.0.0:$Port", "Machine")
 [Environment]::SetEnvironmentVariable("OLLAMA_KEEP_ALIVE", "24h", "Machine")
 [Environment]::SetEnvironmentVariable("OLLAMA_NUM_PARALLEL", "4", "Machine")
+[Environment]::SetEnvironmentVariable("OLLAMA_MAX_LOADED_MODELS", "3", "Machine")
 [Environment]::SetEnvironmentVariable("OLLAMA_FLASH_ATTENTION", "1", "Machine")
 
 $env:OLLAMA_HOST = "0.0.0.0:$Port"
 $env:OLLAMA_KEEP_ALIVE = "24h"
 $env:OLLAMA_NUM_PARALLEL = "4"
+$env:OLLAMA_MAX_LOADED_MODELS = "3"
 $env:OLLAMA_FLASH_ATTENTION = "1"
 
-Write-Host "  -> OLLAMA_HOST          = 0.0.0.0:$Port (Listening on all LAN interfaces)" -ForegroundColor Green
-Write-Host "  -> OLLAMA_KEEP_ALIVE     = 24h (Model stays resident in VRAM)" -ForegroundColor Green
-Write-Host "  -> OLLAMA_NUM_PARALLEL   = 4 (Multi-threaded chunk embedding)" -ForegroundColor Green
-Write-Host "  -> OLLAMA_FLASH_ATTENTION= 1 (Accelerated CUDA attention kernels)" -ForegroundColor Green
+Write-Host "  -> OLLAMA_HOST             = 0.0.0.0:$Port (Listening on all LAN interfaces)" -ForegroundColor Green
+Write-Host "  -> OLLAMA_KEEP_ALIVE        = 24h (Model stays resident in VRAM)" -ForegroundColor Green
+Write-Host "  -> OLLAMA_NUM_PARALLEL      = 4 (Multi-threaded chunk embedding)" -ForegroundColor Green
+Write-Host "  -> OLLAMA_MAX_LOADED_MODELS = 3 (Keep embedding + chat models in VRAM simultaneously)" -ForegroundColor Green
+Write-Host "  -> OLLAMA_FLASH_ATTENTION   = 1 (Accelerated CUDA attention kernels)" -ForegroundColor Green
 
 # 4. Inbound Firewall Rule Configuration
 Write-Host ""

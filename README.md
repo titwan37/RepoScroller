@@ -253,3 +253,139 @@ uv run pytest
 - `test_graph_extractor.py` & `test_graph_store.py`: Entity extraction and Property Graph expansion.
 - `test_graph_rag.py`: Multi-signal GraphRAG and Reciprocal Rank Fusion.
 - `test_agent.py` & `test_chat.py`: LangGraph conversational agent and REST API integration.
+
+---
+
+Viewed .env.example:1-31
+Viewed .env:1-6
+Created setup_pc2_cuda_server.ps1
+Listed directory RepoScroller
+Viewed setup_pc2_cuda_server.ps1:1-125
+Created setup_pc2_cuda_server.bat
+Viewed start_all.ps1:1-60
+Viewed start_all.ps1:61-162
+Viewed .env:1-6
+Viewed start_all.bat:1-4
+Created launch_pc1_host.ps1
+Created launch_pc1_host.bat
+Viewed start_all.ps1:64-86
+Edited start_all.ps1
+Ran command: `uv run pytest`
+
+Les scripts de configuration et lanceurs pour **PC2 (Node CUDA RTX 3060)** et **PC1 (Hôte RepoScroller)** sont prêts.
+
+---
+
+### 1. Pour **PC2 (Serveur CUDA GPU - 192.168.192.9)**
+
+Deux fichiers sont disponibles à la racine du projet :
+
+- [`setup_pc2_cuda_server.ps1`](file:///c:/Dev/RepoScroller/setup_pc2_cuda_server.ps1) (Script PowerShell complet exécuté en Administrateur)
+- [`setup_pc2_cuda_server.bat`](file:///c:/Dev/RepoScroller/setup_pc2_cuda_server.bat) (Lanceur batch double-cliquable)
+
+#### Ce qu'il configure automatiquement sur PC2
+
+1. **Variables d'environnement système Windows :**
+   - `OLLAMA_HOST=0.0.0.0:11434` *(écoute sur toutes les interfaces réseau LAN)*
+   - `OLLAMA_KEEP_ALIVE=24h` *(garde le modèle pré-chargé en VRAM GDDR6)*
+   - `OLLAMA_NUM_PARALLEL=4` *(parallélisation multi-threads pour les sous-batches)*
+   - `OLLAMA_FLASH_ATTENTION=1` *(accélération CUDA Flash Attention)*
+2. **Règle de Pare-feu Windows :**
+   - `New-NetFirewallRule -DisplayName "Ollama LAN API" -Direction Inbound -LocalPort 11434 -Protocol TCP -Action Allow`
+3. **Pré-téléchargement et vérification des modèles :**
+   - Télécharge / vérifie `snowflake-arctic-embed2:latest` et `snowflake-arctic-embed:latest` directement sur la VRAM de la RTX 3060.
+4. **Redémarrage du service / processus Ollama** et affichage de l'adresse IP LAN de confirmation.
+
+> **Utilisation sur PC2 :** Copiez `setup_pc2_cuda_server.bat` et `setup_pc2_cuda_server.ps1` sur PC2 (ou clonez le repo) et double-cliquez sur `setup_pc2_cuda_server.bat`.
+
+---
+
+### 2. Pour **PC1 (Hôte / Orchestrateur RepoScroller)**
+
+- [`launch_pc1_host.ps1`](file:///c:/Dev/RepoScroller/launch_pc1_host.ps1)
+- [`launch_pc1_host.bat`](file:///c:/Dev/RepoScroller/launch_pc1_host.bat)
+- [`.env`](file:///c:/Dev/RepoScroller/.env) :
+
+  ```ini
+  OLLAMA_BASE_URL=http://192.168.192.9:11434
+  OLLAMA_EMBEDDING_MODEL=snowflake-arctic-embed2:latest
+  OLLAMA_TIMEOUT=60.0
+  OLLAMA_SUB_BATCH_SIZE=32
+  OLLAMA_KEEP_ALIVE=24h
+  ```
+
+#### Ce que fait le lanceur PC1
+
+1. Teste la connectivité réseau LAN vers `http://192.168.192.9:11434/api/tags` et affiche la latence réseau (ex: ~3-5ms).
+2. Vérifie la présence du modèle `snowflake-arctic-embed2:latest` sur le GPU de PC2.
+3. Sonde les 6 volumes de stockage (SMB SyNAS & Google Drive).
+4. Lance l'orchestrateur complet (`start_all.ps1`) avec le backend FastAPI, le scanner parallèle, le watcher et le Knowledge Base Sidecar (qui envoie les requêtes de vectorisation à PC2 via le réseau sans latence disque ni verrou).
+
+---
+**Oui, exactement !**
+
+### Pourquoi `0.0.0.0:11434` sur PC2 ?
+
+Par défaut, Ollama écoute **uniquement sur `127.0.0.1:11434` (localhost)**, ce qui empêche tout autre PC du réseau d'envoyer des requêtes.
+
+En configurant `OLLAMA_HOST=0.0.0.0:11434` sur **PC2** :
+
+- Ollama accepte les connexions provenant de toutes les cartes réseau (Ethernet/Wi-Fi du LAN).
+- **PC1** peut donc joindre PC2 sur `http://192.168.192.9:11434`.
+
+---
+
+### Comment l'appliquer sur PC2
+
+#### Option A (Automatique - Recommandé)
+
+Exécutez simplement [`setup_pc2_cuda_server.bat`](file:///c:/Dev/RepoScroller/setup_pc2_cuda_server.bat) sur PC2.
+> Le script définit `OLLAMA_HOST=0.0.0.0:11434` et `OLLAMA_KEEP_ALIVE=24h` dans les variables d'environnement Windows, ouvre le pare-feu et redémarre Ollama.
+
+#### Option B (Manuel sur PC2)
+
+1. Ouvrez PowerShell en **Administrateur** sur PC2 :
+
+   ```powershell
+   [Environment]::SetEnvironmentVariable("OLLAMA_HOST", "0.0.0.0:11434", "Machine")
+   [Environment]::SetEnvironmentVariable("OLLAMA_KEEP_ALIVE", "24h", "Machine")
+   ```
+
+2. Ouvrez le port dans le pare-feu Windows :
+
+   ```powershell
+   New-NetFirewallRule -DisplayName "Ollama LAN API" -Direction Inbound -LocalPort 11434 -Protocol TCP -Action Allow
+   ```
+
+3. Quittez complètement l'icône Ollama dans la barre des tâches (systray) puis relancez Ollama.
+
+Viewed setup_pc2_cuda_server.ps1:1-125
+Created start_pc2_cuda_node.ps1
+Created start_pc2_cuda_node.bat
+Created stop_pc2_cuda_node.ps1
+Created stop_pc2_cuda_node.bat
+Ran command: `git add . && git commit -m "Add dedicated daily launcher and stopper for PC2 CUDA GPU node" && git push origin main`
+
+Nous avons désormais une distinction claire entre **Setup initial (une seule fois avec droits Administrateur)** et **Lanceurs / Stoppers quotidiens** pour PC2 et PC1.
+
+---
+
+### Résumé des scripts pour PC2 (Node CUDA RTX 3060)
+
+| Fichier | Fréquence | Rôle |
+| :--- | :--- | :--- |
+| [`setup_pc2_cuda_server.bat`](file:///c:/Dev/RepoScroller/setup_pc2_cuda_server.bat) <br> *(et `.ps1`)* | **1 fois** *(Initiale)* | **Configuration système complète (Droits Admin) :**<br>• Définit `OLLAMA_HOST=0.0.0.0:11434`, `OLLAMA_KEEP_ALIVE=24h`, `OLLAMA_NUM_PARALLEL=4`, `OLLAMA_FLASH_ATTENTION=1`.<br>• Crée la règle Inbound dans le Pare-feu Windows pour le port TCP 11434.<br>• Télécharge et pré-installe le modèle `snowflake-arctic-embed2:latest`. |
+| [`start_pc2_cuda_node.bat`](file:///c:/Dev/RepoScroller/start_pc2_cuda_node.bat) <br> *(et `.ps1`)* | **Au quotidien** *(Lanceur)* | **Lanceur et Moniteur temps réel :**<br>• Démarre Ollama si non actif (sans demander les droits admin).<br>• **Pré-chauffe (warm-up)** le modèle `snowflake-arctic-embed2` directement dans la VRAM de la RTX 3060 pour garantir **0 ms de latence à froid** lors des requêtes de PC1.<br>• Affiche en direct l'utilisation VRAM (`nvidia-smi`), les modèles actifs (`ollama ps`) et les IP LAN d'écoute. |
+| [`stop_pc2_cuda_node.bat`](file:///c:/Dev/RepoScroller/stop_pc2_cuda_node.bat) <br> *(et `.ps1`)* | **Quand souhaité** | Arrête proprement Ollama sur PC2 et libère la VRAM du GPU. |
+
+---
+
+### Résumé des scripts pour PC1 (Hôte RepoScroller)
+
+| Fichier | Rôle |
+| :--- | :--- |
+| [`start_pc1_host.bat`](file:///c:/Dev/RepoScroller/start_pc1_host.bat) | Lanceur principal PC1 : teste la connectivité réseau vers PC2 (`192.168.192.9:11434`), vérifie la présence du modèle et lance tous les services RepoScroller. |
+| [`start_all.bat`](file:///c:/Dev/RepoScroller/start_all.bat) | Orchestrateur standard RepoScroller (backend, scanner x6, watcher, sidecar). |
+| [`stop_all.bat`](file:///c:/Dev/RepoScroller/stop_all.bat) | **Arrêt propre total** de tous les processus RepoScroller (FastAPI :8090, scanner, watcher, sidecar). |
+
+Tous les fichiers sont validés et synchronisés sur votre repository Git.

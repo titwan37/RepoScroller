@@ -158,9 +158,10 @@ Return ONLY a valid JSON object matching this schema:
             "messages": [{"role": "user", "content": prompt}],
             "format": "json",
             "stream": False,
+            "keep_alive": settings.OLLAMA_KEEP_ALIVE,
             "options": {"temperature": 0.1}
         }
-        with httpx.Client(timeout=10.0) as client:
+        with httpx.Client(timeout=settings.OLLAMA_TIMEOUT) as client:
             resp = client.post(url, json=payload)
             if resp.status_code == 200:
                 raw_json = resp.json()["message"]["content"]
