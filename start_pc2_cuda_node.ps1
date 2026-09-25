@@ -15,6 +15,25 @@ Write-Host "   RepoScroller - PC2 CUDA GPU Inference Node Launcher" -ForegroundC
 Write-Host "================================================================" -ForegroundColor Cyan
 Write-Host ""
 
+# Parse .env if present
+$envFile = Join-Path $PSScriptRoot ".env"
+$chatModel = "llama3.1:8b"
+
+if (Test-Path $envFile) {
+    Get-Content $envFile | ForEach-Object {
+        $line = $_.Trim()
+        if ($line -and -not $line.StartsWith("#")) {
+            $parts = $line.Split('=', 2)
+            if ($parts.Count -eq 2) {
+                $k = $parts[0].Trim()
+                $v = $parts[1].Trim().Split('#')[0].Trim()
+                if ($k -eq "OLLAMA_EMBEDDING_MODEL") { $Model = $v }
+                if ($k -eq "OLLAMA_MODEL_PC2") { $chatModel = $v }
+            }
+        }
+    }
+}
+
 # 1. GPU & CUDA Detection
 Write-Host "[1/4] Checking NVIDIA RTX 3060 GPU..." -ForegroundColor Cyan
 if (Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue) {
@@ -74,8 +93,8 @@ Write-Host ""
 Write-Host "[3/4] Pre-warming embedding model '$Model' into VRAM..." -ForegroundColor Cyan
 try {
     $warmupPayload = @{
-        model = $Model
-        input = "RepoScroller sovereign LAN CUDA embedding node warm-up probe"
+        model      = $Model
+        input      = "RepoScroller sovereign LAN CUDA embedding node warm-up probe"
         keep_alive = "24h"
     } | ConvertTo-Json
     
@@ -91,30 +110,33 @@ try {
     Write-Host "  -> Embedding warm-up notice: $($_.Exception.Message)" -ForegroundColor Yellow
 }
 
-# 5. Live Node Status Summary
+# 5. Pre-warm Chat Model into VRAM
+Write-Host ""
+Write-Host "[4/4] Pre-warming chat model '$chatModel' into VRAM..." -ForegroundColor Cyan
+try {
+    $warmupPayloadChat = @{
+        model      = $chatModel
+        messages   = @(
+            @{ role = "user"; content = "ping" }
+        )
+        keep_alive = "24h"
+        stream     = $false
+    } | ConvertTo-Json -Depth 5
+
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    $null = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/chat" -Method Post -Body $warmupPayloadChat -ContentType "application/json" -TimeoutSec 60
+    $sw.Stop()
+    Write-Host "  -> Chat model '$chatModel' loaded into VRAM (took $($sw.ElapsedMilliseconds)ms)" -ForegroundColor Green
+} catch {
+    Write-Host "  -> Chat warm-up notice: $($_.Exception.Message)" -ForegroundColor Yellow
+}
+
+# 6. Live Node Status Summary
 Write-Host ""
 Write-Host "================================================================" -ForegroundColor Green
 Write-Host "   PC2 CUDA GPU NODE IS ACTIVE & READY FOR PC1 REQUESTS" -ForegroundColor Green
 Write-Host "================================================================" -ForegroundColor Green
-$ips = Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.InterfaceAlias -notlike "*Loopback*" -and $_.IPAddress -notlike "169.254*" } | Select-Object -ExpandProperty IPAddress
-Write-Host " Endpoints listening on LAN:" -ForegroundColor Cyan
-foreach ($ip in $ips) {
-    Write-Host "   -> http://${ip}:$Port" -ForegroundColor Yellow
-}
-Write-Host ""
-$null = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/chat" -Method Post -Body $warmupPayloadChat -ContentType "application/json" -TimeoutSec 60
-if (Get-Command ollama.exe -ErrorAction SilentlyContinue) {
-    ollama ps
-}
-Write-Host ""
-Write-Host " Press [Ctrl+C] to exit or leave this window open." -ForegroundColor Gray
-Write-Host "================================================================" -ForegroundColor Green
-Write-Host ""
 
-# Keep alive loop displaying live status every 60s
-while ($true) {
-    Start-Sleep -Seconds 60
-}
 $ips = Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.InterfaceAlias -notlike "*Loopback*" -and $_.IPAddress -notlike "169.254*" } | Select-Object -ExpandProperty IPAddress
 Write-Host " Endpoints listening on LAN:" -ForegroundColor Cyan
 foreach ($ip in $ips) {
@@ -130,7 +152,11 @@ Write-Host " Press [Ctrl+C] to exit or leave this window open." -ForegroundColor
 Write-Host "================================================================" -ForegroundColor Green
 Write-Host ""
 
-# Keep alive loop displaying live status every 60s
+# Monitor loop displaying active VRAM models periodically
 while ($true) {
     Start-Sleep -Seconds 60
+    Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Active Models in VRAM:" -ForegroundColor Cyan
+    if (Get-Command ollama.exe -ErrorAction SilentlyContinue) {
+        ollama ps
+    }
 }
