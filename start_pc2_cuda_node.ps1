@@ -101,18 +101,11 @@ try {
     } | ConvertTo-Json
     
     $sw2 = [System.Diagnostics.Stopwatch]::StartNew()
-    $resChat = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/chat" -Method Post -Body $chatPayload -ContentType "application/json" -TimeoutSec 45
+    $null = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/chat" -Method Post -Body $chatPayload -ContentType "application/json" -TimeoutSec 45
     $sw2.Stop()
     Write-Host "  -> Chat model loaded (took $($sw2.ElapsedMilliseconds)ms)" -ForegroundColor Green
 } catch {
     Write-Host "  -> Chat warm-up notice: $($_.Exception.Message)" -ForegroundColor DarkGray
-}
-        $dim = $res.embeddings[0].Count
-        Write-Host "  -> Model loaded into VRAM ($dim-dim vectors, warm-up took $($sw.ElapsedMilliseconds)ms)" -ForegroundColor Green
-    }
-} catch {
-    Write-Host "  -> Warm-up notice: $($_.Exception.Message)" -ForegroundColor Yellow
-    Write-Host "     If the model is not pulled yet, run 'setup_pc2_cuda_server.bat' first." -ForegroundColor Gray
 }
 
 # 5. Live Node Status Summary

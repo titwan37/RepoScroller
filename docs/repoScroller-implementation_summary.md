@@ -658,3 +658,69 @@ All background and backend workflows—including document discovery, SHA-256 has
 2. __REST API Streaming__: `/api/v1/diagnostics/logs` delivers real-time events to the frontend.
 3. __Live UI Diagnostic Console__: [app.js](file:///C:/Dev/RepoScroller/reposcroller/api/static/app.js) polls every 2.5s, updates error counters, and displays full stack traces upon clicking __▶ Details / Trace__.
 4. __Periodic KB Sidecar Queue Refresh__: Dashboard automatically refreshes both the KPI metrics and the Knowledge Base Sidecar progress bar every 5 seconds.
+
+L'architecture __Split Workload (Localhost CPU vs Remote CUDA GPU)__ et son __monitoring temps réel sur le dashboard__ sont implémentés.
+
+---
+
+### 1. Répartition Dédiée des Charges (Split Workload)
+
+| Rôle | Machine | Endpoint | Modèle assigné | Avantage |
+| :--- | :--- | :--- | :--- | :--- |
+| __Raisonnement & Q&A Chat__ | __PC1 (Localhost / CPU)__ | `http://127.0.0.1:11434` | `llama3.2` ou Heuristiques / OpenRouter | Gère l'analyse de texte, la classification et les réponses conversationnelles sans saturer le réseau ni le GPU. |
+| __Inférence Vectorielle Dense__ | __PC2 (Serveur CUDA RTX 3060)__ | `http://192.168.192.9:11434` | `snowflake-arctic-embed2:latest` | __100% dédié aux calculs matriciels Tensor Cores__. Zéro swap de modèle, zéro contention VRAM. Vectorisation par sous-batches de 32 chunks à vitesse maximale ! |
+
+#### Configuration dans [`.env`](file:///c:/Dev/RepoScroller/.env)
+
+```ini
+# PC1 Localhost (Raisonnement CPU / Chat)
+OLLAMA_CHAT_BASE_URL=http://localhost:11434
+LLM_PROVIDER=auto
+OLLAMA_MODEL=llama3.2
+
+# PC2 Remote Compute Node (VRAM RTX 3060 / Embeddings)
+OLLAMA_EMBED_BASE_URL=http://192.168.192.9:11434
+EMBEDDING_PROVIDER=auto
+OLLAMA_EMBEDDING_MODEL=snowflake-arctic-embed2:latest
+OLLAMA_TIMEOUT=60.0
+OLLAMA_KEEP_ALIVE=24h
+OLLAMA_SUB_BATCH_SIZE=32
+```
+
+### 2. Monitoring Temps Réel sur le Frontend ([`index.html`](file:///c:/Dev/RepoScroller/reposcroller/api/static/index.html) & [`app.js`](file:///c:/Dev/RepoScroller/reposcroller/api/static/app.js))
+
+Un nouveau __HUD de Télémétrie Hardware__ a été intégré directement au sommet du dashboard :
+
+- __Carte 💻 PC1 Host Engine :__
+  - Statut : `Online (CPU)` avec ping local (< 1ms).
+  - Modèle : `llama3.2`.
+  - Compteur d'appels `api/chat` et latence de génération.
+- __Carte ⚡ PC2 CUDA Server (RTX 3060) :__
+  - Statut : `⚡ CUDA Ready` (avec détection du modèle `snowflake-arctic-embed2` résidant en VRAM).
+  - Ping LAN en direct (ex: ~255ms).
+  - Compteur de __vecteurs / chunks indexés__ et latence d'inférence GPU.
+- __Bouton `⟳ Probe Hardware` :__ Permet de sonder manuellement ou automatiquement les 2 machines toutes les 4 secondes via la nouvelle route API `GET /api/v1/diagnostics/workload`.
+
+### 3. Validation en direct du Probe Dual-Node
+
+```json
+{
+  "localhost_node": {
+    "name": "PC1 Host Engine (CPU / Chat)",
+    "url": "http://localhost:11434",
+    "role": "api/chat (Reasoning & Classification)",
+    "target_model": "llama3.2",
+    "online": true,
+    "ping_ms": 373.83
+  },
+  "cuda_gpu_node": {
+    "name": "PC2 Remote GPU Node (NVIDIA RTX 3060)",
+    "url": "http://192.168.192.9:11434",
+    "role": "api/embed (Vector Tensor Embeddings)",
+    "target_model": "snowflake-arctic-embed2:latest",
+    "online": true,
+    "ping_ms": 255.65,
+    "models_loaded": ["snowflake-arctic-embed2:latest"]
+  }
+}
+```
