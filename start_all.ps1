@@ -124,9 +124,8 @@ if ($UseWindowsTerminal -and (Get-Command wt.exe -ErrorAction SilentlyContinue))
         $wtArgs += @(";", "new-tab", "--title", "KB Sidecar (GraphRAG)", "-d", "$devPath", "cmd.exe", "/k", "start_sidecar.bat")
     }
 
-    if ($needStartOllama) {
-        $wtArgs += @(";", "new-tab", "--title", "Ollama Server", "-d", "$devPath", "cmd.exe", "/k", "start_ollama.bat")
-    }
+    # Always open Localhost Ollama Live Activity tab
+    $wtArgs += @(";", "new-tab", "--title", "Ollama Localhost Activity", "-d", "$devPath", "cmd.exe", "/k", "start_ollama.bat")
 
     & wt.exe @wtArgs
 }
