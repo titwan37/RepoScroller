@@ -1144,21 +1144,28 @@ function switchWorkspace(ws) {
 
   const btnLedger = document.getElementById("ws-btn-ledger");
   const btnGraphrag = document.getElementById("ws-btn-graphrag");
+  const btnUniverse = document.getElementById("ws-btn-universe");
   const btnChat = document.getElementById("ws-btn-chat");
 
   const paneLedger = document.getElementById("ws-pane-ledger");
   const paneGraphrag = document.getElementById("ws-pane-graphrag");
+  const paneUniverse = document.getElementById("ws-pane-universe");
   const paneChat = document.getElementById("ws-pane-chat");
 
   if (btnLedger) btnLedger.classList.toggle("active", ws === "ledger");
   if (btnGraphrag) btnGraphrag.classList.toggle("active", ws === "graphrag");
+  if (btnUniverse) btnUniverse.classList.toggle("active", ws === "universe");
   if (btnChat) btnChat.classList.toggle("active", ws === "chat");
 
   if (paneLedger) paneLedger.classList.toggle("hidden", ws !== "ledger");
   if (paneGraphrag) paneGraphrag.classList.toggle("hidden", ws !== "graphrag");
+  if (paneUniverse) paneUniverse.classList.toggle("hidden", ws !== "universe");
   if (paneChat) paneChat.classList.toggle("hidden", ws !== "chat");
 
-  if (ws === "graphrag") {
+  if (ws === "universe") {
+    init3DKnowledgeUniverse();
+    load3DUniverseData();
+  } else if (ws === "graphrag") {
     loadSidecarStats();
     const studioInput = document.getElementById("studio-rag-input");
     if (studioInput) studioInput.focus();
@@ -2288,4 +2295,735 @@ function updateDiagnosticBadges() {
     }
   }
 }
+
+// =========================================================================
+// 15. 3D KNOWLEDGE UNIVERSE & WEBGL GLSL TOPOLOGICAL SHADER ENGINE
+// =========================================================================
+
+const glsl3D = {
+  initialized: false,
+  scene: null,
+  camera: null,
+  renderer: null,
+  controls: null,
+  container: null,
+  worldGroup: null,
+  pointsMesh: null,
+  edgesMesh: null,
+  labelsGroup: null,
+  axesGroup: null,
+  gridHelper: null,
+  nodes: [],
+  edges: [],
+  clusters: [],
+  axes: {},
+  stats: {},
+  uniforms: {
+    uTime: { value: 0.0 },
+    uPointSize: { value: 1.0 },
+  },
+  autoSpin: true,
+  showEdges: true,
+  showLabels: true,
+  colorMode: "cluster",
+  activeClusterFilter: "all",
+  selectedNode: null,
+  hoveredNodeIndex: -1,
+  raycaster: null,
+  mouse: null,
+  animId: null,
+  isUserInteracting: false,
+};
+
+const UNIVERSE_VERTEX_SHADER = `
+  attribute float aSize;
+  attribute vec3 aColor;
+  attribute float aDegree;
+  attribute float aCluster;
+  attribute float aDimmed;
+
+  varying vec3 vColor;
+  varying float vCluster;
+  varying float vDegree;
+  varying float vDimmed;
+  varying float vDist;
+
+  uniform float uTime;
+  uniform float uPointSize;
+
+  void main() {
+    vColor = aColor;
+    vCluster = aCluster;
+    vDegree = aDegree;
+    vDimmed = aDimmed;
+
+    // Organic temporal breathing pulse (frequency modulated by degree & cluster)
+    float pulse = sin(uTime * 2.4 + aCluster * 1.5 + position.x * 0.04) * 0.22 + 1.0;
+    
+    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+    vDist = -mvPosition.z;
+
+    // Size attenuation with camera distance
+    float baseSize = aSize * 15.0 * pulse * uPointSize;
+    if (aDimmed > 0.5) {
+      baseSize *= 0.5;
+    }
+    gl_PointSize = baseSize * (320.0 / max(-mvPosition.z, 20.0));
+    gl_PointSize = clamp(gl_PointSize, 4.0, 70.0);
+
+    gl_Position = projectionMatrix * mvPosition;
+  }
+`;
+
+const UNIVERSE_FRAGMENT_SHADER = `
+  varying vec3 vColor;
+  varying float vCluster;
+  varying float vDegree;
+  varying float vDimmed;
+  varying float vDist;
+
+  uniform float uTime;
+
+  void main() {
+    vec2 coord = gl_PointCoord - vec2(0.5);
+    float r = length(coord);
+    if (r > 0.5) discard;
+
+    // Radial falloff: solid core + glowing Gaussian halo
+    float core = smoothstep(0.24, 0.04, r);
+    float halo = exp(-r * 6.5);
+    float alpha = clamp(core * 0.95 + halo * 0.65, 0.0, 1.0);
+
+    if (vDimmed > 0.5) {
+      alpha *= 0.15;
+    }
+
+    // Dynamic luminescence shimmer
+    float shimmer = 0.88 + 0.16 * sin(uTime * 3.2 + vCluster * 2.0);
+    vec3 finalColor = vColor * shimmer + vec3(0.08, 0.14, 0.22) * halo;
+
+    gl_FragColor = vec4(finalColor, alpha);
+  }
+`;
+
+function init3DKnowledgeUniverse() {
+  const container = document.getElementById("glsl-3d-canvas-container");
+  if (!container) return;
+
+  if (typeof THREE === "undefined") {
+    container.innerHTML = `
+      <div style="padding: 3rem; text-align: center; color: var(--text-muted);">
+        <p style="font-size: 1.2rem; color: var(--accent-amber);">⚠️ WebGL 3D Library (Three.js) is loading...</p>
+        <p>If not loaded automatically, please check internet connectivity to cdnjs.</p>
+      </div>
+    `;
+    return;
+  }
+
+  if (glsl3D.initialized) {
+    onWindowResize3D();
+    return;
+  }
+
+  glsl3D.container = container;
+  const width = container.clientWidth || 800;
+  const height = container.clientHeight || 650;
+
+  // Scene & Camera
+  glsl3D.scene = new THREE.Scene();
+  glsl3D.scene.background = null; // transparent to inherit CSS gradient
+
+  glsl3D.camera = new THREE.PerspectiveCamera(50, width / height, 1, 4000);
+  glsl3D.camera.position.set(0, 45, 270);
+
+  // WebGL Renderer
+  glsl3D.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
+  glsl3D.renderer.setSize(width, height);
+  glsl3D.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  container.innerHTML = "";
+  container.appendChild(glsl3D.renderer.domElement);
+
+  // OrbitControls
+  if (typeof THREE.OrbitControls !== "undefined") {
+    glsl3D.controls = new THREE.OrbitControls(glsl3D.camera, glsl3D.renderer.domElement);
+    glsl3D.controls.enableDamping = true;
+    glsl3D.controls.dampingFactor = 0.05;
+    glsl3D.controls.minDistance = 25;
+    glsl3D.controls.maxDistance = 1200;
+    glsl3D.controls.target.set(0, 0, 0);
+
+    glsl3D.controls.addEventListener("start", () => {
+      glsl3D.isUserInteracting = true;
+    });
+    glsl3D.controls.addEventListener("end", () => {
+      glsl3D.isUserInteracting = false;
+    });
+  }
+
+  // World Group for unified rotation & centering
+  glsl3D.worldGroup = new THREE.Group();
+  glsl3D.scene.add(glsl3D.worldGroup);
+
+  // Ambient & Directional Lights
+  const ambLight = new THREE.AmbientLight(0xffffff, 0.7);
+  glsl3D.scene.add(ambLight);
+  const dirLight = new THREE.DirectionalLight(0x38bdf8, 0.8);
+  dirLight.position.set(100, 200, 150);
+  glsl3D.scene.add(dirLight);
+
+  // Ground Coordinate Grid
+  glsl3D.gridHelper = new THREE.GridHelper(320, 24, 0x1e293b, 0x0f172a);
+  glsl3D.gridHelper.position.y = -65;
+  glsl3D.worldGroup.add(glsl3D.gridHelper);
+
+  // Setup Axes of Importance 3D Visualizer
+  setup3DAxesOfImportance();
+
+  // Raycaster & Mouse
+  glsl3D.raycaster = new THREE.Raycaster();
+  glsl3D.raycaster.params.Points.threshold = 4.5;
+  glsl3D.mouse = new THREE.Vector2(-999, -999);
+
+  // Event Listeners for Raycasting & Tooltips
+  const canvasEl = glsl3D.renderer.domElement;
+  canvasEl.addEventListener("mousemove", on3DMouseMove);
+  canvasEl.addEventListener("click", on3DMouseClick);
+  canvasEl.addEventListener("mouseleave", on3DMouseLeave);
+
+  // Window Resize Listener
+  window.addEventListener("resize", onWindowResize3D);
+  if (typeof ResizeObserver !== "undefined") {
+    new ResizeObserver(() => onWindowResize3D()).observe(container);
+  }
+
+  glsl3D.initialized = true;
+
+  // Start Animation Loop
+  animate3DUniverse();
+}
+
+function setup3DAxesOfImportance() {
+  if (glsl3D.axesGroup) {
+    glsl3D.worldGroup.remove(glsl3D.axesGroup);
+  }
+
+  glsl3D.axesGroup = new THREE.Group();
+
+  const axisLen = 130;
+  const headLen = 12;
+  const headWidth = 6;
+
+  // X Axis (Cyan): Domain Specificity & Category Dispersion
+  const dirX = new THREE.Vector3(1, 0, 0);
+  const arrowX = new THREE.ArrowHelper(dirX, new THREE.Vector3(0, 0, 0), axisLen, 0x38bdf8, headLen, headWidth);
+  glsl3D.axesGroup.add(arrowX);
+
+  const labelSpriteX = create3DTextSprite("Domain Divergence (PCA-1) ➔", "#38bdf8");
+  labelSpriteX.position.set(axisLen + 24, 0, 0);
+  glsl3D.axesGroup.add(labelSpriteX);
+
+  // Y Axis (Emerald): Temporal Recency & Lifecycle Maturity
+  const dirY = new THREE.Vector3(0, 1, 0);
+  const arrowY = new THREE.ArrowHelper(dirY, new THREE.Vector3(0, 0, 0), axisLen, 0x10b981, headLen, headWidth);
+  glsl3D.axesGroup.add(arrowY);
+
+  const labelSpriteY = create3DTextSprite("Lifecycle Maturity (PCA-2) ➔", "#10b981");
+  labelSpriteY.position.set(0, axisLen + 18, 0);
+  glsl3D.axesGroup.add(labelSpriteY);
+
+  // Z Axis (Purple): Graph Centrality & Hub Authority
+  const dirZ = new THREE.Vector3(0, 0, 1);
+  const arrowZ = new THREE.ArrowHelper(dirZ, new THREE.Vector3(0, 0, 0), axisLen, 0xc084fc, headLen, headWidth);
+  glsl3D.axesGroup.add(arrowZ);
+
+  const labelSpriteZ = create3DTextSprite("Centrality Degree (PCA-3) ➔", "#c084fc");
+  labelSpriteZ.position.set(0, 0, axisLen + 24);
+  glsl3D.axesGroup.add(labelSpriteZ);
+
+  glsl3D.worldGroup.add(glsl3D.axesGroup);
+}
+
+function create3DTextSprite(text, borderColorHex, fontSize = 22) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 420;
+  canvas.height = 100;
+  const ctx = canvas.getContext("2d");
+
+  // Rounded pill background
+  ctx.fillStyle = "rgba(11, 17, 32, 0.9)";
+  ctx.strokeStyle = borderColorHex || "#38bdf8";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  if (ctx.roundRect) {
+    ctx.roundRect(6, 6, canvas.width - 12, canvas.height - 12, 16);
+  } else {
+    ctx.rect(6, 6, canvas.width - 12, canvas.height - 12);
+  }
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = "#ffffff";
+  ctx.font = `bold ${fontSize}px Inter, Outfit, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  const spriteMat = new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false });
+  const sprite = new THREE.Sprite(spriteMat);
+  sprite.scale.set(34, 8, 1);
+  return sprite;
+}
+
+function onWindowResize3D() {
+  if (!glsl3D.renderer || !glsl3D.camera || !glsl3D.container) return;
+  const width = glsl3D.container.clientWidth || 800;
+  const height = glsl3D.container.clientHeight || 650;
+  glsl3D.camera.aspect = width / height;
+  glsl3D.camera.updateProjectionMatrix();
+  glsl3D.renderer.setSize(width, height);
+}
+
+async function load3DUniverseData(forceReload = false) {
+  if (glsl3D.nodes.length > 0 && !forceReload) {
+    return;
+  }
+
+  try {
+    const res = await fetch("/api/v1/sidecar/graph-3d?limit=350");
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+
+    glsl3D.nodes = data.nodes || [];
+    glsl3D.edges = data.edges || [];
+    glsl3D.clusters = data.clusters || [];
+    glsl3D.axes = data.axes || {};
+    glsl3D.stats = data.stats || {};
+
+    // Update Header KPI metrics
+    const statNodesEl = document.getElementById("glsl-stat-nodes");
+    const statEdgesEl = document.getElementById("glsl-stat-edges");
+    if (statNodesEl) statNodesEl.textContent = glsl3D.nodes.length;
+    if (statEdgesEl) statEdgesEl.textContent = glsl3D.edges.length;
+
+    // Populate Datalist for Quick Search
+    const datalist = document.getElementById("glsl-entities-datalist");
+    if (datalist) {
+      datalist.innerHTML = glsl3D.nodes.map(n => `<option value="${escapeHtml(n.name)}">${escapeHtml(n.type)} • Deg:${n.degree}</option>`).join("");
+    }
+
+    // Populate Cluster Filter Select
+    const clusterSelect = document.getElementById("select-glsl-cluster");
+    if (clusterSelect) {
+      clusterSelect.innerHTML = `<option value="all" selected>🌐 All Semantic Clusters</option>` +
+        glsl3D.clusters.map(c => `<option value="${c.id}">${escapeHtml(c.icon || "•")} ${escapeHtml(c.name)}</option>`).join("");
+    }
+
+    // Populate Legend HUD Cluster Items
+    const clusterLegendContainer = document.getElementById("cluster-legend-items");
+    if (clusterLegendContainer) {
+      const counts = {};
+      glsl3D.nodes.forEach(n => {
+        counts[n.cluster] = (counts[n.cluster] || 0) + 1;
+      });
+
+      clusterLegendContainer.innerHTML = glsl3D.clusters.map(c => `
+        <div class="cluster-item" onclick="filter3DCluster(${c.id})">
+          <div class="cluster-item-left">
+            <span class="cluster-color-dot" style="background: ${c.color}; color: ${c.color};"></span>
+            <span class="cluster-name" title="${escapeHtml(c.name)}">${escapeHtml(c.icon || "")} ${escapeHtml(c.name)}</span>
+          </div>
+          <span class="cluster-count">${counts[c.id] || 0}</span>
+        </div>
+      `).join("");
+    }
+
+    // Build Three.js Point Cloud & Edges
+    build3DSceneObjects();
+
+  } catch (err) {
+    console.error("Failed to load 3D Knowledge Universe:", err);
+    pushDiagnosticLog("error", "Failed to load 3D Knowledge Universe data: " + err.message, "frontend", "GLSL3D");
+  }
+}
+
+function build3DSceneObjects() {
+  if (!glsl3D.scene || !glsl3D.worldGroup) return;
+
+  // Remove old objects
+  if (glsl3D.pointsMesh) glsl3D.worldGroup.remove(glsl3D.pointsMesh);
+  if (glsl3D.edgesMesh) glsl3D.worldGroup.remove(glsl3D.edgesMesh);
+  if (glsl3D.labelsGroup) glsl3D.worldGroup.remove(glsl3D.labelsGroup);
+
+  const count = glsl3D.nodes.length;
+  if (count === 0) return;
+
+  // 1. Point Cloud Buffer Geometry
+  const geometry = new THREE.BufferGeometry();
+  const positions = new Float32Array(count * 3);
+  const colors = new Float32Array(count * 3);
+  const sizes = new Float32Array(count);
+  const degrees = new Float32Array(count);
+  const clusters = new Float32Array(count);
+  const dimmed = new Float32Array(count);
+
+  const nodeIndexMap = new Map();
+
+  glsl3D.nodes.forEach((n, i) => {
+    nodeIndexMap.set(n.id, i);
+
+    positions[i * 3 + 0] = n.x;
+    positions[i * 3 + 1] = n.y;
+    positions[i * 3 + 2] = n.z;
+
+    sizes[i] = n.size || 1.0;
+    degrees[i] = n.degree || 0;
+    clusters[i] = n.cluster !== undefined ? n.cluster : 0;
+    dimmed[i] = 0.0;
+
+    // Color by active color mode
+    const c = getNodeColorForMode(n, glsl3D.colorMode);
+    colors[i * 3 + 0] = c.r;
+    colors[i * 3 + 1] = c.g;
+    colors[i * 3 + 2] = c.b;
+  });
+
+  geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  geometry.setAttribute("aColor", new THREE.BufferAttribute(colors, 3));
+  geometry.setAttribute("aSize", new THREE.BufferAttribute(sizes, 1));
+  geometry.setAttribute("aDegree", new THREE.BufferAttribute(degrees, 1));
+  geometry.setAttribute("aCluster", new THREE.BufferAttribute(clusters, 1));
+  geometry.setAttribute("aDimmed", new THREE.BufferAttribute(dimmed, 1));
+
+  // Custom Shader Material with GLSL
+  const shaderMaterial = new THREE.ShaderMaterial({
+    vertexShader: UNIVERSE_VERTEX_SHADER,
+    fragmentShader: UNIVERSE_FRAGMENT_SHADER,
+    uniforms: glsl3D.uniforms,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  });
+
+  glsl3D.pointsMesh = new THREE.Points(geometry, shaderMaterial);
+  glsl3D.worldGroup.add(glsl3D.pointsMesh);
+
+  // 2. Edges Buffer Geometry
+  const edgePositions = [];
+  const edgeColors = [];
+  const defaultLineColor = new THREE.Color(0x38bdf8);
+
+  glsl3D.edges.forEach(e => {
+    const sIdx = nodeIndexMap.get(e.source);
+    const tIdx = nodeIndexMap.get(e.target);
+    if (sIdx !== undefined && tIdx !== undefined) {
+      const sNode = glsl3D.nodes[sIdx];
+      const tNode = glsl3D.nodes[tIdx];
+
+      edgePositions.push(sNode.x, sNode.y, sNode.z);
+      edgePositions.push(tNode.x, tNode.y, tNode.z);
+
+      const sColor = new THREE.Color(sNode.cluster_color || "#38bdf8");
+      edgeColors.push(sColor.r, sColor.g, sColor.b);
+      edgeColors.push(sColor.r, sColor.g, sColor.b);
+    }
+  });
+
+  if (edgePositions.length > 0) {
+    const edgeGeo = new THREE.BufferGeometry();
+    edgeGeo.setAttribute("position", new THREE.Float32BufferAttribute(edgePositions, 3));
+    edgeGeo.setAttribute("color", new THREE.Float32BufferAttribute(edgeColors, 3));
+
+    const edgeMat = new THREE.LineBasicMaterial({
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.22,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+
+    glsl3D.edgesMesh = new THREE.LineSegments(edgeGeo, edgeMat);
+    glsl3D.edgesMesh.visible = glsl3D.showEdges;
+    glsl3D.worldGroup.add(glsl3D.edgesMesh);
+  }
+
+  // 3. Billboard Text Labels for High-Degree Nodes (Top 25)
+  glsl3D.labelsGroup = new THREE.Group();
+  const topNodes = [...glsl3D.nodes].sort((a, b) => b.degree - a.degree).slice(0, 25);
+
+  topNodes.forEach(n => {
+    const sprite = create3DTextSprite(`${n.name}`, n.cluster_color, 20);
+    sprite.position.set(n.x, n.y + 4.5, n.z);
+    sprite.scale.set(22, 5.5, 1);
+    glsl3D.labelsGroup.add(sprite);
+  });
+
+  glsl3D.labelsGroup.visible = glsl3D.showLabels;
+  glsl3D.worldGroup.add(glsl3D.labelsGroup);
+}
+
+function getNodeColorForMode(node, mode) {
+  if (mode === "centrality") {
+    // Heatmap: Cold dark blue -> Cyan -> Emerald -> Amber -> Red/Hot
+    const deg = node.degree || 0;
+    const t = Math.min(1.0, Math.log(deg + 1) / Math.log(200));
+    const hsl = [ (1.0 - t) * 0.65, 0.9, 0.55 ];
+    return new THREE.Color().setHSL(hsl[0], hsl[1], hsl[2]);
+  } else if (mode === "type") {
+    const typeColors = {
+      organization: "#38bdf8",
+      contract_type: "#10b981",
+      person: "#c084fc",
+      location: "#f59e0b",
+      statute: "#f43f5e",
+    };
+    return new THREE.Color(typeColors[node.type] || "#94a3b8");
+  } else {
+    // Topological Cluster Color
+    return new THREE.Color(node.cluster_color || "#38bdf8");
+  }
+}
+
+function animate3DUniverse() {
+  glsl3D.animId = requestAnimationFrame(animate3DUniverse);
+
+  // Advance GLSL temporal uniform
+  glsl3D.uniforms.uTime.value += 0.016;
+
+  // Auto-Spin orbital rotation
+  if (glsl3D.autoSpin && !glsl3D.isUserInteracting && glsl3D.worldGroup) {
+    glsl3D.worldGroup.rotation.y += 0.0015;
+  }
+
+  if (glsl3D.controls) {
+    glsl3D.controls.update();
+  }
+
+  // Raycasting for Hover Tooltip
+  if (glsl3D.pointsMesh && glsl3D.raycaster && glsl3D.camera) {
+    glsl3D.raycaster.setFromCamera(glsl3D.mouse, glsl3D.camera);
+    const intersects = glsl3D.raycaster.intersectObject(glsl3D.pointsMesh);
+
+    const tooltip = document.getElementById("glsl-hover-tooltip");
+
+    if (intersects.length > 0) {
+      const hitIdx = intersects[0].index;
+      if (hitIdx !== undefined && hitIdx < glsl3D.nodes.length) {
+        glsl3D.hoveredNodeIndex = hitIdx;
+        const n = glsl3D.nodes[hitIdx];
+        show3DHoverTooltip(n, intersects[0].point);
+        document.body.style.cursor = "pointer";
+      }
+    } else {
+      glsl3D.hoveredNodeIndex = -1;
+      if (tooltip) tooltip.style.display = "none";
+      document.body.style.cursor = "default";
+    }
+  }
+
+  if (glsl3D.renderer && glsl3D.scene && glsl3D.camera) {
+    glsl3D.renderer.render(glsl3D.scene, glsl3D.camera);
+  }
+}
+
+function on3DMouseMove(e) {
+  const rect = glsl3D.renderer.domElement.getBoundingClientRect();
+  glsl3D.mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+  glsl3D.mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+  const tooltip = document.getElementById("glsl-hover-tooltip");
+  if (tooltip && tooltip.style.display !== "none") {
+    tooltip.style.left = (e.clientX - rect.left) + "px";
+    tooltip.style.top = (e.clientY - rect.top) + "px";
+  }
+}
+
+function on3DMouseLeave() {
+  glsl3D.mouse.x = -999;
+  glsl3D.mouse.y = -999;
+  const tooltip = document.getElementById("glsl-hover-tooltip");
+  if (tooltip) tooltip.style.display = "none";
+}
+
+function on3DMouseClick(e) {
+  if (glsl3D.hoveredNodeIndex >= 0 && glsl3D.hoveredNodeIndex < glsl3D.nodes.length) {
+    const node = glsl3D.nodes[glsl3D.hoveredNodeIndex];
+    open3DNodeInspector(node);
+  }
+}
+
+function show3DHoverTooltip(node, hitPoint) {
+  const tooltip = document.getElementById("glsl-hover-tooltip");
+  if (!tooltip) return;
+
+  const dot = document.getElementById("tt-cluster-dot");
+  const name = document.getElementById("tt-name");
+  const type = document.getElementById("tt-type");
+  const cluster = document.getElementById("tt-cluster");
+  const degree = document.getElementById("tt-degree");
+  const docs = document.getElementById("tt-docs");
+
+  if (dot) dot.style.background = node.cluster_color || "#38bdf8";
+  if (name) name.textContent = node.name;
+  if (type) type.textContent = node.type;
+  if (cluster) cluster.textContent = node.cluster_name || "Cluster " + node.cluster;
+  if (degree) degree.textContent = node.degree;
+  if (docs) docs.textContent = node.doc_count || 1;
+
+  tooltip.style.display = "block";
+}
+
+function open3DNodeInspector(node) {
+  glsl3D.selectedNode = node;
+  const drawer = document.getElementById("glsl-node-inspector");
+  if (!drawer) return;
+
+  const dot = document.getElementById("insp-cluster-dot");
+  const clusterName = document.getElementById("insp-cluster-name");
+  const typeBadge = document.getElementById("insp-type-badge");
+  const nameEl = document.getElementById("insp-node-name");
+  const degreeEl = document.getElementById("insp-degree");
+  const docCountEl = document.getElementById("insp-doc-count");
+  const coordsEl = document.getElementById("insp-coords");
+  const dateEl = document.getElementById("insp-date");
+
+  if (dot) {
+    dot.style.background = node.cluster_color || "#38bdf8";
+    dot.style.boxShadow = `0 0 10px ${node.cluster_color || "#38bdf8"}`;
+  }
+  if (clusterName) clusterName.textContent = node.cluster_name || "Cluster " + node.cluster;
+  if (typeBadge) typeBadge.textContent = node.type;
+  if (nameEl) nameEl.textContent = node.name;
+  if (degreeEl) degreeEl.textContent = node.degree;
+  if (docCountEl) docCountEl.textContent = node.doc_count || 1;
+  if (coordsEl) coordsEl.textContent = `[${node.x}, ${node.y}, ${node.z}]`;
+  if (dateEl) dateEl.textContent = node.latest_date ? node.latest_date.split("T")[0] : "2026-03-24";
+
+  drawer.classList.remove("hidden");
+
+  // Focus camera smoothly toward the node
+  if (glsl3D.controls) {
+    glsl3D.controls.target.set(node.x, node.y, node.z);
+  }
+}
+
+function close3DNodeInspector() {
+  glsl3D.selectedNode = null;
+  const drawer = document.getElementById("glsl-node-inspector");
+  if (drawer) drawer.classList.add("hidden");
+}
+
+function toggle3DAutoSpin() {
+  glsl3D.autoSpin = !glsl3D.autoSpin;
+  const btn = document.getElementById("btn-glsl-spin");
+  const text = document.getElementById("glsl-spin-text");
+  if (btn) btn.classList.toggle("active", glsl3D.autoSpin);
+  if (text) text.textContent = glsl3D.autoSpin ? "Auto-Spin: ON" : "Auto-Spin: OFF";
+}
+
+function toggle3DEdges() {
+  glsl3D.showEdges = !glsl3D.showEdges;
+  if (glsl3D.edgesMesh) {
+    glsl3D.edgesMesh.visible = glsl3D.showEdges;
+  }
+  const btn = document.getElementById("btn-glsl-edges");
+  const text = document.getElementById("glsl-edges-text");
+  if (btn) btn.classList.toggle("active", glsl3D.showEdges);
+  if (text) text.textContent = glsl3D.showEdges ? "Links: Visible" : "Links: Hidden";
+}
+
+function toggle3DLabels() {
+  glsl3D.showLabels = !glsl3D.showLabels;
+  if (glsl3D.labelsGroup) {
+    glsl3D.labelsGroup.visible = glsl3D.showLabels;
+  }
+  const btn = document.getElementById("btn-glsl-labels");
+  const text = document.getElementById("glsl-labels-text");
+  if (btn) btn.classList.toggle("active", glsl3D.showLabels);
+  if (text) text.textContent = glsl3D.showLabels ? "Labels: ON" : "Labels: OFF";
+}
+
+function change3DColorMode(mode) {
+  glsl3D.colorMode = mode;
+  if (!glsl3D.pointsMesh) return;
+
+  const colors = glsl3D.pointsMesh.geometry.attributes.aColor;
+  glsl3D.nodes.forEach((n, i) => {
+    const c = getNodeColorForMode(n, mode);
+    colors.setXYZ(i, c.r, c.g, c.b);
+  });
+  colors.needsUpdate = true;
+}
+
+function filter3DCluster(clusterId) {
+  glsl3D.activeClusterFilter = clusterId;
+  const select = document.getElementById("select-glsl-cluster");
+  if (select && select.value !== String(clusterId)) {
+    select.value = String(clusterId);
+  }
+
+  if (!glsl3D.pointsMesh) return;
+
+  const dimmed = glsl3D.pointsMesh.geometry.attributes.aDimmed;
+  const targetId = clusterId === "all" ? null : parseInt(clusterId, 10);
+
+  glsl3D.nodes.forEach((n, i) => {
+    if (targetId === null || n.cluster === targetId) {
+      dimmed.setX(i, 0.0);
+    } else {
+      dimmed.setX(i, 1.0);
+    }
+  });
+  dimmed.needsUpdate = true;
+}
+
+function reset3DCamera() {
+  if (glsl3D.camera && glsl3D.controls) {
+    glsl3D.camera.position.set(0, 45, 270);
+    glsl3D.controls.target.set(0, 0, 0);
+    if (glsl3D.worldGroup) {
+      glsl3D.worldGroup.rotation.set(0, 0, 0);
+    }
+  }
+}
+
+function handle3DNodeSearch(name) {
+  if (!name || !name.trim()) return;
+  const match = glsl3D.nodes.find(n => n.name.toLowerCase() === name.trim().toLowerCase());
+  if (match) {
+    open3DNodeInspector(match);
+  }
+}
+
+function toggleLegendHUD() {
+  const body = document.getElementById("axes-legend-body");
+  const btn = document.querySelector(".btn-legend-collapse");
+  if (!body) return;
+  const isHidden = body.style.display === "none";
+  body.style.display = isHidden ? "flex" : "none";
+  if (btn) btn.textContent = isHidden ? "−" : "+";
+}
+
+function interrogateEntityInAIStudio() {
+  if (!glsl3D.selectedNode) return;
+  const node = glsl3D.selectedNode;
+  switchWorkspace("chat");
+  const chatInput = document.getElementById("chat-input");
+  if (chatInput) {
+    chatInput.value = `Tell me about the entity "${node.name}" (${node.type}), its key agreements, related signatories, and significance across the repository documents.`;
+    sendChatMessage();
+  }
+}
+
+function locateEntityInDocumentLedger() {
+  if (!glsl3D.selectedNode) return;
+  const node = glsl3D.selectedNode;
+  switchWorkspace("ledger");
+  const searchBox = document.getElementById("search-box");
+  if (searchBox) {
+    searchBox.value = node.name;
+    handleSearch({ target: searchBox });
+  }
+}
+
 

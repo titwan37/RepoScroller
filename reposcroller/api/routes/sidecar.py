@@ -96,6 +96,18 @@ def get_grouped_entities(limit_per_type: int = Query(default=200, ge=1, le=1000)
     }
 
 
+@router.get("/graph-3d")
+@router.get("/3d-cluster")
+def get_3d_knowledge_universe(limit: int = Query(default=350, ge=50, le=1000)):
+    """Retrieve 3D WebGL knowledge graph universe with unsupervised K-Means clustering and PCA coordinates."""
+    data = _graph_store.get_3d_knowledge_universe(limit=limit)
+    return {
+        "status": "success",
+        **data
+    }
+
+
+
 @router.post("/process")
 def process_pending_sidecar(req: ProcessRequest):
     """Trigger an immediate processing batch for pending documents in the KB queue."""
@@ -158,5 +170,13 @@ def execute_graph_rag_query(
         expand_graph_hops=hops
     )
     return res
+
+
+@router.get("/graph-3d")
+@router.get("/3d-cluster")
+def get_3d_knowledge_universe(limit: int = Query(default=350, ge=20, le=1000)):
+    """Retrieve 3D PCA coordinates, topological clusters, axes of importance, and edges for WebGL GLSL visualization."""
+    return _graph_store.get_3d_knowledge_universe(limit=limit)
+
 
 

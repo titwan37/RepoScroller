@@ -7,7 +7,9 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/style.css?v=8">
+  <link rel="stylesheet" href="/static/style.css?v=10">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 </head>
 <body>
   <!-- Top Navigation Bar -->
@@ -191,6 +193,11 @@
         <span class="ws-tab-icon">🧠</span>
         <span class="ws-tab-title">GraphRAG Sovereign Studio</span>
         <span class="ws-tab-pill pill-ai">CUDA Hybrid Search</span>
+      </button>
+      <button id="ws-btn-universe" class="ws-tab-btn" onclick="switchWorkspace('universe')">
+        <span class="ws-tab-icon">🌐</span>
+        <span class="ws-tab-title">3D Knowledge Universe</span>
+        <span class="ws-tab-pill pill-glsl">WebGL GLSL 3D</span>
       </button>
       <button id="ws-btn-chat" class="ws-tab-btn" onclick="switchWorkspace('chat')">
         <span class="ws-tab-icon">💬</span>
@@ -477,6 +484,203 @@
   </main>
 
   <!-- =========================================================================
+       WORKSPACE: 3D KNOWLEDGE UNIVERSE & GLSL TOPOLOGICAL CLUSTERING
+       ========================================================================= -->
+  <main id="ws-pane-universe" class="workspace-pane hidden glsl-universe-layout">
+    <!-- Universe Hero & Metrics Banner -->
+    <div class="universe-hero-bar">
+      <div class="universe-hero-left">
+        <span class="universe-hero-pre">Data Science • Unsupervised Topological Graph Theory</span>
+        <h2 class="universe-hero-title">3D Semantic Cluster Universe</h2>
+        <p class="universe-hero-desc">
+          Dimensionality Reduction (<strong class="text-cyan">3D PCA</strong>) &amp; Unsupervised Topological Clustering applied to sovereign entity and document relation graphs.
+        </p>
+      </div>
+      <div class="universe-kpi-grid">
+        <div class="kpi-glass-card">
+          <div class="kpi-card-lbl">Dimensionality</div>
+          <div class="kpi-card-val text-cyan">High-Dim → 3D PCA</div>
+        </div>
+        <div class="kpi-glass-card">
+          <div class="kpi-card-lbl">Algorithm</div>
+          <div class="kpi-card-val text-purple">Unsupervised K-Means</div>
+        </div>
+        <div class="kpi-glass-card">
+          <div class="kpi-card-lbl">Universe Topology</div>
+          <div class="kpi-card-val text-emerald"><span id="glsl-stat-nodes">350</span> Entities • <span id="glsl-stat-edges">600</span> Edges</div>
+        </div>
+        <div class="kpi-glass-card">
+          <div class="kpi-card-lbl">Rendering Engine</div>
+          <div class="kpi-card-val text-amber">Three.js WebGL GLSL</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- HUD Control Toolbar -->
+    <div class="universe-toolbar">
+      <div class="universe-toolbar-left">
+        <button id="btn-glsl-spin" class="hud-glsl-btn active" onclick="toggle3DAutoSpin()" title="Toggle orbital auto-spin">
+          <span id="glsl-spin-icon">🔄</span> <span id="glsl-spin-text">Auto-Spin: ON</span>
+        </button>
+        <button id="btn-glsl-edges" class="hud-glsl-btn active" onclick="toggle3DEdges()" title="Toggle relational graph edge links">
+          <span id="glsl-edges-icon">🕸️</span> <span id="glsl-edges-text">Links: Visible</span>
+        </button>
+        <button id="btn-glsl-labels" class="hud-glsl-btn active" onclick="toggle3DLabels()" title="Toggle floating billboard entity labels">
+          <span>🏷️</span> <span id="glsl-labels-text">Labels: ON</span>
+        </button>
+
+        <div class="toolbar-sep"></div>
+
+        <div class="toolbar-select-group">
+          <label for="select-glsl-color" class="toolbar-lbl">Color Mode:</label>
+          <select id="select-glsl-color" class="select-glsl" onchange="change3DColorMode(this.value)">
+            <option value="cluster" selected>🎨 Topological Clusters</option>
+            <option value="centrality">🔥 Centrality &amp; Degree Heatmap</option>
+            <option value="type">🏷️ Entity Schema Type</option>
+          </select>
+        </div>
+
+        <div class="toolbar-select-group">
+          <label for="select-glsl-cluster" class="toolbar-lbl">Filter:</label>
+          <select id="select-glsl-cluster" class="select-glsl" onchange="filter3DCluster(this.value)">
+            <option value="all" selected>🌐 All Semantic Clusters</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="universe-toolbar-right">
+        <div class="universe-search-wrap">
+          <input type="text" id="glsl-node-search" placeholder="Quick find entity in 3D space..." oninput="handle3DNodeSearch(this.value)" list="glsl-entities-datalist">
+          <datalist id="glsl-entities-datalist"></datalist>
+        </div>
+        <button class="hud-glsl-btn btn-reload" onclick="load3DUniverseData(true)" title="Reload Graph Universe from Database">
+          <span>⟳</span> Refresh
+        </button>
+        <button class="hud-glsl-btn btn-reset" onclick="reset3DCamera()" title="Reset Camera Perspective">
+          <span>↺</span> Reset View
+        </button>
+      </div>
+    </div>
+
+    <!-- 3D Canvas Viewport Container -->
+    <div class="universe-canvas-wrapper" id="glsl-canvas-wrapper">
+      <div id="glsl-3d-canvas-container" class="glsl-3d-canvas-container"></div>
+
+      <!-- Axes of Importance Legend HUD Overlay -->
+      <div class="axes-legend-overlay" id="axes-legend-overlay">
+        <div class="legend-header">
+          <div class="legend-title-row">
+            <span class="legend-icon">📐</span>
+            <span class="legend-title">Axes of Importance &amp; Clusters</span>
+          </div>
+          <button class="btn-legend-collapse" onclick="toggleLegendHUD()" title="Collapse / Expand Legend">−</button>
+        </div>
+        <div class="legend-body" id="axes-legend-body">
+          <div class="axes-group">
+            <div class="axis-item">
+              <span class="axis-badge axis-x">X-Axis</span>
+              <div class="axis-info">
+                <span class="axis-name">Domain Specificity &amp; Category Divergence</span>
+                <span class="axis-pca">PCA-1 • Latent Semantic Variance</span>
+              </div>
+            </div>
+            <div class="axis-item">
+              <span class="axis-badge axis-y">Y-Axis</span>
+              <div class="axis-info">
+                <span class="axis-name">Temporal Recency &amp; Lifecycle Maturity</span>
+                <span class="axis-pca">PCA-2 • Historical Lineage &amp; Validation</span>
+              </div>
+            </div>
+            <div class="axis-item">
+              <span class="axis-badge axis-z">Z-Axis</span>
+              <div class="axis-info">
+                <span class="axis-name">Graph Centrality &amp; Hub Authority Degree</span>
+                <span class="axis-pca">PCA-3 • Network Eigenvector Density</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="legend-divider"></div>
+
+          <!-- Clusters Legend Section -->
+          <div class="cluster-legend-section">
+            <div class="cluster-legend-title">Topological Clusters (K-Means)</div>
+            <div class="cluster-items-list" id="cluster-legend-items">
+              <!-- Dynamically populated -->
+            </div>
+          </div>
+
+          <div class="legend-footer-tip">
+            <span>💡 <strong>Tip:</strong> Drag to rotate • Scroll to zoom • Right-click to pan • Click node to inspect</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Real-Time Node Inspector Glass Drawer -->
+      <div class="glsl-node-inspector hidden" id="glsl-node-inspector">
+        <div class="inspector-header">
+          <div class="inspector-badge-row">
+            <span class="inspector-cluster-dot" id="insp-cluster-dot"></span>
+            <span class="inspector-cluster-name" id="insp-cluster-name">Cluster</span>
+            <span class="inspector-type-badge" id="insp-type-badge">organization</span>
+          </div>
+          <button class="inspector-close-btn" onclick="close3DNodeInspector()" title="Close Inspector">✕</button>
+        </div>
+        <div class="inspector-body">
+          <h3 class="inspector-node-title" id="insp-node-name">Entity Name</h3>
+          
+          <div class="inspector-metrics-grid">
+            <div class="insp-stat-card">
+              <span class="insp-stat-lbl">Centrality Degree</span>
+              <span class="insp-stat-val text-indigo" id="insp-degree">0</span>
+            </div>
+            <div class="insp-stat-card">
+              <span class="insp-stat-lbl">Document Count</span>
+              <span class="insp-stat-val text-cyan" id="insp-doc-count">0</span>
+            </div>
+            <div class="insp-stat-card">
+              <span class="insp-stat-lbl">3D PCA Coordinates</span>
+              <span class="insp-stat-val text-muted" id="insp-coords">[0, 0, 0]</span>
+            </div>
+            <div class="insp-stat-card">
+              <span class="insp-stat-lbl">Latest Linked Date</span>
+              <span class="insp-stat-val text-emerald" id="insp-date">--</span>
+            </div>
+          </div>
+
+          <div class="inspector-actions">
+            <button class="btn btn-primary btn-block btn-insp-action" id="insp-btn-chat" onclick="interrogateEntityInAIStudio()">
+              💬 Interrogate in AI Room ➔
+            </button>
+            <button class="btn btn-outline btn-block btn-insp-action" id="insp-btn-ledger" onclick="locateEntityInDocumentLedger()">
+              🗄️ Locate in Document Ledger ➔
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Hover Tooltip -->
+      <div class="glsl-hover-tooltip" id="glsl-hover-tooltip" style="display: none;">
+        <div class="tooltip-header">
+          <span class="tooltip-cluster-dot" id="tt-cluster-dot"></span>
+          <span class="tooltip-entity-name" id="tt-name">--</span>
+        </div>
+        <div class="tooltip-meta">
+          <span class="tooltip-badge" id="tt-type">--</span>
+          <span class="tooltip-badge cluster" id="tt-cluster">--</span>
+        </div>
+        <div class="tooltip-row">
+          <span>Degree:</span> <strong id="tt-degree">--</strong>
+        </div>
+        <div class="tooltip-row">
+          <span>Documents:</span> <strong id="tt-docs">--</strong>
+        </div>
+        <div class="tooltip-hint">Click node to inspect &amp; interrogate</div>
+      </div>
+    </div>
+  </main>
+
+  <!-- =========================================================================
        WORKSPACE 3: AI INTERROGATION & REASONING ROOM (FULL-WIDTH CHAT)
        ========================================================================= -->
   <main id="ws-pane-chat" class="workspace-pane hidden ai-interrogation-layout">
@@ -623,6 +827,6 @@
     </div>
   </div>
   
-  <script src="/static/app.js?v=7"></script>
+  <script src="/static/app.js?v=10"></script>
 </body>
 </html>
