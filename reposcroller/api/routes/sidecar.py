@@ -54,6 +54,7 @@ def get_sidecar_stats():
         "graph": graph_stats,
         "worker": worker_status,
         "throughput": throughput,
+        "pipeline": worker_status.get("pipeline", {}),
         "files_per_minute": throughput["files_per_minute"],
         "chunks_per_minute": throughput["chunks_per_minute"],
         "tokens_processed": throughput["total_tokens"],

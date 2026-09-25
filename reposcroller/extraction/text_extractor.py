@@ -14,19 +14,31 @@ logger = logging.getLogger("reposcroller.extraction")
 
 def extract_document_data(file_path: Path) -> Tuple[str, Dict[str, Any]]:
     """Extract raw text and structural metadata from a supported document file."""
+    import time
+    t0 = time.time()
     ext = file_path.suffix.lower()
 
     if ext == ".pdf":
-        return _extract_pdf(file_path)
+        res = _extract_pdf(file_path)
     elif ext == ".docx":
-        return _extract_docx(file_path)
+        res = _extract_docx(file_path)
     elif ext in [".txt", ".md"]:
-        return _extract_text_file(file_path)
+        res = _extract_text_file(file_path)
     elif ext == ".eml":
-        return _extract_eml(file_path)
+        res = _extract_eml(file_path)
     else:
         # Fallback for unrecognized text files
-        return _extract_text_file(file_path)
+        res = _extract_text_file(file_path)
+
+    elapsed_ms = (time.time() - t0) * 1000
+    try:
+        from reposcroller.ai.telemetry import workload_telemetry
+        text_content, _ = res
+        workload_telemetry.record_io_read(ext=ext, bytes_read=len(text_content.encode("utf-8")), latency_ms=elapsed_ms)
+    except Exception:
+        pass
+
+    return res
 
 
 def _extract_pdf(file_path: Path) -> Tuple[str, Dict[str, Any]]:

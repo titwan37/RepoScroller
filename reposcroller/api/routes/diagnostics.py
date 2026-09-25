@@ -46,7 +46,20 @@ def get_diagnostics_health():
 def get_workload_telemetry(force: bool = Query(False, description="Force real-time network probe of nodes")):
     """Retrieve real-time telemetry on PC1 Localhost (Chat) vs PC2 Remote (CUDA Embeddings)."""
     from reposcroller.ai.telemetry import workload_telemetry
-    return workload_telemetry.get_node_probes(force=force)
+    from reposcroller.api.routes.sidecar import _worker
+    data = workload_telemetry.get_node_probes(force=force)
+    worker_status = _worker.get_continuous_status()
+    data["pipeline"] = worker_status.get("pipeline", {})
+    data["zoo"] = workload_telemetry.get_zoo_overview()
+    data["chat_routing"] = workload_telemetry.get_chat_routing()
+    return data
+
+
+@router.get("/zoo")
+def get_zoo_telemetry():
+    """Retrieve unified real-time telemetry across the 5 subsystems ('The Zoo': PDF I/O, LAN, SQLite WAL, Embeddings, Chat)."""
+    from reposcroller.ai.telemetry import workload_telemetry
+    return workload_telemetry.get_zoo_overview()
 
 
 @router.post("/clear")

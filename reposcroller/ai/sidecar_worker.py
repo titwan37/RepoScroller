@@ -41,6 +41,15 @@ class KnowledgeBaseSidecarWorker:
         self.session_docs_processed: int = 0
         self.session_chunks_embedded: int = 0
 
+        # Multi-Threaded Pipeline Real-Time Inspection
+        self.embed_queue: Optional[Any] = None
+        self.db_queue: Optional[Any] = None
+        self.active_http_workers: int = 0
+        self.total_http_workers: int = 6
+        self.producer_stage: str = "stopped"
+        self.db_writer_stage: str = "stopped"
+        self._workers_counter_lock = threading.Lock()
+
     def process_document(self, doc_record: Dict[str, Any]) -> Dict[str, Any]:
         """Process a single document from the queue: extract text, chunk, embed, extract graph, and persist."""
         sha = doc_record["sha256_hash"]
@@ -257,12 +266,15 @@ class KnowledgeBaseSidecarWorker:
             }
 
     def get_continuous_status(self) -> Dict[str, Any]:
-        """Get live status and progress counters of the continuous worker."""
+        """Get live status and progress counters of the continuous worker and queue pipeline."""
         with self._lock:
             now = time.time()
             uptime_seconds = int(now - self.session_start_time) if (self.is_running and self.session_start_time) else 0
             mins, secs = divmod(uptime_seconds, 60)
             uptime_fmt = f"{mins}m {secs}s" if mins else f"{secs}s"
+
+            embed_q_depth = self.embed_queue.qsize() if (self.embed_queue and self.is_running) else 0
+            db_q_depth = self.db_queue.qsize() if (self.db_queue and self.is_running) else 0
 
             return {
                 "is_running": self.is_running and bool(self._thread and self._thread.is_alive()),
@@ -270,7 +282,18 @@ class KnowledgeBaseSidecarWorker:
                 "session_chunks_embedded": self.session_chunks_embedded,
                 "uptime_seconds": uptime_seconds,
                 "uptime_formatted": uptime_fmt,
-                "start_time": time.strftime("%H:%M:%S", time.localtime(self.session_start_time)) if self.session_start_time else None
+                "start_time": time.strftime("%H:%M:%S", time.localtime(self.session_start_time)) if self.session_start_time else None,
+                "pipeline": {
+                    "is_running": self.is_running and bool(self._thread and self._thread.is_alive()),
+                    "producer_stage": self.producer_stage if self.is_running else "stopped",
+                    "embed_queue_depth": embed_q_depth,
+                    "embed_queue_max": 100,
+                    "active_http_workers": self.active_http_workers if self.is_running else 0,
+                    "total_http_workers": self.total_http_workers,
+                    "db_queue_depth": db_q_depth,
+                    "db_queue_max": 100,
+                    "db_writer_stage": self.db_writer_stage if self.is_running else "stopped"
+                }
             }
 
     def _pipeline_loop(self, poll_interval: float, external_stop_event=None) -> None:
@@ -284,6 +307,10 @@ class KnowledgeBaseSidecarWorker:
         
         embed_queue = queue.Queue(maxsize=100)
         db_queue = queue.Queue(maxsize=100)
+        self.embed_queue = embed_queue
+        self.db_queue = db_queue
+        self.producer_stage = "fetching_db"
+        self.db_writer_stage = "idle_waiting"
         
         last_reported_hundred = 0
         is_idle_reported = False
@@ -293,10 +320,12 @@ class KnowledgeBaseSidecarWorker:
                 try:
                     task = db_queue.get(timeout=poll_interval)
                 except queue.Empty:
+                    self.db_writer_stage = "idle_waiting"
                     continue
                 if task is None:
                     break
                 try:
+                    self.db_writer_stage = "writing_sqlite"
                     docs_to_embed = task["docs_to_embed"]
                     doc_graphs = task["doc_graphs"]
                     completed_shas = task["completed_shas"]
@@ -317,6 +346,7 @@ class KnowledgeBaseSidecarWorker:
                 except Exception as e:
                     logger.error(f"Pipeline DB Writer error: {e}")
                 finally:
+                    self.db_writer_stage = "idle_waiting"
                     db_queue.task_done()
 
         def http_worker_loop():
@@ -328,6 +358,9 @@ class KnowledgeBaseSidecarWorker:
                 if batch is None:
                     break
                 try:
+                    with self._workers_counter_lock:
+                        self.active_http_workers += 1
+
                     docs_to_embed = batch["docs_to_embed"]
                     all_texts_to_embed = []
                     chunk_ptrs = []
@@ -351,10 +384,12 @@ class KnowledgeBaseSidecarWorker:
                     failed_shas = [sha for sha, _, _ in batch["docs_to_embed"]]
                     self.repo.mark_kb_queue_batch_status(failed_shas, "failed")
                 finally:
+                    with self._workers_counter_lock:
+                        self.active_http_workers = max(0, self.active_http_workers - 1)
                     embed_queue.task_done()
 
         # Launch Thread Pool
-        num_http_workers = 6
+        num_http_workers = self.total_http_workers
         http_threads = []
         for i in range(num_http_workers):
             t = threading.Thread(target=http_worker_loop, name=f"HTTP-Worker-{i}", daemon=True)
@@ -367,8 +402,10 @@ class KnowledgeBaseSidecarWorker:
         # Producer Loop (Main Thread)
         while not stop_evt.is_set():
             try:
+                self.producer_stage = "fetching_db"
                 pending_items = self.repo.fetch_pending_kb_queue(limit=settings.KB_SIDECAR_BATCH_SIZE)
                 if not pending_items:
+                    self.producer_stage = "idle_waiting"
                     if not is_idle_reported:
                         logger.info("⏳ [IDLE] All queued documents processed. Waiting for new files...")
                         is_idle_reported = True
@@ -379,6 +416,7 @@ class KnowledgeBaseSidecarWorker:
                 batch_shas = [item["sha256_hash"] for item in pending_items]
                 self.repo.mark_kb_queue_batch_status(batch_shas, "processing")
 
+                self.producer_stage = "chunking"
                 docs_to_embed = []
                 doc_graphs = []
                 completed_shas = []
@@ -410,8 +448,9 @@ class KnowledgeBaseSidecarWorker:
                     "total_batch_chunks": total_batch_chunks
                 }
                 
-                # Hand over to HTTP workers (Blocks if queue is full)
+                # Hand over to HTTP workers (Blocks if embed_queue is full at 100)
                 embed_queue.put(batch)
+                self.producer_stage = "queued"
 
                 current_hundred = self.session_docs_processed // 100
                 if current_hundred > last_reported_hundred:
@@ -420,6 +459,7 @@ class KnowledgeBaseSidecarWorker:
 
             except Exception as e:
                 logger.error(f"Error in Pipeline Producer loop: {e}")
+                self.producer_stage = "error"
                 time.sleep(poll_interval)
 
         # Graceful Teardown
@@ -427,6 +467,10 @@ class KnowledgeBaseSidecarWorker:
             embed_queue.put(None)
         db_queue.put(None)
         
+        self.producer_stage = "stopped"
+        self.db_writer_stage = "stopped"
+        self.embed_queue = None
+        self.db_queue = None
         logger.info("Sidecar Multithreaded pipeline exited gracefully.")
 
     def _run_loop(self, poll_interval: float = 2.0) -> None:

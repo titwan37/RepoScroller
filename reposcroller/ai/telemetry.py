@@ -17,12 +17,27 @@ class WorkloadTelemetry:
     def __init__(self):
         self.lock = threading.RLock()
         
-        # Chat Telemetry (PC1 Localhost / LLM)
+        # Chat Telemetry (Dynamic Split Routing: PC1 vs PC2)
+        self.chat_active_node = "pc1"  # "pc1" (Host CPU) or "pc2" (Remote CUDA GPU)
+        self.chat_pc1_url = settings.OLLAMA_CHAT_BASE_URL or "http://localhost:11434"
+        self.chat_pc1_model = settings.OLLAMA_MODEL_PC1 or "llama3.2:3b"
+        self.chat_pc2_url = settings.OLLAMA_EMBED_BASE_URL or "http://NITRO-AN51755:11434"
+        self.chat_pc2_model = settings.OLLAMA_MODEL_PC2 or "llama3.1:8b"
         self.chat_requests = 0
+        self.chat_pc1_requests = 0
+        self.chat_pc2_requests = 0
         self.chat_total_latency_ms = 0.0
         self.chat_last_latency_ms = 0.0
         self.chat_errors = 0
         self.chat_last_timestamp = None
+
+        # Document I/O Telemetry (PDF / DOCX reading & extraction)
+        self.io_read_timestamps = deque(maxlen=300)
+        self.io_bytes_timestamps = deque(maxlen=300)
+        self.io_total_files = 0
+        self.io_total_bytes = 0
+        self.io_total_latency_ms = 0.0
+        self.io_ext_counts: Dict[str, int] = {}
 
         # Embedding Telemetry (3-Tiered Hierarchy)
         self.embed_requests = 0
@@ -56,6 +71,73 @@ class WorkloadTelemetry:
         self._cache_time = 0.0
         self._cached_nodes: Dict[str, Any] = {}
 
+    def switch_chat_routing(self, node: str, model: Optional[str] = None) -> Dict[str, Any]:
+        """Dynamically switch the active api/chat routing node between PC1 (CPU) and PC2 (CUDA)."""
+        with self.lock:
+            n = node.lower().strip()
+            if n in ["pc1", "localhost", "cpu", "host"]:
+                self.chat_active_node = "pc1"
+                if model:
+                    self.chat_pc1_model = model
+            elif n in ["pc2", "cuda", "gpu", "remote"]:
+                self.chat_active_node = "pc2"
+                if model:
+                    self.chat_pc2_model = model
+            self._cache_time = 0.0
+            logger.info(f"🔄 Switched Chat Routing -> Active Node: {self.chat_active_node.upper()} | Model: {self.get_active_chat_model()} | URL: {self.get_active_chat_url()}")
+            return self.get_chat_routing()
+
+    def get_active_chat_url(self) -> str:
+        """Get the URL for the currently active api/chat node."""
+        with self.lock:
+            if self.chat_active_node == "pc2":
+                return self.chat_pc2_url.rstrip("/")
+            return self.chat_pc1_url.rstrip("/")
+
+    def get_active_chat_model(self) -> str:
+        """Get the model name for the currently active api/chat node."""
+        with self.lock:
+            if self.chat_active_node == "pc2":
+                return self.chat_pc2_model
+            return self.chat_pc1_model
+
+    def get_chat_routing(self) -> Dict[str, Any]:
+        """Return full routing breakdown and targets for both nodes."""
+        with self.lock:
+            return {
+                "active_node": self.chat_active_node,
+                "active_url": self.get_active_chat_url(),
+                "active_model": self.get_active_chat_model(),
+                "pc1": {
+                    "node": "pc1",
+                    "label": "PC1 Host Engine (CPU / Chat)",
+                    "url": self.chat_pc1_url,
+                    "model": self.chat_pc1_model,
+                    "size_tag": "2.2 GB",
+                    "calls": self.chat_pc1_requests
+                },
+                "pc2": {
+                    "node": "pc2",
+                    "label": "PC2 Remote GPU Node (RTX 3060 CUDA)",
+                    "url": self.chat_pc2_url,
+                    "model": self.chat_pc2_model,
+                    "size_tag": "4.6 GB (Q4_K_M)",
+                    "calls": self.chat_pc2_requests
+                }
+            }
+
+    def record_io_read(self, ext: str, bytes_read: int, latency_ms: float):
+        """Record a document file extraction event (PDF, DOCX, etc.)."""
+        now = time.time()
+        with self.lock:
+            self.io_total_files += 1
+            self.io_total_bytes += bytes_read
+            self.io_total_latency_ms += latency_ms
+            self.io_read_timestamps.append(now)
+            self.io_bytes_timestamps.append((now, bytes_read))
+            clean_ext = ext.lower().strip()
+            self.io_ext_counts[clean_ext] = self.io_ext_counts.get(clean_ext, 0) + 1
+
     def record_document_completed(self, count: int = 1, chunks: int = 0):
         """Record completed document(s) for files-per-minute (FPM) calculation."""
         now = time.time()
@@ -65,10 +147,16 @@ class WorkloadTelemetry:
             for _ in range(chunks):
                 self.chunk_completion_timestamps.append(now)
 
-    def record_chat(self, latency_ms: float, success: bool = True):
-        """Record an api/chat or LLM reasoning event."""
+    def record_chat(self, latency_ms: float, success: bool = True, node: Optional[str] = None, model: Optional[str] = None):
+        """Record an api/chat or LLM reasoning event with node attribution."""
         with self.lock:
+            target_node = node or self.chat_active_node
             self.chat_requests += 1
+            if target_node == "pc2":
+                self.chat_pc2_requests += 1
+            else:
+                self.chat_pc1_requests += 1
+
             if success:
                 self.chat_total_latency_ms += latency_ms
                 self.chat_last_latency_ms = round(latency_ms, 2)
@@ -196,12 +284,12 @@ class WorkloadTelemetry:
         if not force and (now - self._cache_time < 3.5) and self._cached_nodes:
             return self._cached_nodes
 
-        chat_url = settings.chat_url
-        embed_url = settings.embed_url
-        local_embed_url = settings.local_embed_url
+        # Fixed base hardware URLs for independent probing
+        pc1_base_url = (self.chat_pc1_url or settings.OLLAMA_CHAT_BASE_URL or "http://localhost:11434").rstrip("/")
+        pc2_base_url = (self.chat_pc2_url or settings.OLLAMA_EMBED_BASE_URL or "http://NITRO-AN51755:11434").rstrip("/")
 
-        local_node = self._probe_single_node(chat_url, expected_role="chat")
-        cuda_node = self._probe_single_node(embed_url, expected_role="embed")
+        local_node = self._probe_single_node(pc1_base_url, expected_role="chat")
+        cuda_node = self._probe_single_node(pc2_base_url, expected_role="embed")
 
         with self.lock:
             # If PC2 is offline, update active tier indicator accordingly if not currently set
@@ -252,10 +340,10 @@ class WorkloadTelemetry:
                 "architecture": "split_workload",
                 "throughput": self.get_throughput_metrics(),
                 "endpoints_matrix": {
-                    "pc1_chat": {"url": f"{chat_url}/api/chat", "online": local_node["online"], "role": "Host LLM Reasoning (CPU)"},
-                    "pc1_embed": {"url": f"{chat_url}/api/embed", "online": local_node["online"], "role": "Localhost CPU Embed (Fallback)"},
-                    "pc2_chat": {"url": f"{embed_url}/api/chat", "online": cuda_node["online"], "role": "Remote LLM (On-Demand)"},
-                    "pc2_embed": {"url": f"{embed_url}/api/embed", "online": cuda_node["online"], "role": "Remote NVIDIA RTX 3060 CUDA Embed"}
+                    "pc1_chat": {"url": f"{pc1_base_url}/api/chat", "online": local_node["online"], "model": settings.OLLAMA_MODEL_PC1, "role": "Host LLM Reasoning (CPU)"},
+                    "pc1_embed": {"url": f"{pc1_base_url}/api/embed", "online": local_node["online"], "model": settings.OLLAMA_LOCAL_EMBEDDING_MODEL, "role": "Localhost CPU Embed (Fallback)"},
+                    "pc2_chat": {"url": f"{pc2_base_url}/api/chat", "online": cuda_node["online"], "model": settings.OLLAMA_MODEL_PC2, "role": "Remote LLM Reasoning (CUDA RTX 3060)"},
+                    "pc2_embed": {"url": f"{pc2_base_url}/api/embed", "online": cuda_node["online"], "model": settings.OLLAMA_EMBEDDING_MODEL, "role": "Remote NVIDIA RTX 3060 CUDA Embed"}
                 },
                 "embedding_tier": {
                     "active_tier": effective_tier,
@@ -271,15 +359,16 @@ class WorkloadTelemetry:
                 },
                 "localhost_node": {
                     "name": "PC1 Host Engine (CPU / Chat)",
-                    "url": chat_url,
-                    "role": "api/chat (Reasoning & Classification)",
-                    "target_model": settings.OLLAMA_MODEL,
+                    "url": pc1_base_url,
+                    "role": f"api/chat ({'Active Routing' if self.chat_active_node == 'pc1' else 'Standby'})",
+                    "target_model": settings.OLLAMA_MODEL_PC1,
+                    "is_active_chat": self.chat_active_node == "pc1",
                     "online": local_node["online"],
                     "ping_ms": local_node["ping_ms"],
                     "models_loaded": local_node["models_loaded"],
                     "stats": {
-                        "requests": self.chat_requests,
-                        "last_latency_ms": self.chat_last_latency_ms,
+                        "requests": self.chat_pc1_requests,
+                        "last_latency_ms": self.chat_last_latency_ms if self.chat_active_node == "pc1" else 0.0,
                         "avg_latency_ms": avg_chat_latency,
                         "errors": self.chat_errors,
                         "last_active": self.chat_last_timestamp or "idle"
@@ -287,9 +376,11 @@ class WorkloadTelemetry:
                 },
                 "cuda_gpu_node": {
                     "name": "PC2 Remote GPU Node (NVIDIA RTX 3060)",
-                    "url": embed_url,
-                    "role": "api/embed (Vector Tensor Embeddings)",
+                    "url": pc2_base_url,
+                    "role": "api/embed + api/chat (Active Routing)" if self.chat_active_node == "pc2" else "api/embed (Vector Tensor Embeddings)",
                     "target_model": settings.OLLAMA_EMBEDDING_MODEL,
+                    "chat_model": settings.OLLAMA_MODEL_PC2,
+                    "is_active_chat": self.chat_active_node == "pc2",
                     "online": cuda_node["online"],
                     "ping_ms": cuda_node["ping_ms"],
                     "models_loaded": cuda_node["models_loaded"],
@@ -297,6 +388,7 @@ class WorkloadTelemetry:
                     "tier_color": tier_color,
                     "stats": {
                         "requests": max(self.embed_requests, 1 if db_total_chunks > 0 else 0),
+                        "chat_requests": self.chat_pc2_requests,
                         "chunks_embedded": total_chunks_metric,
                         "cuda_chunks": cuda_chunks_metric,
                         "local_chunks": self.embed_local_chunks,
@@ -350,6 +442,85 @@ class WorkloadTelemetry:
             "ping_ms": None,
             "models_loaded": []
         }
+
+    def get_zoo_overview(self) -> Dict[str, Any]:
+        """Unified Real-Time Observability Matrix across all 5 subsystems ('The Zoo')."""
+        import os
+        now = time.time()
+        with self.lock:
+            # 1. Document & File I/O
+            recent_reads = [t for t in self.io_read_timestamps if now - t <= 60.0]
+            recent_bytes = sum(b for t, b in self.io_bytes_timestamps if now - t <= 60.0)
+            io_mb_per_sec = round((recent_bytes / (1024 * 1024)) / 60.0, 3)
+            avg_io_ms = round(self.io_total_latency_ms / max(1, self.io_total_files), 1)
+
+            # 2. SQLite WAL Engine
+            db_size_mb = 0.0
+            wal_size_mb = 0.0
+            wal_busy = 0
+            wal_log_pages = 0
+            wal_checkpointed = 0
+            try:
+                db_path = str(settings.DB_PATH)
+                if os.path.exists(db_path):
+                    db_size_mb = round(os.path.getsize(db_path) / (1024 * 1024), 2)
+                wal_path = f"{db_path}-wal"
+                if os.path.exists(wal_path):
+                    wal_size_mb = round(os.path.getsize(wal_path) / (1024 * 1024), 2)
+                from reposcroller.ledger.repository import DocumentRepository
+                repo = DocumentRepository()
+                cur = repo.conn.cursor()
+                cur.execute("PRAGMA wal_checkpoint(PASSIVE)")
+                row = cur.fetchone()
+                if row:
+                    wal_busy = row[0]
+                    wal_log_pages = row[1]
+                    wal_checkpointed = row[2]
+            except Exception:
+                pass
+
+            # 3. LAN Traffic & Throughput
+            tp = self.get_throughput_metrics()
+            
+            # 4. Chat Routing
+            chat_routing = self.get_chat_routing()
+
+            return {
+                "timestamp": time.strftime("%H:%M:%S"),
+                "io_pdf_reading": {
+                    "rate_mb_s": io_mb_per_sec,
+                    "files_per_min": round(float(len(recent_reads)), 1),
+                    "total_files": self.io_total_files,
+                    "total_mb": round(self.io_total_bytes / (1024 * 1024), 2),
+                    "avg_read_latency_ms": avg_io_ms,
+                    "extensions": dict(self.io_ext_counts)
+                },
+                "lan_traffic": {
+                    "transfer_direction": tp.get("transfer_direction", "PC1_TO_PC2"),
+                    "payload_mib": tp.get("payload_mib", 0.0),
+                    "tokens_per_second": tp.get("tokens_per_second", 0.0),
+                    "last_batch_tokens": tp.get("last_batch_tokens", 1206),
+                    "pc2_ping_ms": self._cached_nodes.get("cuda_gpu_node", {}).get("ping_ms")
+                },
+                "sqlite_wal": {
+                    "db_size_mb": db_size_mb,
+                    "wal_size_mb": wal_size_mb,
+                    "wal_log_pages": wal_log_pages,
+                    "wal_checkpointed_pages": wal_checkpointed,
+                    "is_busy": bool(wal_busy),
+                    "checkpoints": tp.get("checkpoints", 0),
+                    "status": "Healthy (WAL Mode)" if not wal_busy else "Contention Detected"
+                },
+                "embedding_tier": {
+                    "active_tier": self.active_tier,
+                    "model": self.active_tier_model,
+                    "url": self.active_tier_url,
+                    "chunks_per_minute": tp.get("chunks_per_minute", 0.0),
+                    "avg_tensor_latency_ms": self.embed_last_latency_ms or 12.5,
+                    "total_chunks": self.embed_total_chunks
+                },
+                "chat_reasoning": chat_routing
+            }
 
 
 # Global singleton instance

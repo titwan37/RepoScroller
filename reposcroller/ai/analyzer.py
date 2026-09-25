@@ -34,12 +34,24 @@ class DocumentAnalyzer:
                  provider: Optional[str] = None,
                  openrouter_key: Optional[str] = None,
                  ollama_url: Optional[str] = None,
+                 ollama_model: Optional[str] = None,
                  taxonomy_manager=None):
         self.provider = provider or settings.LLM_PROVIDER
         self.openrouter_key = openrouter_key or settings.OPENROUTER_API_KEY
-        self.ollama_url = (ollama_url or settings.chat_url).rstrip("/")
+        self._custom_ollama_url = ollama_url
+        self._custom_ollama_model = ollama_model
         from reposcroller.ai.taxonomy import TaxonomyManager
         self.taxonomy = taxonomy_manager or TaxonomyManager()
+
+    @property
+    def ollama_url(self) -> str:
+        """Target Ollama base URL dynamically resolved from active chat routing (PC1 vs PC2)."""
+        return (self._custom_ollama_url or settings.chat_url).rstrip("/")
+
+    @property
+    def ollama_model(self) -> str:
+        """Target LLM model dynamically resolved: OLLAMA_MODEL_PC1 (3b) on PC1 vs OLLAMA_MODEL_PC2 (8b) on PC2."""
+        return self._custom_ollama_model or settings.chat_model
 
     def analyze(self,
                 text: str,
@@ -166,8 +178,9 @@ Return ONLY a valid JSON object matching this schema:
         t0 = time.time()
         prompt = self._build_prompt(text, filename)
         url = f"{self.ollama_url}/api/chat"
+        target_model = self.ollama_model
         payload = {
-            "model": settings.OLLAMA_MODEL,
+            "model": target_model,
             "messages": [{"role": "user", "content": prompt}],
             "format": "json",
             "stream": False,
@@ -180,14 +193,24 @@ Return ONLY a valid JSON object matching this schema:
                 if resp.status_code == 200:
                     elapsed_ms = (time.time() - t0) * 1000
                     from reposcroller.ai.telemetry import workload_telemetry
-                    workload_telemetry.record_chat(latency_ms=elapsed_ms, success=True)
+                    workload_telemetry.record_chat(
+                        latency_ms=elapsed_ms,
+                        success=True,
+                        node=workload_telemetry.chat_active_node,
+                        model=target_model
+                    )
                     raw_json = resp.json()["message"]["content"]
                     data = json.loads(raw_json)
                     return DocumentAnalysisResult(**data)
         except Exception:
             elapsed_ms = (time.time() - t0) * 1000
             from reposcroller.ai.telemetry import workload_telemetry
-            workload_telemetry.record_chat(latency_ms=elapsed_ms, success=False)
+            workload_telemetry.record_chat(
+                latency_ms=elapsed_ms,
+                success=False,
+                node=workload_telemetry.chat_active_node,
+                model=target_model
+            )
             raise
         return None
 

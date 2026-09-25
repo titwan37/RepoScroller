@@ -162,11 +162,12 @@ Do NOT include preamble or explanations.
                 if self.provider in ["auto", "ollama"]:
                     import time
                     t0 = time.time()
+                    target_model = settings.chat_model
                     try:
                         resp = httpx.post(
                             f"{settings.chat_url}/api/chat",
                             json={
-                                "model": settings.OLLAMA_MODEL,
+                                "model": target_model,
                                 "messages": [{"role": "user", "content": prompt}],
                                 "stream": False,
                                 "keep_alive": settings.OLLAMA_KEEP_ALIVE,
@@ -177,14 +178,29 @@ Do NOT include preamble or explanations.
                         elapsed_ms = (time.time() - t0) * 1000
                         from reposcroller.ai.telemetry import workload_telemetry
                         if resp.status_code == 200:
-                            workload_telemetry.record_chat(latency_ms=elapsed_ms, success=True)
+                            workload_telemetry.record_chat(
+                                latency_ms=elapsed_ms,
+                                success=True,
+                                node=workload_telemetry.chat_active_node,
+                                model=target_model
+                            )
                             resp_text = resp.json().get("message", {}).get("content", "")
                         else:
-                            workload_telemetry.record_chat(latency_ms=elapsed_ms, success=False)
+                            workload_telemetry.record_chat(
+                                latency_ms=elapsed_ms,
+                                success=False,
+                                node=workload_telemetry.chat_active_node,
+                                model=target_model
+                            )
                     except Exception:
                         elapsed_ms = (time.time() - t0) * 1000
                         from reposcroller.ai.telemetry import workload_telemetry
-                        workload_telemetry.record_chat(latency_ms=elapsed_ms, success=False)
+                        workload_telemetry.record_chat(
+                            latency_ms=elapsed_ms,
+                            success=False,
+                            node=workload_telemetry.chat_active_node,
+                            model=target_model
+                        )
                         raise
 
                 if resp_text:

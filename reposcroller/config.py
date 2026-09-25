@@ -87,6 +87,8 @@ class Settings(BaseSettings):
     OPENROUTER_API_KEY: Optional[str] = None
     OPENROUTER_MODEL: str = "google/gemini-2.0-flash-001"
     OLLAMA_MODEL: str = "llama3.2"
+    OLLAMA_MODEL_PC1: str = "llama3.2:3b"
+    OLLAMA_MODEL_PC2: str = "llama3.1:8b"
 
     # Dense Vector Embeddings & Knowledge Base Sidecar Settings
     EMBEDDING_PROVIDER: str = "auto"  # 'auto', 'ollama', 'openrouter', or 'mock'
@@ -102,7 +104,20 @@ class Settings(BaseSettings):
     @property
     def chat_url(self) -> str:
         """Endpoint for conversational reasoning, taxonomy discovery, and chat generation."""
-        return (self.OLLAMA_CHAT_BASE_URL or self.OLLAMA_BASE_URL).rstrip("/")
+        try:
+            from reposcroller.ai.telemetry import workload_telemetry
+            return workload_telemetry.get_active_chat_url()
+        except Exception:
+            return (self.OLLAMA_CHAT_BASE_URL or self.OLLAMA_BASE_URL).rstrip("/")
+
+    @property
+    def chat_model(self) -> str:
+        """Active model selected dynamically for conversational reasoning and classification."""
+        try:
+            from reposcroller.ai.telemetry import workload_telemetry
+            return workload_telemetry.get_active_chat_model()
+        except Exception:
+            return self.OLLAMA_MODEL
 
     @property
     def embed_url(self) -> str:

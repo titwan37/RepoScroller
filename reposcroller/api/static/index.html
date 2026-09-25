@@ -148,6 +148,18 @@
         <span class="workload-hud-pill pill-subtle" id="hud-active-model-pill">snowflake-arctic-embed2:latest</span>
       </div>
       <div class="workload-hud-actions">
+        <!-- Dynamic api/chat Node Switcher -->
+        <div class="chat-node-switcher" id="chat-node-switcher" title="Switch LLM Reasoning target (api/chat)">
+          <span class="switcher-label">api/chat:</span>
+          <div class="switcher-toggle-group">
+            <button class="btn-node-toggle active" id="btn-chat-toggle-pc1" onclick="switchChatNode('pc1')" title="Route reasoning to PC1 Host (llama3.2:3b CPU)">
+              💻 PC1 (3B CPU)
+            </button>
+            <button class="btn-node-toggle" id="btn-chat-toggle-pc2" onclick="switchChatNode('pc2')" title="Route reasoning to PC2 Remote Node (llama3.1:8b CUDA RTX 3060)">
+              ⚡ PC2 (8B CUDA)
+            </button>
+          </div>
+        </div>
         <span class="hud-sync-time" id="hud-sync-time">⟳ Synced: --:--:--</span>
         <button class="btn-workload-refresh" id="btn-workload-refresh" onclick="loadWorkloadTelemetry(true)"
           title="Force Refresh Node Status">
@@ -175,14 +187,14 @@
         <div class="node-models-bar">
           <span class="models-label">Loaded:</span>
           <div class="models-tag-list" id="pc1-models-list">
-            <span class="mini-tag">llama3.2:1b</span>
+            <span class="mini-tag">llama3.2:3b</span>
           </div>
         </div>
 
         <div class="node-metrics-row">
           <div class="node-metric-item">
             <span class="node-metric-label">Model (CPU)</span>
-            <span class="node-metric-val" id="pc1-model-name">llama3.2:1b</span>
+            <span class="node-metric-val" id="pc1-model-name">llama3.2:3b</span>
           </div>
           <div class="node-metric-item">
             <span class="node-metric-label">Local Ping</span>
@@ -240,6 +252,62 @@
             <div class="stream-track">
               <div class="stream-pulse pulse-inbound"></div>
             </div>
+          </div>
+        </div>
+      
+        <!-- Real-Time Pipeline Flow Inspector ("See-Through") -->
+        <div class="pipeline-flow-inspector" id="pipeline-flow-inspector" title="Live Pipeline Flow: In-flight queue depths and stage bottlenecks">
+          <div class="flow-stage-step" id="stage-producer">
+            <span class="flow-stage-label">Producer:</span>
+            <strong id="flow-producer-val">Idle</strong>
+          </div>
+          <span class="flow-arrow">➔</span>
+          <div class="flow-stage-step" id="stage-embed-queue">
+            <span class="flow-stage-label">Embed Q:</span>
+            <strong id="flow-embed-q-val" class="text-cyan">0/100</strong>
+          </div>
+          <span class="flow-arrow">➔</span>
+          <div class="flow-stage-step" id="stage-http-workers">
+            <span class="flow-stage-label">HTTP Pool:</span>
+            <strong id="flow-workers-val" class="text-emerald">6x (0 active)</strong>
+          </div>
+          <span class="flow-arrow">➔</span>
+          <div class="flow-stage-step" id="stage-db-queue">
+            <span class="flow-stage-label">DB Q:</span>
+            <strong id="flow-db-q-val" class="text-amber">0/100</strong>
+          </div>
+          <span class="flow-arrow">➔</span>
+          <div class="flow-stage-step" id="stage-db-writer">
+            <span class="flow-stage-label">DB Writer:</span>
+            <strong id="flow-writer-val">Idle</strong>
+          </div>
+        </div>
+
+        <!-- Real-Time Subsystems Zoo Matrix Observatory Strip -->
+        <div class="zoo-observatory-strip" id="zoo-observatory-strip" title="Real-Time Unified Subsystems Matrix ('The Zoo')">
+          <div class="zoo-chip" id="zoo-pdf-chip" title="Local Disk PDF / Document Text Extraction I/O">
+            <span class="zoo-icon">📄</span>
+            <span class="zoo-lbl">PDF I/O:</span>
+            <strong id="zoo-pdf-val">0.0 MB/s</strong>
+            <span class="zoo-sub" id="zoo-pdf-sub">(0 f/m)</span>
+          </div>
+          <div class="zoo-chip" id="zoo-lan-chip" title="Gigabit LAN Traffic (PC1 ⇄ PC2 Embeddings & Prompts)">
+            <span class="zoo-icon">🌐</span>
+            <span class="zoo-lbl">LAN Ping:</span>
+            <strong id="zoo-lan-val">-- ms</strong>
+            <span class="zoo-sub" id="zoo-lan-sub">PC1 ⇄ PC2</span>
+          </div>
+          <div class="zoo-chip" id="zoo-wal-chip" title="SQLite WAL Journal & Checkpoint Pressure">
+            <span class="zoo-icon">💾</span>
+            <span class="zoo-lbl">WAL DB:</span>
+            <strong id="zoo-wal-val">-- MB</strong>
+            <span class="zoo-sub text-emerald" id="zoo-wal-sub">Healthy</span>
+          </div>
+          <div class="zoo-chip" id="zoo-chat-chip" title="LLM Interrogation & Reasoning Target">
+            <span class="zoo-icon">🤖</span>
+            <span class="zoo-lbl">Chat LLM:</span>
+            <strong id="zoo-chat-val" class="text-indigo">PC1 (3B)</strong>
+            <span class="zoo-sub" id="zoo-chat-sub">0 calls</span>
           </div>
         </div>
       
@@ -450,6 +518,7 @@
 
       <!-- Left Column: Knowledge Topology & Sidecar Ingestion Controls -->
       <div class="studio-controls-column">
+
         <!-- Sidecar Indexing Pipeline & Telemetry Card -->
         <div class="studio-card">
           <div class="studio-card-header">
@@ -568,8 +637,19 @@
             </div>
           </div>
         </div>
-      </div>
-<!-- Right Column -->
+</div>
+
+      <!-- Right Column: Multi-Signal Ranked Results -->
+      <div class="studio-results-column">
+        <div class="studio-column-header">
+          <div class="column-title">
+            <span>📊 Retrieved Candidates & Signal Breakdown</span>
+            <span id="studio-results-count" class="badge badge-sm badge-info">0 candidates</span>
+          </div>
+          <div id="studio-signals-summary" class="studio-signals-summary">
+            <!-- Dynamic signals stats -->
+          </div>
+        </div>
 <div id="studio-rag-results-container" class="studio-results-list">
   <div class="studio-empty-state">
     <div class="empty-icon">🔬</div>
@@ -579,18 +659,6 @@
   </div>
 </div>
 </div>
-
-<!-- Right Column: Multi-Signal Ranked Results -->
-<div class="studio-results-column">
-  <div class="studio-column-header">
-    <div class="column-title">
-      <span>📊 Retrieved Candidates & Signal Breakdown</span>
-      <span id="studio-results-count" class="badge badge-sm badge-info">0 candidates</span>
-    </div>
-    <div id="studio-signals-summary" class="studio-signals-summary">
-      <!-- Dynamic signals stats -->
-    </div>
-  </div>
     </div>
   </main>
 
@@ -807,7 +875,10 @@
         </div>
         <div class="ai-chat-badges">
           <span class="badge-pill-chat">🧠 GraphRAG Grounded</span>
-          <span class="badge-pill-model">💻 PC1 llama3.2</span>
+          <div class="chat-workspace-switcher" title="Select Reasoning Node for AI Interrogation">
+            <button class="chat-pill-toggle active" id="chat-ws-toggle-pc1" onclick="switchChatNode('pc1')">💻 PC1 (llama3.2:3b CPU)</button>
+            <button class="chat-pill-toggle" id="chat-ws-toggle-pc2" onclick="switchChatNode('pc2')">⚡ PC2 (llama3.1:8b CUDA)</button>
+          </div>
         </div>
       </div>
 

@@ -6,6 +6,7 @@
 
 let activeDocumentSha = null;
 let watcherRunning = false;
+let activeChatNode = "pc1";
 
 // Filter and sorting state
 let filterOnlyDuplicates = false;
@@ -175,6 +176,21 @@ async function loadWorkloadTelemetry(force = false) {
       activeModelPill.textContent = tierData.active_model;
     }
 
+    // Sync Dynamic Chat Routing Buttons & State
+    const chatRouting = data.chat_routing || {};
+    if (chatRouting.active_node) {
+      activeChatNode = chatRouting.active_node;
+    }
+    const btnPc1 = document.getElementById("btn-chat-toggle-pc1");
+    const btnPc2 = document.getElementById("btn-chat-toggle-pc2");
+    const wsBtnPc1 = document.getElementById("chat-ws-toggle-pc1");
+    const wsBtnPc2 = document.getElementById("chat-ws-toggle-pc2");
+
+    if (btnPc1) btnPc1.classList.toggle("active", activeChatNode === "pc1");
+    if (btnPc2) btnPc2.classList.toggle("active", activeChatNode === "pc2");
+    if (wsBtnPc1) wsBtnPc1.classList.toggle("active", activeChatNode === "pc1");
+    if (wsBtnPc2) wsBtnPc2.classList.toggle("active", activeChatNode === "pc2");
+
     // PC1 Localhost Node
     const pc1 = data.localhost_node;
     if (pc1) {
@@ -188,7 +204,7 @@ async function loadWorkloadTelemetry(force = false) {
       const pc1ModelsList = document.getElementById("pc1-models-list");
       
       if (pc1Url) pc1Url.textContent = pc1.url;
-      if (pc1Model) pc1Model.textContent = pc1.target_model || "llama3.2:1b";
+      if (pc1Model) pc1Model.textContent = pc1.target_model || "llama3.2:3b";
       
       if (pc1Ping) {
         if (pc1.online) {
@@ -201,7 +217,7 @@ async function loadWorkloadTelemetry(force = false) {
       }
 
       if (pc1ChatCount) {
-        const calls = pc1.stats?.requests || 0;
+        const calls = chatRouting.pc1_requests ?? pc1.stats?.requests ?? 0;
         pc1ChatCount.textContent = `${calls.toLocaleString()} calls`;
       }
 
@@ -378,6 +394,80 @@ async function loadWorkloadTelemetry(force = false) {
       tpPayload.title = `Total float32 vector tensor stream volume: ${mibVal.toFixed(3)} MiB (${(tp.payload_bytes || 0).toLocaleString()} bytes)`;
     }
 
+    // 4. Real-Time Pipeline Flow Inspector ("See-Through")
+    const pl = data.pipeline || {};
+    const flowProducer = document.getElementById("flow-producer-val");
+    const flowEmbedQ = document.getElementById("flow-embed-q-val");
+    const flowWorkers = document.getElementById("flow-workers-val");
+    const flowDbQ = document.getElementById("flow-db-q-val");
+    const flowWriter = document.getElementById("flow-writer-val");
+
+    if (flowProducer) {
+      flowProducer.textContent = pl.producer_stage || (sidecarContinuousRunning ? "active" : "idle");
+      flowProducer.className = pl.producer_stage === "chunking" ? "text-cyan" : (pl.producer_stage === "fetching_db" ? "text-indigo" : "");
+    }
+    if (flowEmbedQ) {
+      const qVal = pl.embed_queue_depth !== undefined ? pl.embed_queue_depth : 0;
+      const qMax = pl.embed_queue_max || 100;
+      flowEmbedQ.textContent = `${qVal}/${qMax}`;
+      flowEmbedQ.className = qVal > 80 ? "text-rose font-bold" : "text-cyan";
+      flowEmbedQ.title = `${qVal} document batches waiting for PC2 GPU embedding`;
+    }
+    if (flowWorkers) {
+      const activeW = pl.active_http_workers !== undefined ? pl.active_http_workers : 0;
+      const totW = pl.total_http_workers || 6;
+      flowWorkers.textContent = `${totW}x (${activeW} busy)`;
+      flowWorkers.className = activeW > 0 ? "text-emerald font-bold" : "text-faint";
+    }
+    if (flowDbQ) {
+      const dbQVal = pl.db_queue_depth !== undefined ? pl.db_queue_depth : 0;
+      const dbQMax = pl.db_queue_max || 100;
+      flowDbQ.textContent = `${dbQVal}/${dbQMax}`;
+      flowDbQ.className = dbQVal > 80 ? "text-rose font-bold" : "text-amber";
+      flowDbQ.title = `${dbQVal} embedded batches waiting for SQLite persistence`;
+    }
+    if (flowWriter) {
+      flowWriter.textContent = pl.db_writer_stage || (sidecarContinuousRunning ? "idle" : "stopped");
+      flowWriter.className = pl.db_writer_stage === "writing_sqlite" ? "text-emerald font-bold" : "";
+    }
+
+    // 5. Update Real-Time Zoo Matrix Observatory Strip
+    const zoo = data.zoo || {};
+    const zooPdfVal = document.getElementById("zoo-pdf-val");
+    const zooPdfSub = document.getElementById("zoo-pdf-sub");
+    const zooLanVal = document.getElementById("zoo-lan-val");
+    const zooLanSub = document.getElementById("zoo-lan-sub");
+    const zooWalVal = document.getElementById("zoo-wal-val");
+    const zooWalSub = document.getElementById("zoo-wal-sub");
+    const zooChatVal = document.getElementById("zoo-chat-val");
+    const zooChatSub = document.getElementById("zoo-chat-sub");
+
+    if (zooPdfVal && zoo.io_pdf_reading) {
+      zooPdfVal.textContent = `${zoo.io_pdf_reading.rate_mb_s} MB/s`;
+      if (zooPdfSub) zooPdfSub.textContent = `(${zoo.io_pdf_reading.files_per_min} f/m)`;
+    }
+    if (zooLanVal && zoo.lan_traffic) {
+      const ping = zoo.lan_traffic.pc2_ping_ms ?? (data.cuda_gpu_node?.ping_ms);
+      zooLanVal.textContent = (ping !== null && ping !== undefined) ? `${parseFloat(ping).toFixed(0)} ms` : `-- ms`;
+      if (zooLanSub) zooLanSub.textContent = `${zoo.lan_traffic.payload_mib} MiB (${zoo.lan_traffic.transfer_direction})`;
+    }
+    if (zooWalVal && zoo.sqlite_wal) {
+      zooWalVal.textContent = `DB ${zoo.sqlite_wal.db_size_mb}M / WAL ${zoo.sqlite_wal.wal_size_mb}M`;
+      if (zooWalSub) {
+        zooWalSub.textContent = zoo.sqlite_wal.status;
+        zooWalSub.className = zoo.sqlite_wal.is_busy ? "zoo-sub text-amber" : "zoo-sub text-emerald";
+      }
+    }
+    if (zooChatVal && zoo.chat_reasoning) {
+      const isPc2 = zoo.chat_reasoning.active_node === "pc2";
+      zooChatVal.textContent = isPc2 ? "PC2 (8B CUDA)" : "PC1 (3B CPU)";
+      zooChatVal.className = isPc2 ? "text-emerald font-bold" : "text-indigo font-bold";
+      if (zooChatSub) {
+        const reqs = isPc2 ? zoo.chat_reasoning.pc2_requests : zoo.chat_reasoning.pc1_requests;
+        zooChatSub.textContent = `${reqs || 0} calls (${isPc2 ? zoo.chat_reasoning.pc2_model : zoo.chat_reasoning.pc1_model})`;
+      }
+    }
+
     // Dynamic endpoint tags for PC1 & PC2
     const renderPingTag = (elId, epData, label) => {
       const el = document.getElementById(elId);
@@ -448,6 +538,41 @@ async function loadWorkloadTelemetry(force = false) {
         refreshBtn.innerHTML = `<span class="refresh-icon">⟳</span> Probe Hardware`;
       }, 500);
     }
+  }
+}
+
+// Dynamic Chat Routing Switcher (PC1 CPU vs PC2 CUDA GPU)
+async function switchChatNode(targetNode, targetModel = null) {
+  try {
+    activeChatNode = targetNode;
+    
+    // Optimistic UI update
+    const btnPc1 = document.getElementById("btn-chat-toggle-pc1");
+    const btnPc2 = document.getElementById("btn-chat-toggle-pc2");
+    const wsBtnPc1 = document.getElementById("chat-ws-toggle-pc1");
+    const wsBtnPc2 = document.getElementById("chat-ws-toggle-pc2");
+
+    if (btnPc1) btnPc1.classList.toggle("active", targetNode === "pc1");
+    if (btnPc2) btnPc2.classList.toggle("active", targetNode === "pc2");
+    if (wsBtnPc1) wsBtnPc1.classList.toggle("active", targetNode === "pc1");
+    if (wsBtnPc2) wsBtnPc2.classList.toggle("active", targetNode === "pc2");
+
+    const res = await fetch("/api/v1/chat/routing", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ node: targetNode, model: targetModel })
+    });
+    
+    if (res.ok) {
+      const result = await res.json();
+      const nodeLabel = targetNode === "pc2" ? "PC2 Remote (llama3.1:8b CUDA RTX 3060)" : "PC1 Host (llama3.2:3b CPU)";
+      showToast(`⚡ api/chat reasoning routed to ${nodeLabel}`, "success", 4000);
+      loadWorkloadTelemetry(false);
+    } else {
+      showToast("Failed to switch chat routing on backend", "error");
+    }
+  } catch (err) {
+    showToast("Error switching chat routing: " + err, "error");
   }
 }
 
@@ -2054,8 +2179,8 @@ async function sendChatMessage(sha = null) {
   container.appendChild(botDiv);
   container.scrollTop = container.scrollHeight;
 
-  // Stream via SSE
-  let sseUrl = `/api/v1/chat/stream?query=${encodeURIComponent(query)}`;
+  // Stream via SSE with dynamic node routing parameter
+  let sseUrl = `/api/v1/chat/stream?query=${encodeURIComponent(query)}&node=${encodeURIComponent(activeChatNode)}`;
   if (targetSha) {
     sseUrl += `&sha256_hash=${encodeURIComponent(targetSha)}`;
   }

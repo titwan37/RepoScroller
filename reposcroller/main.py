@@ -50,6 +50,8 @@ def main():
     # Command: interrogate
     chat_p = subparsers.add_parser("interrogate", help="Ask the chatbot about document availability")
     chat_p.add_argument("query", help="Question to ask (e.g. 'Do we have the 2024 Kantonsgericht decision?')")
+    chat_p.add_argument("--node", choices=["pc1", "pc2", "localhost", "cuda"], default=None, help="Routing node for api/chat (pc1: CPU / pc2: CUDA RTX 3060)")
+    chat_p.add_argument("--model", default=None, help="Target LLM model (e.g. llama3.2:3b or llama3.1:8b)")
 
     # Command: sidecar
     sidecar_p = subparsers.add_parser("sidecar", help="Run the Knowledge Base Sidecar Worker to chunk and embed documents")
@@ -208,9 +210,13 @@ def main():
         print(f"\nRecommendation: {res['recommendation']}")
 
     elif args.command == "interrogate":
+        from reposcroller.ai.telemetry import workload_telemetry
+        if args.node or args.model:
+            workload_telemetry.switch_chat_routing(node=args.node or workload_telemetry.chat_active_node, model=args.model)
         agent = DuplicateResolverAgent()
         res = agent.interrogate(query=args.query)
-        print(f"\nStatus: {res['status_category']}")
+        print(f"\n[Node: {workload_telemetry.chat_active_node.upper()} | Model: {workload_telemetry.get_active_chat_model()} | URL: {workload_telemetry.get_active_chat_url()}]")
+        print(f"Status: {res['status_category']}")
         print(f"\n{res['answer']}")
         print(f"\nRecommendation: {res['recommendation']}")
 

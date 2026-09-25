@@ -1004,3 +1004,145 @@ The new architecture replaces the strictly synchronous loop with a high-throughp
 - __Total Indexing Time:__ Expect an exponential decrease in the time required to index the entire 12,000+ document base.
 
 If you are running the daemon in the background (`task-2928`), you may need to restart it so that it picks up the new multithreaded worker logic. Let me know if you want to further increase the number of concurrent HTTP threads (currently set to 6) or if you encounter any `database is locked` issues under the new load!
+
+Ran command: `uv run python -c "from reposcroller.config import settings; from reposcroller.ai.telemetry import workload_telemetry; from reposcroller.ai.analyzer import DocumentAnalyzer; from reposcroller.ai.taxonomy import TaxonomyRefiner; from reposcroller.ai.graph_extractor import GraphExtractor; a = DocumentAnalyzer(); print('PC1 model:', settings.OLLAMA_MODEL_PC1); print('PC2 model:', settings.OLLAMA_MODEL_PC2); print('Active model:', settings.chat_model); print('Analyzer model:', a.ollama_model); print('Analyzer url:', a.ollama_url)"`
+Viewed graph_extractor.py:1-40
+Ran command: `uv run python -c "from reposcroller.config import settings; from reposcroller.ai.telemetry import workload_telemetry; from reposcroller.ai.analyzer import DocumentAnalyzer; from reposcroller.ai.taxonomy import TaxonomyRefiner; from reposcroller.ai.graph_extractor import KnowledgeGraphExtractor; a = DocumentAnalyzer(); print('PC1 model:', settings.OLLAMA_MODEL_PC1); print('PC2 model:', settings.OLLAMA_MODEL_PC2); print('Active model:', settings.chat_model); print('Analyzer model:', a.ollama_model); print('Analyzer url:', a.ollama_url); workload_telemetry.switch_chat_routing('pc2'); print('After switch to PC2:'); print('Active model:', settings.chat_model); print('Analyzer model:', a.ollama_model); print('Analyzer url:', a.ollama_url); workload_telemetry.switch_chat_routing('pc1')"`
+Ran command: `git grep "OLLAMA_MODEL_PC1"`
+Viewed .env:40-55
+Edited .env
+Ran command: `git grep -n "llama3.2:1b"`
+Viewed index.html:185-205
+Edited index.html
+Viewed app.js:200-215
+Edited app.js
+Ran command: `uv run python -c "from reposcroller.config import settings; from reposcroller.ai.telemetry import workload_telemetry; from reposcroller.ai.analyzer import DocumentAnalyzer; a = DocumentAnalyzer(); print('PC1 model:', settings.OLLAMA_MODEL_PC1); print('PC2 model:', settings.OLLAMA_MODEL_PC2); print('Active model:', settings.chat_model); print('Analyzer model:', a.ollama_model); print('Analyzer url:', a.ollama_url); workload_telemetry.switch_chat_routing('pc2'); print('After switch to PC2:'); print('Active model:', settings.chat_model); print('Analyzer model:', a.ollama_model); print('Analyzer url:', a.ollama_url); probes = workload_telemetry.get_node_probes(force=True); print('PC1 node url:', probes['localhost_node']['url'], 'model:', probes['localhost_node']['target_model']); print('PC2 node url:', probes['cuda_gpu_node']['url'], 'embed_model:', probes['cuda_gpu_node']['target_model'], 'chat_model:', probes['cuda_gpu_node']['chat_model'])"`
+Used tool: manage_task
+Ran command: `uv run python -m reposcroller.main serve --port 8092`
+Ran command: `curl -s http://127.0.0.1:8092/api/v1/chat/routing`
+Ran command: `Invoke-RestMethod -Uri "http://127.0.0.1:8092/api/v1/diagnostics/workload" | ConvertTo-Json -Depth 4`
+Ran command: `uv run python -m reposcroller.main interrogate --help`
+
+To answer your architectural questions directly:
+
+### 1. Should `_call_ollama` in [analyzer.py](file:///c:/Dev/RepoScroller/reposcroller/ai/analyzer.py) handle `settings.OLLAMA_MODEL_PC1` or `settings.OLLAMA_MODEL_PC2`?
+
+__Neither should be hardcoded.__
+If hardcoded to `settings.OLLAMA_MODEL_PC1` (`llama3.2:3b`), switching to PC2 would fail with a `404 Model Not Found` because PC2 only has `llama3.1:8b` loaded in VRAM. Conversely, hardcoding `settings.OLLAMA_MODEL_PC2` would fail on PC1.
+
+In [analyzer.py](file:///c:/Dev/RepoScroller/reposcroller/ai/analyzer.py#L30-L55), [DocumentAnalyzer](file:///c:/Dev/RepoScroller/reposcroller/ai/analyzer.py#L30) now uses dynamic properties:
+
+- `self.ollama_url`: dynamically resolves to [settings.chat_url](file:///c:/Dev/RepoScroller/reposcroller/config.py#L104-L111) (`http://localhost:11434` for PC1 vs `http://NITRO-AN51755:11434` for PC2).
+- `self.ollama_model`: dynamically resolves to [settings.chat_model](file:///c:/Dev/RepoScroller/reposcroller/config.py#L113-L121) (`llama3.2:3b` for PC1 vs `llama3.1:8b` for PC2).
+
+```python
+# reposcroller/ai/analyzer.py
+def _call_ollama(self, text: str, filename: str) -> Optional[DocumentAnalysisResult]:
+    prompt = self._build_prompt(text, filename)
+    url = f"{self.ollama_url}/api/chat"
+    target_model = self.ollama_model  # Dynamic: llama3.2:3b (PC1) or llama3.1:8b (PC2)
+    payload = {
+        "model": target_model,
+        "messages": [{"role": "user", "content": prompt}],
+        "format": "json",
+        "stream": False,
+        "keep_alive": settings.OLLAMA_KEEP_ALIVE,
+        "options": {"temperature": 0.1}
+    }
+    # Records latency with node attribution (PC1 vs PC2)
+    workload_telemetry.record_chat(
+        latency_ms=elapsed_ms, 
+        success=True, 
+        node=workload_telemetry.chat_active_node,
+        model=target_model
+    )
+```
+
+---
+
+### 2. What about `_call_llm` in [taxonomy.py](file:///c:/Dev/RepoScroller/reposcroller/ai/taxonomy.py)?
+
+Similarly, in [taxonomy.py](file:///c:/Dev/RepoScroller/reposcroller/ai/taxonomy.py#L415-L465), [TaxonomyRefiner._call_llm](file:///c:/Dev/RepoScroller/reposcroller/ai/taxonomy.py#L415) now routes through [settings.chat_url](file:///c:/Dev/RepoScroller/reposcroller/config.py#L104) and [settings.chat_model](file:///c:/Dev/RepoScroller/reposcroller/config.py#L113):
+
+```python
+# reposcroller/ai/taxonomy.py
+target_model = settings.chat_model  # Automatically adapts to PC1 (3B) or PC2 (8B)
+resp = client.post(
+    f"{settings.chat_url}/api/chat",
+    json={
+        "model": target_model,
+        "messages": [{"role": "user", "content": prompt}],
+        "format": "json",
+        "stream": False,
+        "keep_alive": settings.OLLAMA_KEEP_ALIVE
+    }
+)
+```
+
+The same applies to [KnowledgeGraphExtractor](file:///c:/Dev/RepoScroller/reposcroller/ai/graph_extractor.py#L162-L188) in [graph_extractor.py](file:///c:/Dev/RepoScroller/reposcroller/ai/graph_extractor.py), which now also uses `settings.chat_model`.
+
+---
+
+### 3. How [get_node_probes()](file:///c:/Dev/RepoScroller/reposcroller/ai/telemetry.py#L281) in [telemetry.py](file:///c:/Dev/RepoScroller/reposcroller/ai/telemetry.py) Manages Node Health
+
+Previously, `get_node_probes()` queried `settings.chat_url`, which caused PC1 and PC2 hardware cards to swap URLs whenever the active chat target was toggled.
+
+In [telemetry.py](file:///c:/Dev/RepoScroller/reposcroller/ai/telemetry.py#L281-L398), the hardware endpoints are decoupled:
+
+1. __PC1 Hardware Probe__: Probes `pc1_base_url` (`http://localhost:11434`) and reports `target_model: settings.OLLAMA_MODEL_PC1` (`llama3.2:3b`), ping latency, and running models.
+2. __PC2 Hardware Probe__: Probes `pc2_base_url` (`http://NITRO-AN51755:11434`) and reports `target_model: snowflake-arctic-embed2:latest` (embeddings) + `chat_model: settings.OLLAMA_MODEL_PC2` (`llama3.1:8b`).
+3. __Endpoints Matrix__:
+   - `pc1_chat`: `http://localhost:11434/api/chat` (`llama3.2:3b`)
+   - `pc1_embed`: `http://localhost:11434/api/embed` (`snowflake-arctic-embed:latest`)
+   - `pc2_chat`: `http://NITRO-AN51755:11434/api/chat` (`llama3.1:8b`)
+   - `pc2_embed`: `http://NITRO-AN51755:11434/api/embed` (`snowflake-arctic-embed2:latest`)
+
+---
+
+### 4. How to Switch Between PC1 and PC2
+
+You can switch the reasoning target at any time via three mechanisms:
+
+#### A. From UI Toggle Buttons
+
+- __Split Workload HUD Bar__: Click `[ 💻 PC1 (3B CPU) ]` or `[ ⚡ PC2 (8B CUDA) ]` in the top action strip of [index.html](file:///c:/Dev/RepoScroller/reposcroller/api/static/index.html#L150-L162).
+- __AI Interrogation Room__: Click the node toggle buttons in the header of the AI Chat Assistant workspace ([index.html](file:///c:/Dev/RepoScroller/reposcroller/api/static/index.html#L836-L842)).
+- Both buttons invoke `switchChatNode(targetNode)` in [app.js](file:///c:/Dev/RepoScroller/reposcroller/api/static/app.js#L487).
+
+#### B. From CLI Command
+
+```bash
+# Query using PC1 CPU (llama3.2:3b)
+uv run python -m reposcroller.main interrogate "What agreements exist with Allianz?" --node pc1
+
+# Query using PC2 CUDA RTX 3060 (llama3.1:8b)
+uv run python -m reposcroller.main interrogate "What agreements exist with Allianz?" --node pc2
+```
+
+#### C. From REST API Parameters
+
+```bash
+# 1. Switch the global default reasoning node:
+curl -X POST http://127.0.0.1:8092/api/v1/chat/routing \
+     -H "Content-Type: application/json" \
+     -d '{"node": "pc2"}'
+
+# 2. Or override per request:
+curl -X POST http://127.0.0.1:8092/api/v1/chat/interrogate \
+     -H "Content-Type: application/json" \
+     -d '{"query": "Find draft discrepancies", "node": "pc2"}'
+```
+
+---
+
+### 5. Keeping an Eye on "The Zoo" (5 Subsystems Matrix)
+
+The unified `/api/v1/diagnostics/zoo` endpoint and the front-end __Zoo Matrix Strip__ monitor all 5 subsystems in real time:
+
+| Subsystem | What is Tracked | Source Code |
+| :--- | :--- | :--- |
+| __📄 PDF / File I/O__ | Extraction MB/s, files/min, avg extraction latency (ms), file extension distribution | [text_extractor.py](file:///c:/Dev/RepoScroller/reposcroller/extraction/text_extractor.py#L22-L40), [telemetry.py](file:///c:/Dev/RepoScroller/reposcroller/ai/telemetry.py#L130-L140) |
+| __🌐 LAN Traffic__ | Transfer direction (`PC1_TO_PC2`), Gigabit stream payload (MiB), tokens/sec, PC2 ping latency | [sidecar_worker.py](file:///c:/Dev/RepoScroller/reposcroller/ai/sidecar_worker.py#L100-L180), [telemetry.py](file:///c:/Dev/RepoScroller/reposcroller/ai/telemetry.py#L233-L279) |
+| __💾 SQLite WAL Engine__ | DB size (MB), WAL size (MB), log pages, checkpoint pages, contention locks (`wal_checkpoint(PASSIVE)`) | [telemetry.py](file:///c:/Dev/RepoScroller/reposcroller/ai/telemetry.py#L453-L476) |
+| __🧠 Vector Embeddings__ | Active tier (`cuda` vs `local`), chunks/min, avg tensor latency (ms), total chunks embedded | [sidecar_worker.py](file:///c:/Dev/RepoScroller/reposcroller/ai/sidecar_worker.py), [telemetry.py](file:///c:/Dev/RepoScroller/reposcroller/ai/telemetry.py#L510-L517) |
+| __🤖 Reasoning Chat__ | Active node (`pc1` / `pc2`), active model, PC1 calls counter, PC2 calls counter | [chat.py](file:///c:/Dev/RepoScroller/reposcroller/api/routes/chat.py), [telemetry.py](file:///c:/Dev/RepoScroller/reposcroller/ai/telemetry.py#L150-L166) |

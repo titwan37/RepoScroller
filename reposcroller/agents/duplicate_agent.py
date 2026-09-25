@@ -387,23 +387,29 @@ User Question: {query}
 """
         if settings.LLM_PROVIDER in ["auto", "ollama"]:
             t0 = time.time()
+            from reposcroller.ai.telemetry import workload_telemetry
+            chat_url = settings.chat_url
+            chat_pref = settings.chat_model
+            active_node = workload_telemetry.chat_active_node
+
             try:
-                tags_resp = httpx.get(f"{settings.chat_url}/api/tags", timeout=1.5)
+                tags_resp = httpx.get(f"{chat_url}/api/tags", timeout=2.0)
                 if tags_resp.status_code == 200:
                     models = [m["name"] for m in tags_resp.json().get("models", [])]
-                    pref = settings.OLLAMA_MODEL
+                    pref = chat_pref
                     chosen = next((m for m in models if m == pref or m.startswith(pref + ":")), None)
                     if not chosen:
-                        for candidate in ["llama3.2:latest", "llama3.2", "qwen2.5:7b", "mistral:latest", "llama3.1:8b", "llama3.2:1b", "qwen3:latest", "deepseek-r1:8b"]:
-                            if candidate in models:
-                                chosen = candidate
+                        # Fallback candidates based on priority
+                        for candidate in [pref, "llama3.1:8b", "llama3.2:3b", "llama3.2:latest", "llama3.2", "llama3.2:1b", "qwen2.5:7b"]:
+                            if any(m == candidate or m.startswith(candidate + ":") for m in models):
+                                chosen = next(m for m in models if m == candidate or m.startswith(candidate + ":"))
                                 break
                     if not chosen and models:
                         chosen = models[0]
 
                     if chosen:
                         chat_resp = httpx.post(
-                            f"{settings.chat_url}/api/chat",
+                            f"{chat_url}/api/chat",
                             json={
                                 "model": chosen,
                                 "messages": [{"role": "user", "content": prompt}],
@@ -415,8 +421,12 @@ User Question: {query}
                         )
                         if chat_resp.status_code == 200:
                             elapsed_ms = (time.time() - t0) * 1000
-                            from reposcroller.ai.telemetry import workload_telemetry
-                            workload_telemetry.record_chat(latency_ms=elapsed_ms, success=True)
+                            workload_telemetry.record_chat(
+                                latency_ms=elapsed_ms,
+                                success=True,
+                                node=active_node,
+                                model=chosen
+                            )
                             content = chat_resp.json().get("message", {}).get("content", "").strip()
                             refusals = [
                                 "cannot provide", "can't provide", "can't help", "cannot help",
@@ -426,8 +436,8 @@ User Question: {query}
                             ]
                             if content and not any(r in content.lower() for r in refusals) and len(content) > 15:
                                 llm_answer = content
-            except Exception:
-                pass
+            except Exception as e:
+                workload_telemetry.record_chat(latency_ms=(time.time() - t0) * 1000, success=False, node=active_node)
     except Exception:
         pass
 

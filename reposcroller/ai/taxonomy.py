@@ -439,12 +439,13 @@ Return ONLY a valid JSON object:
         # Local Ollama fallback
         import time
         t0 = time.time()
+        target_model = settings.chat_model
         try:
             with httpx.Client(timeout=settings.OLLAMA_TIMEOUT) as client:
                 resp = client.post(
                     f"{settings.chat_url}/api/chat",
                     json={
-                        "model": settings.OLLAMA_MODEL,
+                        "model": target_model,
                         "messages": [{"role": "user", "content": prompt}],
                         "format": "json",
                         "stream": False,
@@ -454,15 +455,30 @@ Return ONLY a valid JSON object:
                 elapsed_ms = (time.time() - t0) * 1000
                 from reposcroller.ai.telemetry import workload_telemetry
                 if resp.status_code == 200:
-                    workload_telemetry.record_chat(latency_ms=elapsed_ms, success=True)
+                    workload_telemetry.record_chat(
+                        latency_ms=elapsed_ms,
+                        success=True,
+                        node=workload_telemetry.chat_active_node,
+                        model=target_model
+                    )
                     content = resp.json()["message"]["content"]
                     return json.loads(content)
                 else:
-                    workload_telemetry.record_chat(latency_ms=elapsed_ms, success=False)
+                    workload_telemetry.record_chat(
+                        latency_ms=elapsed_ms,
+                        success=False,
+                        node=workload_telemetry.chat_active_node,
+                        model=target_model
+                    )
         except Exception:
             elapsed_ms = (time.time() - t0) * 1000
             from reposcroller.ai.telemetry import workload_telemetry
-            workload_telemetry.record_chat(latency_ms=elapsed_ms, success=False)
+            workload_telemetry.record_chat(
+                latency_ms=elapsed_ms,
+                success=False,
+                node=workload_telemetry.chat_active_node,
+                model=target_model
+            )
             pass
 
         return None
