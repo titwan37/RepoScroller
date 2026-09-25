@@ -3,6 +3,7 @@
 from typing import Optional
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
+from reposcroller.config import settings
 from reposcroller.ledger.repository import DocumentRepository
 from reposcroller.ledger.vector_store import VectorStore
 from reposcroller.ledger.graph_store import PropertyGraphStore
@@ -36,14 +37,38 @@ class GraphRAGRequest(BaseModel):
 
 @router.get("/stats")
 def get_sidecar_stats():
-    """Retrieve queue status, vector indexing, and graph statistics."""
+    """Retrieve queue status, vector indexing, graph statistics, and continuous worker state."""
     queue_stats = _repo.get_kb_queue_stats()
     graph_stats = _graph_store.get_graph_stats()
+    worker_status = _worker.get_continuous_status()
     return {
         "status": "active",
         "queue": queue_stats,
         "graph": graph_stats,
+        "worker": worker_status,
+        "model": settings.OLLAMA_EMBEDDING_MODEL,
+        "embed_url": settings.embed_url,
     }
+
+
+@router.post("/start")
+def start_continuous_sidecar_processing(poll_interval: float = Query(2.0, ge=0.5, le=30.0)):
+    """Start continuous background sidecar ingestion on the remote PC2 CUDA node."""
+    res = _worker.start_continuous_worker(poll_interval=poll_interval)
+    return res
+
+
+@router.post("/stop")
+def stop_continuous_sidecar_processing():
+    """Stop continuous background sidecar ingestion and return session summary statistics."""
+    res = _worker.stop_continuous_worker()
+    return res
+
+
+@router.get("/status")
+def get_continuous_sidecar_status():
+    """Get live runtime status and counters of the continuous background sidecar worker."""
+    return _worker.get_continuous_status()
 
 
 @router.get("/entities")
@@ -55,7 +80,6 @@ def get_grouped_entities(limit_per_type: int = Query(default=200, ge=1, le=1000)
         "node_types_count": len(grouped),
         "entities_by_type": grouped,
     }
-
 
 
 @router.post("/process")

@@ -417,9 +417,10 @@ class DocumentRepository:
                           status: Optional[str] = None,
                           category: Optional[str] = None,
                           only_duplicates: bool = False,
+                          query: Optional[str] = None,
                           sort_by: str = "created_at",
                           sort_order: str = "DESC") -> List[Dict[str, Any]]:
-        """Retrieve paginated document ledger records with category, duplicate filtering, and sorting."""
+        """Retrieve paginated document ledger records with query search, category, duplicate filtering, and sorting."""
         with self._lock:
             cur = self.conn.cursor()
 
@@ -446,6 +447,10 @@ class DocumentRepository:
             if category:
                 where_clauses.append("dl.doc_type = ?")
                 params.append(category)
+            if query and query.strip():
+                clean_q = f"%{query.strip()}%"
+                where_clauses.append("(dl.canonical_filename LIKE ? OR dl.text_snippet LIKE ? OR dl.doc_type LIKE ?)")
+                params.extend([clean_q, clean_q, clean_q])
 
             where_str = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
             having_str = "HAVING location_count > 1" if only_duplicates else ""
@@ -582,28 +587,60 @@ class DocumentRepository:
                 """, (status, error_message, sha256_hash))
             self.conn.commit()
 
+    def mark_kb_queue_batch_status(self, sha256_hashes: List[str], status: str) -> None:
+        """Atomically update status for a batch of documents in the KB processing queue."""
+        if not sha256_hashes:
+            return
+        with self._lock:
+            cur = self.conn.cursor()
+            placeholders = ",".join("?" * len(sha256_hashes))
+            if status == "completed":
+                cur.execute(f"""
+                    UPDATE kb_processing_queue
+                    SET status = 'completed', error_message = NULL, processed_at = CURRENT_TIMESTAMP
+                    WHERE sha256_hash IN ({placeholders});
+                """, sha256_hashes)
+            elif status == "processing":
+                cur.execute(f"""
+                    UPDATE kb_processing_queue
+                    SET status = 'processing', error_message = NULL
+                    WHERE sha256_hash IN ({placeholders});
+                """, sha256_hashes)
+            else:
+                cur.execute(f"""
+                    UPDATE kb_processing_queue
+                    SET status = ?
+                    WHERE sha256_hash IN ({placeholders});
+                """, [status] + sha256_hashes)
+            self.conn.commit()
+
     def save_document_chunks(self, sha256_hash: str, chunks: List[Dict[str, Any]]) -> None:
         """Persist dense semantic chunks with embeddings into SQLite."""
+        self.save_batch_document_chunks([(sha256_hash, chunks)])
+
+    def save_batch_document_chunks(self, batch_chunks: List[tuple]) -> None:
+        """Persist dense semantic chunks with embeddings for a batch of documents in a single transaction."""
+        if not batch_chunks:
+            return
         import json
         with self._lock:
             cur = self.conn.cursor()
-            # Remove any prior chunks for this SHA
-            cur.execute("DELETE FROM document_chunks WHERE sha256_hash = ?", (sha256_hash,))
-
-            for idx, c in enumerate(chunks):
-                chunk_id = f"{sha256_hash}_{idx}"
-                emb_json = json.dumps(c.get("embedding")) if c.get("embedding") is not None else None
-                cur.execute("""
-                    INSERT INTO document_chunks (chunk_id, sha256_hash, chunk_index, chunk_text, token_count, embedding_json)
-                    VALUES (?, ?, ?, ?, ?, ?);
-                """, (
-                    chunk_id,
-                    sha256_hash,
-                    idx,
-                    c["chunk_text"],
-                    c.get("token_count", len(c["chunk_text"].split())),
-                    emb_json,
-                ))
+            for sha256_hash, chunks in batch_chunks:
+                cur.execute("DELETE FROM document_chunks WHERE sha256_hash = ?", (sha256_hash,))
+                for idx, c in enumerate(chunks):
+                    chunk_id = f"{sha256_hash}_{idx}"
+                    emb_json = json.dumps(c.get("embedding")) if c.get("embedding") is not None else None
+                    cur.execute("""
+                        INSERT INTO document_chunks (chunk_id, sha256_hash, chunk_index, chunk_text, token_count, embedding_json)
+                        VALUES (?, ?, ?, ?, ?, ?);
+                    """, (
+                        chunk_id,
+                        sha256_hash,
+                        idx,
+                        c["chunk_text"],
+                        c.get("token_count", len(c["chunk_text"].split())),
+                        emb_json,
+                    ))
             self.conn.commit()
 
     def get_document_chunks(self, sha256_hash: str) -> List[Dict[str, Any]]:

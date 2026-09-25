@@ -69,7 +69,7 @@ if ($isListening) {
     exit 1
 }
 
-# 4. Pre-warm Embedding & Chat Models simultaneously in VRAM
+# 4. Pre-warm Embedding Model in VRAM
 Write-Host ""
 Write-Host "[3/4] Pre-warming embedding model '$Model' into VRAM..." -ForegroundColor Cyan
 try {
@@ -89,23 +89,6 @@ try {
     }
 } catch {
     Write-Host "  -> Embedding warm-up notice: $($_.Exception.Message)" -ForegroundColor Yellow
-}
-
-Write-Host "  -> Pre-warming chat model 'llama3.2:latest' into VRAM..." -ForegroundColor Cyan
-try {
-    $chatPayload = @{
-        model = "llama3.2:latest"
-        messages = @(@{ role = "user"; content = "ok" })
-        stream = $false
-        keep_alive = "24h"
-    } | ConvertTo-Json
-    
-    $sw2 = [System.Diagnostics.Stopwatch]::StartNew()
-    $null = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/chat" -Method Post -Body $chatPayload -ContentType "application/json" -TimeoutSec 45
-    $sw2.Stop()
-    Write-Host "  -> Chat model loaded (took $($sw2.ElapsedMilliseconds)ms)" -ForegroundColor Green
-} catch {
-    Write-Host "  -> Chat warm-up notice: $($_.Exception.Message)" -ForegroundColor DarkGray
 }
 
 # 5. Live Node Status Summary

@@ -344,10 +344,25 @@
                 <span class="kb-stat-num" id="kb-stat-docs-chunked">0</span>
                 <span class="kb-stat-lbl">Docs Processed</span>
               </div>
-              <div class="kb-mini-stat">
-                <button id="btn-trigger-batch" class="btn btn-primary btn-xs" onclick="triggerSidecarBatch()" title="Trigger immediate processing of pending documents">
-                  ▶ Process Batch
+              <div class="kb-mini-stat actions-group">
+                <button id="btn-sidecar-toggle" class="btn btn-emerald btn-xs" onclick="toggleContinuousSidecar()" title="Start/Stop continuous background ingestion">
+                  <span id="sidecar-toggle-icon">▶</span> <span id="sidecar-toggle-text">Start Continuous Ingestion</span>
                 </button>
+                <button id="btn-trigger-batch" class="btn btn-outline btn-xs" onclick="triggerSidecarBatch()" title="Process a single batch immediately">
+                  ⚡ Single Batch
+                </button>
+              </div>
+            </div>
+
+            <!-- Live Session Status Strip -->
+            <div id="kb-session-strip" class="kb-session-strip">
+              <div class="kb-session-left">
+                <span class="kb-worker-dot" id="kb-worker-dot"></span>
+                <span id="kb-worker-status-text" class="kb-worker-status-text">Pipeline Idle</span>
+              </div>
+              <div class="kb-session-right">
+                <span id="kb-session-counter" class="kb-session-counter">Session: 0 docs • 0 chunks</span>
+                <span id="kb-session-uptime" class="kb-session-uptime"></span>
               </div>
             </div>
           </div>

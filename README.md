@@ -256,23 +256,7 @@ uv run pytest
 
 ---
 
-Viewed .env.example:1-31
-Viewed .env:1-6
-Created setup_pc2_cuda_server.ps1
-Listed directory RepoScroller
-Viewed setup_pc2_cuda_server.ps1:1-125
-Created setup_pc2_cuda_server.bat
-Viewed start_all.ps1:1-60
-Viewed start_all.ps1:61-162
-Viewed .env:1-6
-Viewed start_all.bat:1-4
-Created launch_pc1_host.ps1
-Created launch_pc1_host.bat
-Viewed start_all.ps1:64-86
-Edited start_all.ps1
-Ran command: `uv run pytest`
-
-Les scripts de configuration et lanceurs pour **PC2 (Node CUDA RTX 3060)** et **PC1 (Hôte RepoScroller)** sont prêts.
+Les scripts de configuration et lanceurs pour **PC2 (Node CUDA RTX 3060)** et **PC1 (Hôte RepoScroller)** sont prêts.  <http://NITRO-AN51755:11434>:
 
 ---
 
@@ -307,7 +291,7 @@ Deux fichiers sont disponibles à la racine du projet :
 - [`.env`](file:///c:/Dev/RepoScroller/.env) :
 
   ```ini
-  OLLAMA_BASE_URL=http://192.168.192.9:11434
+  OLLAMA_BASE_URL=http://NITRO-AN51755:11434
   OLLAMA_EMBEDDING_MODEL=snowflake-arctic-embed2:latest
   OLLAMA_TIMEOUT=60.0
   OLLAMA_SUB_BATCH_SIZE=32
@@ -316,7 +300,7 @@ Deux fichiers sont disponibles à la racine du projet :
 
 #### Ce que fait le lanceur PC1
 
-1. Teste la connectivité réseau LAN vers `http://192.168.192.9:11434/api/tags` et affiche la latence réseau (ex: ~3-5ms).
+1. Teste la connectivité réseau LAN vers `http://NITRO-AN51755:11434/api/tags` et affiche la latence réseau (ex: ~3-5ms).
 2. Vérifie la présence du modèle `snowflake-arctic-embed2:latest` sur le GPU de PC2.
 3. Sonde les 6 volumes de stockage (SMB SyNAS & Google Drive).
 4. Lance l'orchestrateur complet (`start_all.ps1`) avec le backend FastAPI, le scanner parallèle, le watcher et le Knowledge Base Sidecar (qui envoie les requêtes de vectorisation à PC2 via le réseau sans latence disque ni verrou).
@@ -331,7 +315,7 @@ Par défaut, Ollama écoute **uniquement sur `127.0.0.1:11434` (localhost)**, ce
 En configurant `OLLAMA_HOST=0.0.0.0:11434` sur **PC2** :
 
 - Ollama accepte les connexions provenant de toutes les cartes réseau (Ethernet/Wi-Fi du LAN).
-- **PC1** peut donc joindre PC2 sur `http://192.168.192.9:11434`.
+- **PC1** peut donc joindre PC2 sur `http://NITRO-AN51755:11434`.
 
 ---
 
@@ -384,7 +368,7 @@ Nous avons désormais une distinction claire entre **Setup initial (une seule fo
 
 | Fichier | Rôle |
 | :--- | :--- |
-| [`start_pc1_host.bat`](file:///c:/Dev/RepoScroller/start_pc1_host.bat) | Lanceur principal PC1 : teste la connectivité réseau vers PC2 (`192.168.192.9:11434`), vérifie la présence du modèle et lance tous les services RepoScroller. |
+| [`start_pc1_host.bat`](file:///c:/Dev/RepoScroller/start_pc1_host.bat) | Lanceur principal PC1 : teste la connectivité réseau vers PC2 (`http://NITRO-AN51755:11434`), vérifie la présence du modèle et lance tous les services RepoScroller. |
 | [`start_all.bat`](file:///c:/Dev/RepoScroller/start_all.bat) | Orchestrateur standard RepoScroller (backend, scanner x6, watcher, sidecar). |
 | [`stop_all.bat`](file:///c:/Dev/RepoScroller/stop_all.bat) | **Arrêt propre total** de tous les processus RepoScroller (FastAPI :8090, scanner, watcher, sidecar). |
 

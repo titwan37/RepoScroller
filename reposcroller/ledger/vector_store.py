@@ -30,25 +30,41 @@ class VectorStore:
         """Computes embeddings for chunks if missing, persists into SQLite ledger, and syncs to Qdrant if active."""
         if not chunks:
             return 0
+        return self.index_batch_document_chunks([(sha256_hash, chunks, doc_metadata)])
 
-        # Collect texts needing embeddings
-        texts_to_embed = [c["chunk_text"] for c in chunks if not c.get("embedding")]
-        if texts_to_embed:
-            embeddings = self.embedder.embed_batch(texts_to_embed)
-            emb_idx = 0
+    def index_batch_document_chunks(self,
+                                    docs_chunks: List[tuple]) -> int:
+        """Computes embeddings for multiple documents in a single GPU batch, persists in SQLite, and syncs to Qdrant."""
+        if not docs_chunks:
+            return 0
+
+        # 1. Collect all texts needing embeddings across all documents in the batch
+        all_texts_to_embed: List[str] = []
+        chunk_ptrs: List[Dict[str, Any]] = []
+
+        for sha, chunks, _meta in docs_chunks:
             for c in chunks:
                 if not c.get("embedding"):
-                    c["embedding"] = embeddings[emb_idx]
-                    emb_idx += 1
+                    all_texts_to_embed.append(c["chunk_text"])
+                    chunk_ptrs.append(c)
 
-        # 1. Persist in local SQLite WAL ledger (ALCOA+ single source of truth)
-        self.repo.save_document_chunks(sha256_hash, chunks)
+        # 2. Single batched embedding forward pass to PC2 CUDA node
+        if all_texts_to_embed:
+            embeddings = self.embedder.embed_batch(all_texts_to_embed)
+            for chunk_obj, emb in zip(chunk_ptrs, embeddings):
+                chunk_obj["embedding"] = emb
 
-        # 2. Sync to Qdrant if plugin is available and configured
+        # 3. Batch persist in SQLite in a single transaction
+        batch_to_save = [(sha, chunks) for sha, chunks, _meta in docs_chunks]
+        self.repo.save_batch_document_chunks(batch_to_save)
+
+        # 4. Sync to Qdrant if available
         if self.qdrant.is_available:
-            self.qdrant.upsert_chunks(sha256_hash, chunks, doc_metadata=doc_metadata)
+            for sha, chunks, doc_meta in docs_chunks:
+                self.qdrant.upsert_chunks(sha, chunks, doc_metadata=doc_meta)
 
-        return len(chunks)
+        total_chunks = sum(len(chunks) for _, chunks, _ in docs_chunks)
+        return total_chunks
 
     def search_similar_chunks(self,
                               query: str,

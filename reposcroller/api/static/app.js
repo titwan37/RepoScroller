@@ -774,6 +774,7 @@ async function loadLedger() {
   if (statusFilter) params.append("status", statusFilter);
   if (activeCategory) params.append("category", activeCategory);
   if (filterOnlyDuplicates) params.append("only_duplicates", "true");
+  if (searchFilterQuery) params.append("query", searchFilterQuery);
   params.append("sort_by", activeSortBy);
   params.append("sort_order", activeSortOrder);
   params.append("limit", "100");
@@ -786,12 +787,6 @@ async function loadLedger() {
     const data = await res.json();
 
     let items = data.items || [];
-    if (searchFilterQuery) {
-      items = items.filter(d => 
-        (d.canonical_filename || "").toLowerCase().includes(searchFilterQuery) ||
-        (d.text_snippet || "").toLowerCase().includes(searchFilterQuery)
-      );
-    }
 
     // Always sort locally as well to guarantee immediate client accuracy
     cachedLedgerItems = sortItemsLocally(items, activeSortBy, activeSortOrder);
@@ -1196,6 +1191,34 @@ async function loadSidecarStats() {
     setTxt("kb-graph-edges", g.total_edges || 0);
     setTxt("kb-graph-doclinks", g.total_document_links || 0);
 
+    // Update Continuous Worker Status Strip & Controls
+    const w = data.worker || {};
+    sidecarContinuousRunning = !!w.is_running;
+    updateSidecarToggleButton();
+
+    const dot = document.getElementById("kb-worker-dot");
+    const statusText = document.getElementById("kb-worker-status-text");
+    const sessionCounter = document.getElementById("kb-session-counter");
+    const sessionUptime = document.getElementById("kb-session-uptime");
+    const engineTag = document.getElementById("kb-engine-tag");
+
+    if (engineTag && data.model) {
+      const urlHost = data.embed_url ? data.embed_url.replace(/https?:\/\//, '') : 'PC2 CUDA';
+      engineTag.textContent = `${data.model} (${urlHost})`;
+    }
+
+    if (dot) dot.className = sidecarContinuousRunning ? "kb-worker-dot active" : "kb-worker-dot";
+    if (statusText) {
+      statusText.className = sidecarContinuousRunning ? "kb-worker-status-text active" : "kb-worker-status-text";
+      statusText.textContent = sidecarContinuousRunning ? "⚡ Ingestion Active (CUDA Node)" : "Pipeline Idle";
+    }
+    if (sessionCounter) {
+      sessionCounter.textContent = `Session: ${w.session_docs_processed || 0} docs • ${w.session_chunks_embedded || 0} chunks`;
+    }
+    if (sessionUptime) {
+      sessionUptime.textContent = w.uptime_formatted ? `(uptime: ${w.uptime_formatted})` : "";
+    }
+
     // Update Node Types Distribution Chips
     const nodeTypesWrap = document.getElementById("kb-nodetypes-list");
     if (nodeTypesWrap && g.node_types) {
@@ -1332,6 +1355,75 @@ function selectEntityForSearch(name) {
 }
 
 
+let sidecarContinuousRunning = false;
+
+function updateSidecarToggleButton() {
+  const btn = document.getElementById("btn-sidecar-toggle");
+  const icon = document.getElementById("sidecar-toggle-icon");
+  const text = document.getElementById("sidecar-toggle-text");
+  if (!btn) return;
+
+  if (sidecarContinuousRunning) {
+    btn.className = "btn btn-rose btn-xs";
+    if (icon) icon.textContent = "⏹";
+    if (text) text.textContent = "Stop Continuous Ingestion";
+    btn.title = "Click to stop the continuous sidecar worker";
+  } else {
+    btn.className = "btn btn-emerald btn-xs";
+    if (icon) icon.textContent = "▶";
+    if (text) text.textContent = "Start Continuous Ingestion";
+    btn.title = "Click to start continuous background ingestion on PC2 CUDA GPU";
+  }
+}
+
+async function toggleContinuousSidecar() {
+  const btn = document.getElementById("btn-sidecar-toggle");
+  if (btn) btn.disabled = true;
+
+  try {
+    if (!sidecarContinuousRunning) {
+      // START
+      const res = await fetch("/api/v1/sidecar/start", { method: "POST" });
+      const data = await res.json();
+      sidecarContinuousRunning = true;
+      updateSidecarToggleButton();
+      
+      const startMsg = `▶ Started continuous Knowledge Base Sidecar ingestion on PC2 CUDA GPU (${data.embed_url || 'CUDA Node'}).`;
+      logDiagnosticEntry({
+        source: "backend",
+        level: "INFO",
+        logger: "reposcroller.kb_sidecar",
+        message: startMsg
+      });
+      showToast("🚀 Sidecar Indexing Pipeline started! Vectorizing queue continuously...", "success", 4000);
+    } else {
+      // STOP
+      const res = await fetch("/api/v1/sidecar/stop", { method: "POST" });
+      const data = await res.json();
+      sidecarContinuousRunning = false;
+      updateSidecarToggleButton();
+
+      const docs = data.session_docs_processed || 0;
+      const chunks = data.session_chunks_embedded || 0;
+      const dur = data.duration_formatted || "0s";
+
+      const stopMsg = `⏹ Stopped continuous Sidecar ingestion. Session total: ${docs} documents (${chunks} vectors) processed in ${dur}.`;
+      logDiagnosticEntry({
+        source: "backend",
+        level: "INFO",
+        logger: "reposcroller.kb_sidecar",
+        message: stopMsg
+      });
+      showToast(`⏹ Sidecar ingestion stopped! Processed ${docs} documents (${chunks} vectors) in ${dur}.`, "info", 5000);
+    }
+    await loadSidecarStats();
+  } catch (err) {
+    showToast(`Sidecar control error: ${err.message}`, "error", 5000);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 async function triggerSidecarBatch() {
   const btn = document.getElementById("btn-trigger-batch");
   if (btn) {
@@ -1346,14 +1438,23 @@ async function triggerSidecarBatch() {
       body: JSON.stringify({ limit: 20 })
     });
     const data = await res.json();
-    showToast(`Processed ${data.processed_count || 0} queued document(s) into Snowflake Arctic Knowledge Base`, "success", 4000);
+    const count = data.processed_count || 0;
+    const msg = `⚡ Step Batch: Processed ${count} queued document(s) into Snowflake Arctic Knowledge Base.`;
+    
+    logDiagnosticEntry({
+      source: "backend",
+      level: "INFO",
+      logger: "reposcroller.kb_sidecar",
+      message: msg
+    });
+    showToast(msg, "success", 4000);
     await loadSidecarStats();
   } catch (err) {
     showToast(`Sidecar processing failed: ${err.message}`, "error", 5000);
   } finally {
     if (btn) {
       btn.disabled = false;
-      btn.textContent = "▶ Process Batch";
+      btn.textContent = "⚡ Single Batch";
     }
   }
 }

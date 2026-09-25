@@ -437,6 +437,8 @@ Return ONLY a valid JSON object:
                 logger.warning(f"Taxonomy LLM call failed: {e}")
 
         # Local Ollama fallback
+        import time
+        t0 = time.time()
         try:
             with httpx.Client(timeout=settings.OLLAMA_TIMEOUT) as client:
                 resp = client.post(
@@ -449,10 +451,18 @@ Return ONLY a valid JSON object:
                         "keep_alive": settings.OLLAMA_KEEP_ALIVE
                     }
                 )
+                elapsed_ms = (time.time() - t0) * 1000
+                from reposcroller.ai.telemetry import workload_telemetry
                 if resp.status_code == 200:
+                    workload_telemetry.record_chat(latency_ms=elapsed_ms, success=True)
                     content = resp.json()["message"]["content"]
                     return json.loads(content)
+                else:
+                    workload_telemetry.record_chat(latency_ms=elapsed_ms, success=False)
         except Exception:
+            elapsed_ms = (time.time() - t0) * 1000
+            from reposcroller.ai.telemetry import workload_telemetry
+            workload_telemetry.record_chat(latency_ms=elapsed_ms, success=False)
             pass
 
         return None

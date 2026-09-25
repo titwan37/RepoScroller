@@ -91,13 +91,46 @@ class PropertyGraphStore:
             self.repo.conn.commit()
 
     def save_document_graph(self, doc_graph: DocumentKnowledgeGraph) -> None:
-        """Atomically persist extracted nodes, edges, and document links."""
-        for node in doc_graph.nodes:
-            self.upsert_node(node)
-        for edge in doc_graph.edges:
-            self.upsert_edge(edge)
-        for link in doc_graph.links:
-            self.link_document_entity(link)
+        """Atomically persist extracted nodes, edges, and document links for a single document."""
+        self.save_graphs_batch([doc_graph])
+
+    def save_graphs_batch(self, doc_graphs: List[DocumentKnowledgeGraph]) -> None:
+        """Atomically persist extracted nodes, edges, and document links for a batch of documents in a single transaction."""
+        if not doc_graphs:
+            return
+
+        with self.repo._lock:
+            cur = self.repo.conn.cursor()
+            for doc_graph in doc_graphs:
+                for node in doc_graph.nodes:
+                    cur.execute("""
+                        INSERT INTO knowledge_nodes (node_id, node_type, name, properties_json, updated_at)
+                        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                        ON CONFLICT(node_id) DO UPDATE SET
+                            name = excluded.name,
+                            node_type = excluded.node_type,
+                            properties_json = excluded.properties_json,
+                            updated_at = CURRENT_TIMESTAMP;
+                    """, (node.node_id, node.node_type, node.name, json.dumps(node.properties, ensure_ascii=False)))
+
+                for edge in doc_graph.edges:
+                    cur.execute("""
+                        INSERT INTO knowledge_edges (source_id, target_id, relation_type, weight, properties_json)
+                        VALUES (?, ?, ?, ?, ?)
+                        ON CONFLICT(source_id, target_id, relation_type) DO UPDATE SET
+                            weight = excluded.weight,
+                            properties_json = excluded.properties_json;
+                    """, (edge.source_id, edge.target_id, edge.relation_type, edge.weight, json.dumps(edge.properties, ensure_ascii=False)))
+
+                for link in doc_graph.links:
+                    cur.execute("""
+                        INSERT INTO document_entity_links (sha256_hash, node_id, role, confidence)
+                        VALUES (?, ?, ?, ?)
+                        ON CONFLICT(sha256_hash, node_id, role) DO UPDATE SET
+                            confidence = excluded.confidence;
+                    """, (link.sha256_hash, link.node_id, link.role, link.confidence))
+
+            self.repo.conn.commit()
 
     def get_document_entities(self, sha256_hash: str) -> List[Dict[str, Any]]:
         """Retrieve all entities associated with a specific document."""

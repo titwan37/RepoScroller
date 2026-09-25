@@ -2547,3 +2547,99 @@ body.resizing-table-col .th-resizer {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* Continuous Sidecar Button & Live Session Strip */
+.btn-emerald {
+  background: linear-gradient(135deg, #059669 0%, #10b981 100%);
+  color: #ffffff;
+  border: 1px solid rgba(16, 185, 129, 0.4);
+  font-weight: 600;
+  box-shadow: 0 2px 8px -2px rgba(16, 185, 129, 0.4);
+}
+
+.btn-emerald:hover {
+  background: linear-gradient(135deg, #047857 0%, #059669 100%);
+  box-shadow: 0 4px 12px -2px rgba(16, 185, 129, 0.6);
+}
+
+.btn-rose {
+  background: linear-gradient(135deg, #e11d48 0%, #f43f5e 100%);
+  color: #ffffff;
+  border: 1px solid rgba(244, 63, 94, 0.4);
+  font-weight: 600;
+  box-shadow: 0 2px 8px -2px rgba(244, 63, 94, 0.4);
+  animation: pulseStop 1.8s infinite ease-in-out;
+}
+
+@keyframes pulseStop {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(244, 63, 94, 0.5); }
+  50% { box-shadow: 0 0 12px 2px rgba(244, 63, 94, 0.7); }
+}
+
+.actions-group {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.kb-session-strip {
+  margin-top: 0.65rem;
+  padding: 0.45rem 0.75rem;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: var(--radius-sm);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.72rem;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.kb-session-left {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.kb-worker-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #64748b;
+  display: inline-block;
+  transition: all 0.3s ease;
+}
+
+.kb-worker-dot.active {
+  background: #10b981;
+  box-shadow: 0 0 8px #10b981;
+  animation: pulseMini 1.2s infinite ease-in-out;
+}
+
+.kb-worker-status-text {
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.kb-worker-status-text.active {
+  color: #34d399;
+}
+
+.kb-session-right {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-family: var(--font-mono);
+  color: var(--text-faint);
+}
+
+.kb-session-counter {
+  color: var(--text-main);
+  font-weight: 600;
+}
+
+.kb-session-uptime {
+  color: var(--accent-cyan);
+}

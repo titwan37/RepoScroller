@@ -40,10 +40,11 @@ def list_documents(
     status: Optional[str] = Query(None, description="Filter by lifecycle_status: draft, review, final, truncated"),
     category: Optional[str] = Query(None, description="Filter by doc_type / category"),
     only_duplicates: bool = Query(False, description="Filter to documents with >1 physical locations"),
+    query: Optional[str] = Query(None, description="Search keyword across filename and text snippet"),
     sort_by: str = Query("doc_date", description="Sort by column: doc_date, canonical_filename, doc_type, maturity_score, lifecycle_status, location_count"),
     sort_order: str = Query("DESC", description="Sort direction: ASC or DESC")
 ) -> Dict[str, Any]:
-    """Retrieve paginated document ledger records with optional category, duplicate filter, and column sorting."""
+    """Retrieve paginated document ledger records with optional query search, category, duplicate filter, and column sorting."""
     repo = DocumentRepository()
     docs = repo.get_all_documents(
         limit=limit,
@@ -51,6 +52,7 @@ def list_documents(
         status=status,
         category=category,
         only_duplicates=only_duplicates,
+        query=query,
         sort_by=sort_by,
         sort_order=sort_order
     )
