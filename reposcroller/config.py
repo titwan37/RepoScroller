@@ -86,8 +86,8 @@ class Settings(BaseSettings):
     LLM_PROVIDER: str = "auto"  # 'auto', 'openrouter', 'ollama', or 'heuristic'
     OPENROUTER_API_KEY: Optional[str] = None
     OPENROUTER_MODEL: str = "google/gemini-2.0-flash-001"
-    OLLAMA_MODEL: str = "llama3.2"
-    OLLAMA_MODEL_PC1: str = "llama3.2:3b"
+    OLLAMA_MODEL: str = "llama3.2:1b"
+    OLLAMA_MODEL_PC1: str = "llama3.2:1b"
     OLLAMA_MODEL_PC2: str = "llama3.1:8b"
 
     # Dense Vector Embeddings & Knowledge Base Sidecar Settings

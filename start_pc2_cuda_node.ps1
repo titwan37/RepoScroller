@@ -102,6 +102,25 @@ foreach ($ip in $ips) {
     Write-Host "   -> http://${ip}:$Port" -ForegroundColor Yellow
 }
 Write-Host ""
+$null = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/chat" -Method Post -Body $warmupPayloadChat -ContentType "application/json" -TimeoutSec 60
+if (Get-Command ollama.exe -ErrorAction SilentlyContinue) {
+    ollama ps
+}
+Write-Host ""
+Write-Host " Press [Ctrl+C] to exit or leave this window open." -ForegroundColor Gray
+Write-Host "================================================================" -ForegroundColor Green
+Write-Host ""
+
+# Keep alive loop displaying live status every 60s
+while ($true) {
+    Start-Sleep -Seconds 60
+}
+$ips = Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.InterfaceAlias -notlike "*Loopback*" -and $_.IPAddress -notlike "169.254*" } | Select-Object -ExpandProperty IPAddress
+Write-Host " Endpoints listening on LAN:" -ForegroundColor Cyan
+foreach ($ip in $ips) {
+    Write-Host "   -> http://${ip}:$Port" -ForegroundColor Yellow
+}
+Write-Host ""
 Write-Host " Active Models in VRAM:" -ForegroundColor Cyan
 if (Get-Command ollama.exe -ErrorAction SilentlyContinue) {
     ollama ps

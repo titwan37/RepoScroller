@@ -18,7 +18,7 @@ class WorkloadTelemetry:
         self.lock = threading.RLock()
         
         # Chat Telemetry (Dynamic Split Routing: PC1 vs PC2)
-        self.chat_active_node = "pc1"  # "pc1" (Host CPU) or "pc2" (Remote CUDA GPU)
+        self.chat_active_node = "pc2"  # "pc1" (Host CPU) or "pc2" (Remote CUDA GPU)
         self.chat_pc1_url = settings.OLLAMA_CHAT_BASE_URL or "http://localhost:11434"
         self.chat_pc1_model = settings.OLLAMA_MODEL_PC1 or "llama3.2:3b"
         self.chat_pc2_url = settings.OLLAMA_EMBED_BASE_URL or "http://NITRO-AN51755:11434"

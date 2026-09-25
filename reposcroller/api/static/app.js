@@ -204,7 +204,7 @@ async function loadWorkloadTelemetry(force = false) {
       const pc1ModelsList = document.getElementById("pc1-models-list");
       
       if (pc1Url) pc1Url.textContent = pc1.url;
-      if (pc1Model) pc1Model.textContent = pc1.target_model || "llama3.2:3b";
+      if (pc1Model) pc1Model.textContent = pc1.target_model || "llama3.2:1b";
       
       if (pc1Ping) {
         if (pc1.online) {
@@ -565,7 +565,7 @@ async function switchChatNode(targetNode, targetModel = null) {
     
     if (res.ok) {
       const result = await res.json();
-      const nodeLabel = targetNode === "pc2" ? "PC2 Remote (llama3.1:8b CUDA RTX 3060)" : "PC1 Host (llama3.2:3b CPU)";
+      const nodeLabel = targetNode === "pc2" ? "PC2 Remote (llama3.1:8b CUDA RTX 3060)" : "PC1 Host (llama3.2:1b CPU)";
       showToast(`⚡ api/chat reasoning routed to ${nodeLabel}`, "success", 4000);
       loadWorkloadTelemetry(false);
     } else {

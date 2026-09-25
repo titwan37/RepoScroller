@@ -152,10 +152,12 @@
         <div class="chat-node-switcher" id="chat-node-switcher" title="Switch LLM Reasoning target (api/chat)">
           <span class="switcher-label">api/chat:</span>
           <div class="switcher-toggle-group">
-            <button class="btn-node-toggle active" id="btn-chat-toggle-pc1" onclick="switchChatNode('pc1')" title="Route reasoning to PC1 Host (llama3.2:3b CPU)">
-              💻 PC1 (3B CPU)
+            <button class="btn-node-toggle" id="btn-chat-toggle-pc1" onclick="switchChatNode('pc1')"
+              title="Route reasoning to PC1 Host (llama3.2:1b CPU)">
+              💻 PC1 (1B CPU)
             </button>
-            <button class="btn-node-toggle" id="btn-chat-toggle-pc2" onclick="switchChatNode('pc2')" title="Route reasoning to PC2 Remote Node (llama3.1:8b CUDA RTX 3060)">
+            <button class="btn-node-toggle active" id="btn-chat-toggle-pc2" onclick="switchChatNode('pc2')"
+              title="Route reasoning to PC2 Remote Node (llama3.1:8b CUDA RTX 3060)">
               ⚡ PC2 (8B CUDA)
             </button>
           </div>
@@ -187,14 +189,14 @@
         <div class="node-models-bar">
           <span class="models-label">Loaded:</span>
           <div class="models-tag-list" id="pc1-models-list">
-            <span class="mini-tag">llama3.2:3b</span>
+            <span class="mini-tag">llama3.2:1b</span>
           </div>
         </div>
 
         <div class="node-metrics-row">
           <div class="node-metric-item">
             <span class="node-metric-label">Model (CPU)</span>
-            <span class="node-metric-val" id="pc1-model-name">llama3.2:3b</span>
+            <span class="node-metric-val" id="pc1-model-name">llama3.2:1b</span>
           </div>
           <div class="node-metric-item">
             <span class="node-metric-label">Local Ping</span>
@@ -870,14 +872,17 @@
           <span class="ai-chat-icon">💬</span>
           <div>
             <h2 class="ai-chat-title">GraphRAG-Powered AI Interrogation Assistant</h2>
-            <p class="ai-chat-subtitle">Verified multi-document reasoning grounded in vector embeddings, knowledge graph entities, and ALCOA+ ledger records via llama3.2 on PC1.</p>
+            <p class="ai-chat-subtitle">Verified multi-document reasoning grounded in vector embeddings, knowledge graph entities,
+              and ALCOA+ ledger records via the selected reasoning node.</p>
           </div>
         </div>
         <div class="ai-chat-badges">
           <span class="badge-pill-chat">🧠 GraphRAG Grounded</span>
           <div class="chat-workspace-switcher" title="Select Reasoning Node for AI Interrogation">
-            <button class="chat-pill-toggle active" id="chat-ws-toggle-pc1" onclick="switchChatNode('pc1')">💻 PC1 (llama3.2:3b CPU)</button>
-            <button class="chat-pill-toggle" id="chat-ws-toggle-pc2" onclick="switchChatNode('pc2')">⚡ PC2 (llama3.1:8b CUDA)</button>
+            <button class="chat-pill-toggle" id="chat-ws-toggle-pc1" onclick="switchChatNode('pc1')">💻 PC1 (llama3.2:1b
+              CPU)</button>
+            <button class="chat-pill-toggle active" id="chat-ws-toggle-pc2" onclick="switchChatNode('pc2')">⚡ PC2 (llama3.1:8b
+              CUDA)</button>
           </div>
         </div>
       </div>
