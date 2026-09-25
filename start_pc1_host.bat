@@ -5,7 +5,7 @@ echo    RepoScroller - PC1 Host Launcher (LAN CUDA Acceleration)
 echo ================================================================
 echo.
 
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0launch_pc1_host.ps1" %*
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0start_pc1_host.ps1" %*
 
 if %ERRORLEVEL% NEQ 0 (
     echo.
