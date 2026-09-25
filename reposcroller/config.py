@@ -88,7 +88,7 @@ class Settings(BaseSettings):
     OPENROUTER_MODEL: str = "google/gemini-2.0-flash-001"
     OLLAMA_MODEL: str = "llama3.2:1b"
     OLLAMA_MODEL_PC1: str = "llama3.2:1b"
-    OLLAMA_MODEL_PC2: str = "llama3.1:8b"
+    OLLAMA_MODEL_PC2: str = "llama3.2:3b"
 
     # Dense Vector Embeddings & Knowledge Base Sidecar Settings
     EMBEDDING_PROVIDER: str = "auto"  # 'auto', 'ollama', 'openrouter', or 'mock'

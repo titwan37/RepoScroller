@@ -96,6 +96,9 @@ try {
         model      = $Model
         input      = "RepoScroller sovereign LAN CUDA embedding node warm-up probe"
         keep_alive = "24h"
+        options    = @{
+            num_ctx = 2048
+        }
     } | ConvertTo-Json
     
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
@@ -121,6 +124,9 @@ try {
         )
         keep_alive = "24h"
         stream     = $false
+        options    = @{
+            num_ctx = 2048
+        }
     } | ConvertTo-Json -Depth 5
 
     $sw = [System.Diagnostics.Stopwatch]::StartNew()

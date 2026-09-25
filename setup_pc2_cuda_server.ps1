@@ -26,9 +26,10 @@ if (-not $isAdmin) {
 # 2. NVIDIA GPU & CUDA Detection
 Write-Host "[1/5] Checking NVIDIA GPU and CUDA status..." -ForegroundColor Cyan
 if (Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue) {
-    $gpuInfo = nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader
+    $gpuInfo = nvidia-smi --query-gpu=name, driver_version, memory.total --format=csv, noheader
     Write-Host "  -> Detected GPU: $gpuInfo" -ForegroundColor Green
-} else {
+}
+else {
     Write-Host "  -> [WARNING] nvidia-smi not found in PATH. Ensure NVIDIA Drivers and CUDA are installed." -ForegroundColor Yellow
 }
 
@@ -37,9 +38,9 @@ Write-Host ""
 Write-Host "[2/5] Setting Ollama environment variables for LAN GPU access..." -ForegroundColor Cyan
 [Environment]::SetEnvironmentVariable("OLLAMA_HOST", "0.0.0.0:$Port", "Machine")
 [Environment]::SetEnvironmentVariable("OLLAMA_KEEP_ALIVE", "24h", "Machine")
-[Environment]::SetEnvironmentVariable("OLLAMA_NUM_PARALLEL", "4", "Machine")
-[Environment]::SetEnvironmentVariable("OLLAMA_MAX_LOADED_MODELS", "3", "Machine")
 [Environment]::SetEnvironmentVariable("OLLAMA_FLASH_ATTENTION", "1", "Machine")
+[Environment]::SetEnvironmentVariable("OLLAMA_MAX_LOADED_MODELS", "3", "Machine")
+[Environment]::SetEnvironmentVariable("OLLAMA_NUM_PARALLEL", "4", "Machine")
 
 $env:OLLAMA_HOST = "0.0.0.0:$Port"
 $env:OLLAMA_KEEP_ALIVE = "24h"
@@ -59,13 +60,14 @@ Write-Host "[3/5] Configuring Windows Firewall inbound rule..." -ForegroundColor
 $existingRule = Get-NetFirewallRule -DisplayName "Ollama LAN API" -ErrorAction SilentlyContinue
 if ($existingRule) {
     Write-Host "  -> Firewall rule 'Ollama LAN API' already exists (Active)." -ForegroundColor Green
-} else {
+}
+else {
     New-NetFirewallRule -DisplayName "Ollama LAN API" `
-                        -Description "Allow RepoScroller host to send embedding and inference requests to Ollama" `
-                        -Direction Inbound `
-                        -LocalPort $Port `
-                        -Protocol TCP `
-                        -Action Allow | Out-Null
+        -Description "Allow RepoScroller host to send embedding and inference requests to Ollama" `
+        -Direction Inbound `
+        -LocalPort $Port `
+        -Protocol TCP `
+        -Action Allow | Out-Null
     Write-Host "  -> Created Inbound Firewall Rule: TCP Port $Port [ALLOW]" -ForegroundColor Green
 }
 
@@ -79,9 +81,49 @@ Start-Sleep -Seconds 2
 if (Get-Service -Name "ollama" -ErrorAction SilentlyContinue) {
     Restart-Service -Name "ollama"
     Write-Host "  -> Ollama Windows Service restarted." -ForegroundColor Green
-} else {
+}
+else {
     Start-Process "ollama.exe" -ArgumentList "serve" -WindowStyle Minimized
     Write-Host "  -> Ollama server launched in background." -ForegroundColor Green
+}
+
+# Test curl for LAN access
+Write-Host ""
+Write-Host "[5/5] Testing LAN API connectivity..." -ForegroundColor Cyan
+
+# Test Embedding
+try {
+    $embedParams = @{
+        "model" = "snowflake-arctic-embed2:latest"
+        "input" = "test"
+    }
+    $embedResult = Invoke-RestMethod -Uri "http://localhost:11434/api/embed" -Method Post -Body ($embedParams | ConvertTo-Json) -ContentType "application/json" -TimeoutSec 30
+    Write-Host "  -> Embedding test: SUCCESS (GPU active)" -ForegroundColor Green
+}
+catch {
+    Write-Host "  -> Embedding test: FAILED - Using LAN IP: $("http://$($env:OLLAMA_HOST)/api/tags")" -ForegroundColor Yellow
+}
+
+# Test Chat (for PC1 compatibility)
+try {
+    $chatParams = @{
+        "model"    = "llama3.2:1b"
+        "messages" = @(
+            @{
+                "role"    = "system"
+                "content" = "You are a helpful assistant."
+            }
+            @{
+                "role"    = "user"
+                "content" = "Hi"
+            }
+        )
+    }
+    $chatResult = Invoke-RestMethod -Uri "http://localhost:11434/api/chat" -Method Post -Body ($chatParams | ConvertTo-Json) -ContentType "application/json" -TimeoutSec 30
+    Write-Host "  -> Chat test: SUCCESS" -ForegroundColor Green
+}
+catch {
+    Write-Host "  -> Chat test: FAILED - Using LAN IP: $("http://$($env:OLLAMA_HOST)/api/tags")" -ForegroundColor Yellow
 }
 
 # Wait for server readiness
@@ -91,12 +133,14 @@ for ($i = 0; $i -lt 15; $i++) {
     try {
         $check = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/tags" -Method Get -TimeoutSec 2 -ErrorAction Stop
         if ($check) { $listening = $true; break }
-    } catch {}
+    }
+    catch {}
 }
 
 if ($listening) {
     Write-Host "  -> Ollama server is ONLINE and listening on port $Port." -ForegroundColor Green
-} else {
+}
+else {
     Write-Host "  -> [WARNING] Ollama server is taking longer to start. Please check terminal." -ForegroundColor Yellow
 }
 

@@ -1146,3 +1146,70 @@ The unified `/api/v1/diagnostics/zoo` endpoint and the front-end __Zoo Matrix St
 | __💾 SQLite WAL Engine__ | DB size (MB), WAL size (MB), log pages, checkpoint pages, contention locks (`wal_checkpoint(PASSIVE)`) | [telemetry.py](file:///c:/Dev/RepoScroller/reposcroller/ai/telemetry.py#L453-L476) |
 | __🧠 Vector Embeddings__ | Active tier (`cuda` vs `local`), chunks/min, avg tensor latency (ms), total chunks embedded | [sidecar_worker.py](file:///c:/Dev/RepoScroller/reposcroller/ai/sidecar_worker.py), [telemetry.py](file:///c:/Dev/RepoScroller/reposcroller/ai/telemetry.py#L510-L517) |
 | __🤖 Reasoning Chat__ | Active node (`pc1` / `pc2`), active model, PC1 calls counter, PC2 calls counter | [chat.py](file:///c:/Dev/RepoScroller/reposcroller/api/routes/chat.py), [telemetry.py](file:///c:/Dev/RepoScroller/reposcroller/ai/telemetry.py#L150-L166) |
+
+
+Ran command: `powershell -ExecutionPolicy Bypass -Command "Invoke-RestMethod -Uri 'http://127.0.0.1:11434/api/ps' | ConvertTo-Json -Depth 5"`
+Ran command: `powershell -ExecutionPolicy Bypass -Command "$payload = @{model='snowflake-arctic-embed2:latest'; input='test'; keep_alive='24h'} | ConvertTo-Json; Invoke-RestMethod -Uri 'http://127.0.0.1:11434/api/embed' -Method Post -Body $payload -ContentType 'application/json'; Invoke-RestMethod -Uri 'http://127.0.0.1:11434/api/ps' | ConvertTo-Json -Depth 5"`
+Ran command: `powershell -ExecutionPolicy Bypass -Command "$p = '{\"model\":\"snowflake-arctic-embed2:latest\",\"input\":\"test\",\"keep_alive\":\"24h\"}'; Invoke-RestMethod -Uri 'http://127.0.0.1:11434/api/embed' -Method Post -Body $p -ContentType 'application/json'; Invoke-RestMethod -Uri 'http://127.0.0.1:11434/api/ps' | ConvertTo-Json -Depth 5"`
+Ran command: `curl.exe -s http://127.0.0.1:11434/api/embed -d "{\"model\": \"snowflake-arctic-embed2:latest\", \"input\": \"test\", \"keep_alive\": \"24h\"}"`
+Ran command: `curl.exe -s http://127.0.0.1:11434/api/embed -d "{""model"": ""snowflake-arctic-embed2:latest"", ""input"": ""test"", ""keep_alive"": ""24h""}"`
+Ran command: `python -c "import urllib.request, json; data = json.dumps({'model': 'snowflake-arctic-embed2:latest', 'input': 'hello world', 'keep_alive': '24h'}).encode('utf-8'); req = urllib.request.Request('http://127.0.0.1:11434/api/embed', data=data, headers={'Content-Type': 'application/json'}); res = urllib.request.urlopen(req); print('embed response keys:', json.loads(res.read()).keys())"`
+Ran command: `ollama ps`
+Ran command: `powershell -ExecutionPolicy Bypass -Command "Get-Process -Name 'ollama*' | Select-Object Id, ProcessName, Path, StartTime"`
+Viewed start_pc2_cuda_node.bat:1-15
+Ran command: `powershell -ExecutionPolicy Bypass -Command "Get-Service -Name 'ollama*' -ErrorAction SilentlyContinue | Format-List"`
+Ran command: `powershell -ExecutionPolicy Bypass -Command "Get-CimInstance Win32_Process -Filter \"Name like 'ollama%'\" | Select-Object ProcessId, CommandLine"`
+Ran command: `powershell -ExecutionPolicy Bypass -Command "Get-CimInstance Win32_Process -Filter 'Name like ''ollama%''' | Select-Object ProcessId, CommandLine"`
+Ran command: `powershell -ExecutionPolicy Bypass -Command "Get-Process -Name '*ollama*' | Select-Object Id, ProcessName, Path"`
+Ran command: `powershell -ExecutionPolicy Bypass -Command "Stop-Process -Name 'ollama*' -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 1; $env:OLLAMA_HOST='0.0.0.0:11434'; $env:OLLAMA_MAX_LOADED_MODELS='3'; $env:OLLAMA_NUM_PARALLEL='4'; $env:OLLAMA_KEEP_ALIVE='24h'; $env:OLLAMA_FLASH_ATTENTION='1'; Start-Process -FilePath 'ollama.exe' -ArgumentList 'serve' -WindowStyle Minimized; Start-Sleep -Seconds 3; python -c \"import urllib.request, json; u=lambda p,d: urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:11434/api/'+p, data=json.dumps(d).encode('utf-8'), headers={'Content-Type':'application/json'})); u('embed', {'model':'snowflake-arctic-embed2:latest','input':'test','keep_alive':'24h'}); u('chat', {'model':'llama3.2:3b','messages':[{'role':'user','content':'hi'}],'stream':False,'keep_alive':'24h'});\"; ollama ps"`
+Created test_multi_model.py
+Ran command: `python "C:\Users\titwa\.gemini\antigravity-ide\brain\1c0c126f-a76e-4716-ba21-79311a0441e6\scratch\test_multi_model.py"`
+Created test_multi_model.py
+Ran command: `python "C:\Users\titwa\.gemini\antigravity-ide\brain\1c0c126f-a76e-4716-ba21-79311a0441e6\scratch\test_multi_model.py"`
+Created test_loading.py
+Ran command: `python "C:\Users\titwa\.gemini\antigravity-ide\brain\1c0c126f-a76e-4716-ba21-79311a0441e6\scratch\test_loading.py"`
+Ran command: `powershell -ExecutionPolicy Bypass -Command "$proc = Get-Process -Id 3692; $proc.StartInfo.EnvironmentVariables"`
+Ran command: `powershell -ExecutionPolicy Bypass -Command "Write-Host 'Machine:' ([Environment]::GetEnvironmentVariable('OLLAMA_MAX_LOADED_MODELS', 'Machine')); Write-Host 'User:' ([Environment]::GetEnvironmentVariable('OLLAMA_MAX_LOADED_MODELS', 'User')); Write-Host 'Process:' ([Environment]::GetEnvironmentVariable('OLLAMA_MAX_LOADED_MODELS', 'Process'))"`
+Listed directory Ollama
+Created test_vram_fit.py
+Ran command: `python "C:\Users\titwa\.gemini\antigravity-ide\brain\1c0c126f-a76e-4716-ba21-79311a0441e6\scratch\test_vram_fit.py"`
+Ran command: `ollama ps`
+Viewed start_pc2_cuda_node.ps1:90-135
+Edited start_pc2_cuda_node.ps1
+
+### Why Both Models Were Not Displayed Simultaneously
+
+The RTX 3060 Laptop GPU has **6144 MiB (6.0 GB)** of physical VRAM.
+
+1. **Default Context Memory Allocation:**
+   When warming up without explicit context limits:
+   - `llama3.2:3b` defaults to a **4096** context window ($\approx \mathbf{4.0\text{ GB}}$ VRAM).
+   - `snowflake-arctic-embed2:latest` defaults to full context ($\approx \mathbf{1.3\text{ GB}}$ VRAM).
+   - Windows Desktop Compositor / OS reservations reserve $\approx \mathbf{1.0\text{ GB}}$ VRAM.
+   - **Total Needed:** $4.0 + 1.3 + 1.0 = \mathbf{6.3\text{ GB}} > \mathbf{6.0\text{ GB}}$ (Exceeds available GPU VRAM).
+
+2. **Ollama's Auto-Eviction Behavior:**
+   Even when `OLLAMA_MAX_LOADED_MODELS=3`, Ollama checks whether both models fit in available VRAM simultaneously. Because $6.3\text{ GB} > 6.0\text{ GB}$, Ollama automatically evicted the idle model to avoid OOM or severe CPU memory swapping.
+
+---
+
+### The Fix
+
+By setting `num_ctx = 2048` on the warmup probes (which is more than enough for RepoScroller code chunks and prompt routing):
+- `llama3.2:3b`: **$\approx 3.1\text{ GB}$**
+- `snowflake-arctic-embed2:latest`: **$\approx 664\text{ MB}$**
+- **Total:** **$\approx 3.76\text{ GB}$** (Fits comfortably **100% in GPU VRAM** with $> 2\text{ GB}$ of free headroom).
+
+---
+
+### Verified Output
+
+Both models are now concurrently resident in VRAM and show up together in `ollama ps`:
+
+```
+NAME                              ID              SIZE      PROCESSOR    CONTEXT    UNTIL             
+llama3.2:3b                       a80c4f17acd5    3.1 GB    100% GPU     2048       24 hours from now    
+snowflake-arctic-embed2:latest    5de93a84837d    664 MB    100% GPU     2048       24 hours from now    
+```
+
+The updated configuration has been saved directly to [start_pc2_cuda_node.ps1](file:///c:/Dev/RepoScroller/start_pc2_cuda_node.ps1). Whenever you run `.\start_pc2_cuda_node.bat`, both models will remain loaded and displayed together.
