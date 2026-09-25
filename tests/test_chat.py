@@ -1,6 +1,7 @@
 """Integration and unit tests for conversational interrogation and chat endpoints."""
 
 import pytest
+import requests
 from pathlib import Path
 from fastapi.testclient import TestClient
 from reposcroller.api.app import app
@@ -122,3 +123,68 @@ def test_chat_stream_endpoint(client: TestClient, sample_files):
     assert "text/event-stream" in resp.headers["content-type"]
     assert "data:" in resp.text
     assert "active_doc" in resp.text
+
+
+def question_documents():
+    from reposcroller.ledger.repository import DocumentRepository
+    from reposcroller.agents.duplicate_agent import DuplicateResolverAgent
+
+    repo = DocumentRepository()
+    cur = repo.conn.cursor()
+    cur.execute('SELECT sha256_hash, canonical_filename FROM document_ledger WHERE canonical_filename LIKE ? LIMIT 1', ('%UrgentCall%',))
+    row = cur.fetchone()
+    print('Found document:', row)
+    if row:
+        sha = row[0]
+        agent = DuplicateResolverAgent(repo)
+        r1 = agent.interrogate(query='what was the urgency?', sha256_hash=sha)
+        print('\n=== Answer for what was the urgency? ===')
+        print('Category:', r1.get('status_category'))
+        print(r1.get('answer'))
+        assert 'urgency' in r1.get('answer')
+
+        r2 = agent.interrogate(query='what this document is about?', sha256_hash=sha)
+        print('\n=== Answer for what this document is about? ===')
+        print('Category:', r2.get('status_category'))
+        print(r2.get('answer'))
+        assert 'urgency' in r2.get('answer')
+
+def question_documents_with_answer():
+
+    from reposcroller.agents.duplicate_agent import DuplicateResolverAgent
+    agent = DuplicateResolverAgent()
+    res = agent.interrogate(query='what was the urgency?', sha256_hash='1098791239d021af7ea6be59d295dcd0546fad381e93320ace8d58249f6a441f')
+    print('CATEGORY:', res['status_category'])
+    print('ANSWER:', res['answer'])
+    assert "urgency" in res["answer"]
+    assert res["status_category"] == "DOCUMENT_QA"
+
+    # 1. Ask a question about an active/known document by SHA-256:
+    res = agent.interrogate(query="what was the urgency?", sha256_hash="<document_sha256>")
+    print(res["answer"])
+    assert "urgency" in res["answer"]
+
+    # 2. Or query directly across the repository:
+    res = agent.interrogate(query='what was the urgency in "UrgentCall_2027.pdf"?')
+    print(res["answer"])
+    assert "urgency" in res["answer"]
+
+
+def question_documents_with_answer2():
+    url = "http://127.0.0.1:8090/api/v1/chat/interrogate" 
+    query = '{"query": "what is this document about?", "sha256_hash": "1098791239d021af7ea6be59d295dcd0546fad381e93320ace8d58249f6a441f"}'
+    headers = {'Content-Type': 'application/json'}
+    resp = requests.post(url, data=query, headers=headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "2027-07-24" in data["answer"]
+    assert data["status_category"] == "DOCUMENT_QA"
+
+def get_documents_with_answer2():
+    from reposcroller.ledger.repository import DocumentRepository
+    repo = DocumentRepository()
+    doc2 = repo.get_document_by_sha256('1098791239d021af7ea6be59d295dcd0546fad381e93320ace8d58249f6a441f') 
+    print('doc2:', doc2['canonical_filename'] if doc2 else None, doc2['doc_date'] if doc2 else None)
+    assert doc2 is not None
+    assert doc2['canonical_filename'] == '2027_0724_UrgentCall_HAYS_PrintReady.pdf'
+    assert doc2['doc_date'] == '2027-07-24'

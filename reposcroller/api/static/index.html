@@ -93,6 +93,14 @@
           <div id="metric-lineage" class="metric-value text-cyan">--</div>
           <div class="metric-sub">Evolved & draft chains</div>
         </div>
+        <div class="metric-card metric-interactive" id="card-kb-metric" onclick="switchTab('graph')" title="Click to inspect Snowflake Arctic Vectors & Property Graph">
+          <div class="metric-header-row">
+            <div class="metric-label">🧠 Knowledge Base</div>
+            <span id="kb-status-dot" class="badge-filter-active" style="background: rgba(99,102,241,0.2); color: var(--accent-primary);">Active</span>
+          </div>
+          <div id="metric-kb-chunks" class="metric-value text-indigo">--</div>
+          <div class="metric-sub" id="metric-kb-sub">Vectors & Graph Nodes</div>
+        </div>
       </section>
 
 
@@ -168,6 +176,7 @@
       <div class="tabs-header">
         <button id="tab-btn-detail" class="tab-btn active" onclick="switchTab('detail')">Lineage Detail</button>
         <button id="tab-btn-chat" class="tab-btn" onclick="switchTab('chat')">AI Interrogation</button>
+        <button id="tab-btn-graph" class="tab-btn" onclick="switchTab('graph')">Knowledge Base & Graph</button>
       </div>
 
       <!-- Tab 1: Document Detail & Lineage -->
@@ -209,6 +218,114 @@
           <div class="chat-input-row">
             <input type="text" id="chat-input" placeholder="Ask about any document copy..." onkeydown="if(event.key==='Enter') sendChatMessage()">
             <button id="btn-send-chat" class="btn btn-primary" onclick="sendChatMessage()">Send</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab 3: Knowledge Base & Property Graph Explorer -->
+      <div id="tab-graph" class="tab-content">
+        <div class="kb-container">
+          <!-- Sidecar & Queue Status Card -->
+          <div class="kb-card">
+            <div class="kb-card-header">
+              <div class="kb-card-title">
+                <span>⚡ Sidecar Indexing Pipeline</span>
+                <span id="kb-engine-tag" class="kb-engine-badge">snowflake-arctic-embed:latest</span>
+              </div>
+              <button id="btn-kb-refresh" class="btn btn-outline btn-xs" onclick="loadSidecarStats()" title="Refresh Sidecar Stats">🔄</button>
+            </div>
+
+            <!-- Queue Progress Track -->
+            <div class="kb-progress-section">
+              <div class="kb-progress-labels">
+                <span class="kb-progress-label-main">Ingestion Progress</span>
+                <span id="kb-progress-pct" class="kb-progress-pct">0%</span>
+              </div>
+              <div class="kb-progress-bar-multi">
+                <div id="kb-bar-completed" class="kb-bar-seg seg-completed" style="width: 0%;" title="Completed"></div>
+                <div id="kb-bar-processing" class="kb-bar-seg seg-processing" style="width: 0%;" title="Processing"></div>
+                <div id="kb-bar-pending" class="kb-bar-seg seg-pending" style="width: 0%;" title="Pending"></div>
+                <div id="kb-bar-failed" class="kb-bar-seg seg-failed" style="width: 0%;" title="Failed"></div>
+              </div>
+              <div class="kb-queue-legend">
+                <span class="legend-item"><span class="dot dot-completed"></span> Completed: <strong id="kb-stat-completed">0</strong></span>
+                <span class="legend-item"><span class="dot dot-processing"></span> Active: <strong id="kb-stat-processing">0</strong></span>
+                <span class="legend-item"><span class="dot dot-pending"></span> Queue: <strong id="kb-stat-pending">0</strong></span>
+                <span class="legend-item"><span class="dot dot-failed"></span> Failed: <strong id="kb-stat-failed">0</strong></span>
+              </div>
+            </div>
+
+            <!-- Vector & Chunks Metrics -->
+            <div class="kb-metrics-mini">
+              <div class="kb-mini-stat">
+                <span class="kb-stat-num" id="kb-stat-chunks">0</span>
+                <span class="kb-stat-lbl">Chunks Embedded</span>
+              </div>
+              <div class="kb-mini-stat">
+                <span class="kb-stat-num" id="kb-stat-docs-chunked">0</span>
+                <span class="kb-stat-lbl">Docs Processed</span>
+              </div>
+              <div class="kb-mini-stat">
+                <button id="btn-trigger-batch" class="btn btn-primary btn-xs" onclick="triggerSidecarBatch()" title="Trigger immediate processing of pending documents">
+                  ▶ Process Batch
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Property Graph Knowledge Topology Card -->
+          <div class="kb-card">
+            <div class="kb-card-header">
+              <div class="kb-card-title">
+                <span>🕸️ Property Knowledge Graph</span>
+                <span class="kb-engine-badge" style="background: rgba(16,185,129,0.15); color: var(--accent-emerald);">Hybrid Neo4j/SQLite</span>
+              </div>
+            </div>
+
+            <div class="kb-graph-summary">
+              <div class="kb-graph-metric">
+                <span class="kb-graph-val" id="kb-graph-nodes">0</span>
+                <span class="kb-graph-lbl">Entities (Nodes)</span>
+              </div>
+              <div class="kb-graph-metric">
+                <span class="kb-graph-val" id="kb-graph-edges">0</span>
+                <span class="kb-graph-lbl">Relations (Edges)</span>
+              </div>
+              <div class="kb-graph-metric">
+                <span class="kb-graph-val" id="kb-graph-doclinks">0</span>
+                <span class="kb-graph-lbl">Document Links</span>
+              </div>
+            </div>
+
+            <div class="kb-nodetypes-wrap">
+              <div class="kb-sub-title">Entity Distribution</div>
+              <div id="kb-nodetypes-list" class="kb-chips-row">
+                <span class="chip" style="font-size: 0.72rem;">Loading entities...</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Interactive GraphRAG Explorer Card -->
+          <div class="kb-card kb-card-grow">
+            <div class="kb-card-header">
+              <div class="kb-card-title">
+                <span>🔍 Multi-Signal GraphRAG Explorer</span>
+              </div>
+            </div>
+            <p class="kb-desc-text">Performs dense vector retrieval + BM25 keyword matching + 1-hop graph neighborhood expansion with Reciprocal Rank Fusion (RRF).</p>
+            
+            <div class="kb-search-row">
+              <input type="text" id="kb-rag-input" placeholder="Query knowledge base (e.g. contrat, decision, acme)..." onkeydown="if(event.key==='Enter') executeGraphRAGSearch()">
+              <button id="btn-graphrag-search" class="btn btn-primary" onclick="executeGraphRAGSearch()">Search</button>
+            </div>
+
+            <!-- GraphRAG Results Container -->
+            <div id="kb-rag-results" class="kb-rag-results">
+              <div class="empty-state" style="padding: 1.5rem 0.5rem;">
+                <div class="empty-icon" style="font-size: 1.6rem;">🔬</div>
+                <div class="empty-text" style="font-size: 0.8rem;">Enter a query above to test real-time hybrid GraphRAG signals.</div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -300,6 +417,6 @@
     </div>
   </div>
   
-  <script src="/static/app.js?v=6"></script>
+  <script src="/static/app.js?v=7"></script>
 </body>
 </html>

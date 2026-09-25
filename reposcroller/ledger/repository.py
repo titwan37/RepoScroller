@@ -512,3 +512,141 @@ class DocumentRepository:
                 "lifecycle_breakdown": status_counts,
                 "storage_root_breakdown": root_counts,
             }
+
+    # ---------------------------------------------------------
+    # Knowledge Base Sidecar Queue & Document Chunks Methods
+    # ---------------------------------------------------------
+
+    def enqueue_kb_processing(self, sha256_hash: str) -> None:
+        """Enqueue a document SHA-256 for asynchronous KB chunking and embedding."""
+        with self._lock:
+            cur = self.conn.cursor()
+            cur.execute("""
+                INSERT INTO kb_processing_queue (sha256_hash, status, retry_count, enqueued_at)
+                VALUES (?, 'pending', 0, CURRENT_TIMESTAMP)
+                ON CONFLICT(sha256_hash) DO UPDATE SET
+                    status = CASE WHEN status = 'failed' THEN 'pending' ELSE status END,
+                    enqueued_at = CURRENT_TIMESTAMP;
+            """, (sha256_hash,))
+            self.conn.commit()
+
+    def fetch_pending_kb_queue(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """Fetch pending items from the KB queue and mark them as processing."""
+        with self._lock:
+            cur = self.conn.cursor()
+            cur.execute("""
+                SELECT q.queue_id, q.sha256_hash, q.retry_count, dl.canonical_filename, dl.doc_type,
+                       dl.doc_date, dl.doc_date_source, dl.maturity_score, dl.lifecycle_status, dl.text_snippet
+                FROM kb_processing_queue q
+                JOIN document_ledger dl ON q.sha256_hash = dl.sha256_hash
+                WHERE q.status = 'pending'
+                ORDER BY q.enqueued_at ASC
+                LIMIT ?;
+            """, (limit,))
+            rows = cur.fetchall()
+            results = [dict(r) for r in rows]
+
+            if results:
+                sha_list = [r["sha256_hash"] for r in results]
+                placeholders = ",".join(["?"] * len(sha_list))
+                cur.execute(f"""
+                    UPDATE kb_processing_queue
+                    SET status = 'processing'
+                    WHERE sha256_hash IN ({placeholders});
+                """, tuple(sha_list))
+                self.conn.commit()
+
+            return results
+
+    def mark_kb_queue_status(self, sha256_hash: str, status: str, error_message: Optional[str] = None) -> None:
+        """Update the processing status of a queued document."""
+        with self._lock:
+            cur = self.conn.cursor()
+            if status == "completed":
+                cur.execute("""
+                    UPDATE kb_processing_queue
+                    SET status = 'completed', error_message = NULL, processed_at = CURRENT_TIMESTAMP
+                    WHERE sha256_hash = ?;
+                """, (sha256_hash,))
+            elif status == "failed":
+                cur.execute("""
+                    UPDATE kb_processing_queue
+                    SET status = 'failed', retry_count = retry_count + 1, error_message = ?, processed_at = CURRENT_TIMESTAMP
+                    WHERE sha256_hash = ?;
+                """, (error_message, sha256_hash))
+            else:
+                cur.execute("""
+                    UPDATE kb_processing_queue
+                    SET status = ?, error_message = ?
+                    WHERE sha256_hash = ?;
+                """, (status, error_message, sha256_hash))
+            self.conn.commit()
+
+    def save_document_chunks(self, sha256_hash: str, chunks: List[Dict[str, Any]]) -> None:
+        """Persist dense semantic chunks with embeddings into SQLite."""
+        import json
+        with self._lock:
+            cur = self.conn.cursor()
+            # Remove any prior chunks for this SHA
+            cur.execute("DELETE FROM document_chunks WHERE sha256_hash = ?", (sha256_hash,))
+
+            for idx, c in enumerate(chunks):
+                chunk_id = f"{sha256_hash}_{idx}"
+                emb_json = json.dumps(c.get("embedding")) if c.get("embedding") is not None else None
+                cur.execute("""
+                    INSERT INTO document_chunks (chunk_id, sha256_hash, chunk_index, chunk_text, token_count, embedding_json)
+                    VALUES (?, ?, ?, ?, ?, ?);
+                """, (
+                    chunk_id,
+                    sha256_hash,
+                    idx,
+                    c["chunk_text"],
+                    c.get("token_count", len(c["chunk_text"].split())),
+                    emb_json,
+                ))
+            self.conn.commit()
+
+    def get_document_chunks(self, sha256_hash: str) -> List[Dict[str, Any]]:
+        """Retrieve all persisted chunks for a specific document."""
+        import json
+        with self._lock:
+            cur = self.conn.cursor()
+            cur.execute("""
+                SELECT chunk_id, sha256_hash, chunk_index, chunk_text, token_count, embedding_json, created_at
+                FROM document_chunks
+                WHERE sha256_hash = ?
+                ORDER BY chunk_index ASC;
+            """, (sha256_hash,))
+            rows = cur.fetchall()
+            results = []
+            for r in rows:
+                d = dict(r)
+                if d.get("embedding_json"):
+                    try:
+                        d["embedding"] = json.loads(d["embedding_json"])
+                    except Exception:
+                        d["embedding"] = None
+                results.append(d)
+            return results
+
+    def get_kb_queue_stats(self) -> Dict[str, Any]:
+        """Aggregate statistics for the Knowledge Base processing queue and indexed chunks."""
+        with self._lock:
+            cur = self.conn.cursor()
+            cur.execute("SELECT status, COUNT(*) FROM kb_processing_queue GROUP BY status")
+            queue_counts = dict(cur.fetchall())
+
+            cur.execute("SELECT COUNT(*), COUNT(DISTINCT sha256_hash) FROM document_chunks")
+            row = cur.fetchone()
+            total_chunks = row[0] if row else 0
+            chunked_docs = row[1] if row else 0
+
+            return {
+                "pending": queue_counts.get("pending", 0),
+                "processing": queue_counts.get("processing", 0),
+                "completed": queue_counts.get("completed", 0),
+                "failed": queue_counts.get("failed", 0),
+                "total_chunks_indexed": total_chunks,
+                "total_documents_chunked": chunked_docs,
+            }
+

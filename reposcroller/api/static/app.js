@@ -126,14 +126,16 @@ async function initDashboard() {
     checkBackendHealth(),
     loadMountsAndCrawlerStatus(),
     loadMetrics(),
+    loadSidecarStats(),
     loadTaxonomyCategories(),
     loadLedger()
   ]);
 
-  // Periodic refresh for metrics
+  // Periodic refresh for metrics and sidecar queue
   setInterval(() => {
     loadMetrics();
-  }, 10000);
+    loadSidecarStats();
+  }, 5000);
 }
 
 // 1. Backend Health Check
@@ -215,7 +217,7 @@ async function triggerScan() {
     const summary = await res.json();
     const workersMsg = summary.parallel_workers ? ` (${summary.parallel_workers} parallel workers)` : "";
     showToast(`Scan complete${workersMsg}: ${summary.total_ingested} ingested, ${summary.total_duplicates_found} duplicates`, "success", 5000);
-    await Promise.all([loadMetrics(), loadLedger()]);
+    await Promise.all([loadMetrics(), loadLedger(), loadSidecarStats()]);
   } catch (err) {
     showToast("Scan failed: " + err, "error");
   } finally {
@@ -224,7 +226,7 @@ async function triggerScan() {
   }
 }
 
-// 3. Metrics
+// 3. Metrics & Knowledge Base Stats
 async function loadMetrics() {
   try {
     const res = await fetch("/api/v1/documents/stats");
@@ -1021,10 +1023,224 @@ function clearChatDocumentContext() {
 }
 
 function switchTab(tab) {
-  document.getElementById("tab-btn-detail").classList.toggle("active", tab === "detail");
-  document.getElementById("tab-btn-chat").classList.toggle("active", tab === "chat");
-  document.getElementById("tab-detail").classList.toggle("active", tab === "detail");
-  document.getElementById("tab-chat").classList.toggle("active", tab === "chat");
+  const btnDetail = document.getElementById("tab-btn-detail");
+  const btnChat = document.getElementById("tab-btn-chat");
+  const btnGraph = document.getElementById("tab-btn-graph");
+  const tabDetail = document.getElementById("tab-detail");
+  const tabChat = document.getElementById("tab-chat");
+  const tabGraph = document.getElementById("tab-graph");
+
+  if (btnDetail) btnDetail.classList.toggle("active", tab === "detail");
+  if (btnChat) btnChat.classList.toggle("active", tab === "chat");
+  if (btnGraph) btnGraph.classList.toggle("active", tab === "graph");
+  if (tabDetail) tabDetail.classList.toggle("active", tab === "detail");
+  if (tabChat) tabChat.classList.toggle("active", tab === "chat");
+  if (tabGraph) tabGraph.classList.toggle("active", tab === "graph");
+
+  if (tab === "graph") {
+    loadSidecarStats();
+  }
+}
+
+// ==========================================
+// 12.5 Knowledge Base Sidecar & GraphRAG UI
+// ==========================================
+async function loadSidecarStats() {
+  try {
+    const res = await fetch("/api/v1/sidecar/stats");
+    if (!res.ok) return;
+    const data = await res.json();
+    
+    const q = data.queue || {};
+    const g = data.graph || {};
+
+    const pending = q.pending || 0;
+    const processing = q.processing || 0;
+    const completed = q.completed || 0;
+    const failed = q.failed || 0;
+    const totalChunks = q.total_chunks_indexed || 0;
+    const totalDocsChunked = q.total_documents_chunked || 0;
+
+    const totalQueueItems = pending + processing + completed + failed;
+    const pct = totalQueueItems > 0 ? Math.round(((completed + failed) / totalQueueItems) * 100) : 100;
+
+    // Update Top Metric Card
+    const metricKbChunks = document.getElementById("metric-kb-chunks");
+    if (metricKbChunks) {
+      metricKbChunks.textContent = `${totalChunks} vectors`;
+    }
+    const metricKbSub = document.getElementById("metric-kb-sub");
+    if (metricKbSub) {
+      metricKbSub.textContent = `${g.total_nodes || 0} nodes • ${g.total_edges || 0} edges`;
+    }
+
+    // Update Progress Bars
+    const pctEl = document.getElementById("kb-progress-pct");
+    if (pctEl) pctEl.textContent = `${pct}%`;
+
+    const barCompleted = document.getElementById("kb-bar-completed");
+    const barProcessing = document.getElementById("kb-bar-processing");
+    const barPending = document.getElementById("kb-bar-pending");
+    const barFailed = document.getElementById("kb-bar-failed");
+
+    if (barCompleted && totalQueueItems > 0) {
+      barCompleted.style.width = `${(completed / totalQueueItems) * 100}%`;
+      barProcessing.style.width = `${(processing / totalQueueItems) * 100}%`;
+      barPending.style.width = `${(pending / totalQueueItems) * 100}%`;
+      barFailed.style.width = `${(failed / totalQueueItems) * 100}%`;
+    } else if (barCompleted) {
+      barCompleted.style.width = "100%";
+      barProcessing.style.width = "0%";
+      barPending.style.width = "0%";
+      barFailed.style.width = "0%";
+    }
+
+    // Update Queue Counts
+    const setTxt = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+    setTxt("kb-stat-completed", completed);
+    setTxt("kb-stat-processing", processing);
+    setTxt("kb-stat-pending", pending);
+    setTxt("kb-stat-failed", failed);
+    setTxt("kb-stat-chunks", totalChunks);
+    setTxt("kb-stat-docs-chunked", totalDocsChunked);
+
+    // Update Graph Metrics
+    setTxt("kb-graph-nodes", g.total_nodes || 0);
+    setTxt("kb-graph-edges", g.total_edges || 0);
+    setTxt("kb-graph-doclinks", g.total_document_links || 0);
+
+    // Update Node Types Distribution Chips
+    const nodeTypesWrap = document.getElementById("kb-nodetypes-list");
+    if (nodeTypesWrap && g.node_types) {
+      const typeEntries = Object.entries(g.node_types);
+      if (typeEntries.length === 0) {
+        nodeTypesWrap.innerHTML = `<span class="chip" style="font-size: 0.72rem;">No entity nodes extracted yet</span>`;
+      } else {
+        nodeTypesWrap.innerHTML = typeEntries.map(([type, count]) => {
+          let icon = "🏷️";
+          if (type === "organization") icon = "🏢";
+          else if (type === "person") icon = "👤";
+          else if (type === "contract_type") icon = "📄";
+          else if (type === "location") icon = "📍";
+          return `<span class="kb-type-chip">${icon} <strong>${escapeHtml(type)}</strong>: ${count}</span>`;
+        }).join("");
+      }
+    }
+  } catch (err) {
+    console.error("Failed loading sidecar stats:", err);
+  }
+}
+
+async function triggerSidecarBatch() {
+  const btn = document.getElementById("btn-trigger-batch");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "⏳ Processing...";
+  }
+
+  try {
+    const res = await fetch("/api/v1/sidecar/process", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ limit: 20 })
+    });
+    const data = await res.json();
+    showToast(`Processed ${data.processed_count || 0} queued document(s) into Snowflake Arctic Knowledge Base`, "success", 4000);
+    await loadSidecarStats();
+  } catch (err) {
+    showToast(`Sidecar processing failed: ${err.message}`, "error", 5000);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "▶ Process Batch";
+    }
+  }
+}
+
+async function executeGraphRAGSearch() {
+  const input = document.getElementById("kb-rag-input");
+  const query = (input ? input.value : "").trim();
+  if (!query) {
+    showToast("Please enter a search query", "info");
+    return;
+  }
+
+  const resultsDiv = document.getElementById("kb-rag-results");
+  const btn = document.getElementById("btn-graphrag-search");
+
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Searching...";
+  }
+
+  resultsDiv.innerHTML = `
+    <div class="empty-state" style="padding: 1.5rem 0.5rem;">
+      <div class="empty-icon">⏳</div>
+      <div class="empty-text">Executing Multi-Signal GraphRAG Retrieval (Dense + BM25 + Graph Expansion)...</div>
+    </div>
+  `;
+
+  try {
+    const res = await fetch(`/api/v1/sidecar/graph-rag?query=${encodeURIComponent(query)}&top_k=5&expand_graph_hops=1`);
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => ({}));
+      throw new Error(errJson.detail || `HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    const hits = data.ranked_results || [];
+
+    if (hits.length === 0) {
+      resultsDiv.innerHTML = `
+        <div class="empty-state" style="padding: 1.5rem 0.5rem;">
+          <div class="empty-icon">🔍</div>
+          <div class="empty-text">No relevant knowledge chunks found for "${escapeHtml(query)}".</div>
+        </div>
+      `;
+      return;
+    }
+
+    resultsDiv.innerHTML = hits.map((hit, idx) => {
+      const doc = hit.document || {};
+      const chunk = hit.chunk || {};
+      const signals = hit.signals || {};
+
+      const hasVector = signals.dense_vector_match ? `⚡ Vector (${(signals.vector_similarity * 100).toFixed(1)}%)` : '';
+      const hasBm25 = signals.lexical_fts_match ? `🔍 BM25 Rank #${signals.bm25_rank}` : '';
+      const hasGraph = signals.graph_neighborhood_expansion ? `🕸️ Graph (+${signals.connected_entities_count || 0} entities)` : '';
+
+      const tagsHtml = [hasVector, hasBm25, hasGraph].filter(Boolean).map(t => `<span class="kb-signal-tag">${t}</span>`).join("");
+      const filename = doc.canonical_filename || chunk.canonical_filename || `Document #${idx + 1}`;
+      const sha = doc.sha256_hash || chunk.sha256_hash || "";
+
+      return `
+        <div class="kb-result-card" onclick="${sha ? `selectDocument('${sha}')` : ''}" style="cursor: pointer;" title="Click to view document in ledger">
+          <div class="kb-result-header">
+            <span class="kb-result-title">📄 ${escapeHtml(filename)}</span>
+            <span class="kb-score-badge">RRF Score: ${(hit.composite_score || 0).toFixed(4)}</span>
+          </div>
+          <div class="kb-signals-row">
+            ${tagsHtml}
+          </div>
+          <div class="kb-result-snippet">
+            ${escapeHtml(chunk.chunk_text || doc.text_snippet || 'No text snippet available')}
+          </div>
+        </div>
+      `;
+    }).join("");
+
+  } catch (err) {
+    resultsDiv.innerHTML = `
+      <div class="empty-state text-rose" style="padding: 1rem 0.5rem;">
+        <div class="empty-icon">❌</div>
+        <div class="empty-text">GraphRAG retrieval error: ${escapeHtml(err.message)}</div>
+      </div>
+    `;
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "Search";
+    }
+  }
 }
 
 function sendSuggestion(query) {
@@ -1048,7 +1264,7 @@ function renderMarkdown(md) {
   let text = md.replace(/```([a-zA-Z0-9_\-]*)\n([\s\S]*?)```/g, (match, lang, code) => {
     const idx = codeBlocks.length;
     codeBlocks.push(`<pre class="chat-pre"><code class="chat-code-block">${escapeHtml(code.trim())}</code></pre>`);
-    return `___CODE_BLOCK_${idx}___`;
+    return `@@CODEBLOCK${idx}@@`;
   });
 
   // 2. Separate inline code
@@ -1056,7 +1272,7 @@ function renderMarkdown(md) {
   text = text.replace(/`([^`\n]+)`/g, (match, code) => {
     const idx = inlineCodes.length;
     inlineCodes.push(`<code class="chat-inline-code">${escapeHtml(code)}</code>`);
-    return `___INLINE_CODE_${idx}___`;
+    return `@@INLINECODE${idx}@@`;
   });
 
   // 3. Escape HTML of body text
@@ -1098,7 +1314,7 @@ function renderMarkdown(md) {
   text = blocks.map(b => {
     b = b.trim();
     if (!b) return "";
-    if (b.startsWith("<h") || b.startsWith("<ul") || b.startsWith("<ol") || b.startsWith("<blockquote") || b.startsWith("<pre") || b.startsWith("<hr") || b.startsWith("___CODE_BLOCK_")) {
+    if (b.startsWith("<h") || b.startsWith("<ul") || b.startsWith("<ol") || b.startsWith("<blockquote") || b.startsWith("<pre") || b.startsWith("<hr") || b.startsWith("@@CODEBLOCK")) {
       return b;
     }
     return `<p>${b.replace(/\n/g, '<br>')}</p>`;
@@ -1106,12 +1322,12 @@ function renderMarkdown(md) {
 
   // 12. Restore inline codes
   inlineCodes.forEach((code, idx) => {
-    text = text.replace(new RegExp(`___INLINE_CODE_${idx}___`, 'g'), code);
+    text = text.replace(new RegExp(`@@INLINECODE${idx}@@`, 'g'), code);
   });
 
   // 13. Restore code blocks
   codeBlocks.forEach((block, idx) => {
-    text = text.replace(new RegExp(`___CODE_BLOCK_${idx}___`, 'g'), block);
+    text = text.replace(new RegExp(`@@CODEBLOCK${idx}@@`, 'g'), block);
   });
 
   return text;

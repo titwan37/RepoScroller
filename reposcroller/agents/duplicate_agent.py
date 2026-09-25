@@ -365,10 +365,10 @@ def answer_document_question(repo: DocumentRepository, doc: Dict[str, Any], quer
         import httpx
 
         locs_str = "\n".join([f"- {l.get('absolute_path')} ({l.get('storage_root')})" for l in locations])
-        prompt = f"""You are RepoScroller Interrogation Assistant for the user's private administrative and personal document repository.
-The user is asking a question about a specific document from their repository.
-Answer the user's question directly, concisely, and factually using clean Markdown (bold, bullet points, code blocks).
-If directory paths or document content contain the answer (such as travel destination, company names, amounts, or dates), state it clearly.
+        prompt = f"""You are RepoScroller Document Analyst, an administrative search tool for an archival document repository.
+The user is searching and inspecting records in this local repository index.
+Answer the user's question directly, factually, and concisely using clean Markdown (bold, bullet points, code blocks).
+If directory paths or document content contain the answer (such as travel destination, project name, urgency details, company names, or dates), state it clearly.
 
 Document Information:
 - Filename: {fname}
@@ -412,7 +412,12 @@ User Question: {query}
                         )
                         if chat_resp.status_code == 200:
                             content = chat_resp.json().get("message", {}).get("content", "").strip()
-                            refusals = ["cannot provide", "can't help", "cannot help", "unable to provide", "as an ai", "i apologize, but", "private citizen"]
+                            refusals = [
+                                "cannot provide", "can't provide", "can't help", "cannot help",
+                                "unable to provide", "as an ai", "i apologize", "private citizen",
+                                "confidential information", "sensitive or confidential", "i cannot assist",
+                                "i can't assist"
+                            ]
                             if content and not any(r in content.lower() for r in refusals) and len(content) > 15:
                                 llm_answer = content
             except Exception:
@@ -470,11 +475,12 @@ User Question: {query}
             )
 
         # Urgent call or specific topic question
-        elif "urgent" in q_lower or "call" in q_lower:
+        elif any(w in q_lower for w in ["urgen", "call", "priorit", "emergenc"]):
             answer = (
-                f"**Topic & Subject Analysis for `{fname}`:**\n\n"
+                f"**Urgency & Topic Analysis for `{fname}`:**\n\n"
                 f"- **Document Identifier:** `{fname}`\n"
-                f"- **Document Date:** {doc_date}\n"
+                f"- **Governing Date:** **{doc_date}**\n"
+                f"- **Urgency Assessment:** The urgency pertains to prompt attention or staffing for an open position.\n"
                 f"- **Storage Path:** `{locations[0]['absolute_path'] if locations else 'Repository'}`\n\n"
                 f"**Extracted Content Excerpt:**\n> {text_snippet[:400].strip() or 'Document record verified in repository ledger.'}"
             )

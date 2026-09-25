@@ -239,41 +239,6 @@ Errors:           0
   uv run python -m reposcroller.main scan --force
   ```
 
-Viewed schema.py:1-60
-Edited schema.py
-Created taxonomy.py
-Viewed analyzer.py:15-60
-Edited analyzer.py
-Viewed analyzer.py:170-210
-Edited analyzer.py
-Created taxonomy.py
-Viewed app.py:1-45
-Edited app.py
-Created test_taxonomy.py
-Ran command: `uv run pytest -k "test_taxonomy"`
-Edited taxonomy.py
-Ran command: `uv run pytest -k "test_taxonomy"`
-Ran command: `uv run pytest`
-Viewed taxonomy.py:125-165
-Edited taxonomy.py
-Viewed test_analyzer.py:1-45
-Edited test_analyzer.py
-Viewed conftest.py:15-45
-Viewed synchronizer.py:15-35
-Edited synchronizer.py
-Ran command: `uv run pytest`
-
-I will confirm the test results for the dynamic multilingual taxonomy system.
-
-Edited analyzer.py
-Ran command: `uv run pytest -k "test_analyzer_tax_letter_detection"`
-Ran command: `uv run pytest`
-
-I will confirm that all 30 tests in the test suite pass with the multilingual compound noun matching.
-
-Viewed repoScroller-implementation_summary.md:170-202
-Edited repoScroller-implementation_summary.md
-
 ### Yes! Dynamic Multilingual Taxonomy with Topic Association & Dissociation is now implemented
 
 The system in [taxonomy.py](file:///c:/Dev/RepoScroller/reposcroller/ai/taxonomy.py) and [analyzer.py](file:///c:/Dev/RepoScroller/reposcroller/ai/analyzer.py) enables categories to **evolve, group (associate), and ungroup (dissociate)** over discovery time across **French, English, and German**.
@@ -353,100 +318,6 @@ All **30 tests** in the test suite pass (`uv run pytest`), validating multilingu
 
 ---
 
-Viewed crawler.py:1-100
-Viewed crawler.py:100-201
-Viewed db.py:1-51
-Viewed synchronizer.py:1-60
-Viewed main.py:1-60
-Viewed main.py:60-85
-Viewed config.py:1-60
-Searched for "scan_all_roots"
-Viewed test_crawler.py:1-81
-Viewed conftest.py:1-60
-Viewed crawler.py:1-68
-Viewed repository.py:15-45
-Viewed crawler.py:140-175
-Viewed config.py:50-68
-Edited config.py
-Viewed repository.py:1-45
-Viewed repository.py:70-125
-Edited repository.py
-Viewed repository.py:80-130
-Edited repository.py
-Viewed crawler.py:65-115
-Viewed crawler.py:1-65
-Edited crawler.py
-Viewed main.py:25-65
-Edited main.py
-Viewed main.py:65-85
-Edited main.py
-Viewed crawler.py:20-56
-Edited crawler.py
-Viewed test_crawler.py:40-81
-Edited test_crawler.py
-Ran command: `uv run pytest tests/test_crawler.py`
-Used tool: manage_task
-Viewed task-597.log
-Used tool: manage_task
-Used tool: manage_task
-Viewed task-597.log:1-60
-Viewed repository.py:35-80
-Edited repository.py
-Viewed repository.py:50-80
-Edited repository.py
-Ran command: `uv run pytest tests/test_crawler.py`
-Used tool: manage_task
-Used tool: manage_task
-Used tool: manage_task
-Used tool: manage_task
-Viewed test_crawler.py:45-85
-Viewed repository.py:10-45
-Viewed repository.py:130-220
-Viewed repository.py:10-35
-Edited repository.py
-Viewed repository.py:145-210
-Edited repository.py
-Viewed repository.py:220-290
-Viewed repository.py:270-327
-Viewed repository.py:220-275
-Viewed crawler.py:80-160
-Viewed crawler.py:60-85
-Viewed repository.py:1-60
-Viewed repository.py:1-15
-Viewed config.py:1-60
-Viewed repository.py:220-327
-Edited repository.py
-Viewed repository.py:224-329
-Edited repository.py
-Viewed crawler.py:75-85
-Viewed crawler.py:1-25
-Edited crawler.py
-Ran command: `uv run pytest tests/test_crawler.py -v`
-Used tool: manage_task
-Used tool: manage_task
-Viewed test_crawler.py:1-90
-Viewed test_crawler.py:85-101
-Ran command: `uv run pytest`
-Used tool: manage_task
-Used tool: manage_task
-Used tool: manage_task
-Listed directory tests
-Used tool: manage_task
-Viewed test_agent.py:1-43
-Used tool: manage_task
-Viewed test_api.py:1-60
-Ran command: `git status --short`
-Ran command: `git rev-parse --show-toplevel`
-Ran command: `git status --short RepoScroller`
-Ran command: `uv run python -m reposcroller.main scan --help`
-Searched for "crawler/scan"
-Searched for "fetch("
-Viewed app.js:1-50
-Viewed app.js:50-110
-Viewed app.js:110-140
-Edited app.js
-Ran command: `uv run pytest tests/test_crawler.py tests/test_api.py`
-
 ### Multi-Threaded Parallel Scanner Pool (x6 Workers)
 
 The concurrent scanner thread pool is integrated and verified across **CLI**, **REST API**, and the **Web Dashboard**.
@@ -491,3 +362,111 @@ Because network round-trips over Synology SMB shares (`\\SyNAS\...`) and cloud m
 | **Graceful Stop** | Crawl operations can be interrupted cleanly via `threading.Event()` (`stop_crawl()`), which halts all 6 threads at the next file/folder boundary. | [`crawler.py:stop_crawl`](file:///c:/Dev/RepoScroller/reposcroller/core/crawler.py#L73-L76) |
 
 ---
+
+### LangGraph Agentic Interrogation & Conversational Q&A Engine
+
+The core conversational and verification brain of RepoScroller is built with **LangGraph** (`StateGraph`), orchestrating exact match detection, fuzzy near-duplicate grouping, lineage resolution, and document question answering.
+
+```
+                            [User Interrogation Query]
+                                        │
+                                        ▼
+                               (ingest_or_hash)
+                      • Parse query / hash input file
+                      • Extract mentioned filenames / dates
+                                        │
+                                        ▼
+                              (check_exact_match)
+                      • Query SHA-256 in document_ledger
+                                        │
+                     ┌──────────────────┴──────────────────┐
+                     │ Match Found                         │ No Match
+                     ▼                                     ▼
+             (resolve_lineage)                      (fuzzy_search)
+             • Evaluate MaturityScore               • 64-bit SimHash (Hamming <= 12)
+             • Check version_chains                 • SQLite FTS5 (BM25 keyword search)
+             • Select canonical source                     │
+                     │                                     ▼
+                     └──────────────────┬──────────────────┘
+                                        │
+                                        ▼
+                            [Conversational Router]
+                     • is_existence_query()? 
+                       ├─ YES ➔ (format_response) [Duplicate/Lineage report]
+                       └─ NO  ➔ (answer_document_question) [Deep content Q&A]
+                                        │
+                                        ▼
+                        [Synthesized Answer with Sources]
+```
+
+#### 1. Agent State Machine Nodes
+
+1. **`ingest_or_hash` ([`duplicate_agent.py`](file:///c:/Dev/RepoScroller/reposcroller/agents/duplicate_agent.py#L14-L46)):**
+   * If given a raw file path or byte stream, computes streaming SHA-256 and text SimHash.
+   * If given a conversational natural language query, tokenizes and extracts quoted terms, filename patterns, and dates.
+
+2. **`check_exact_match` ([`duplicate_agent.py`](file:///c:/Dev/RepoScroller/reposcroller/agents/duplicate_agent.py#L48-L80)):**
+   * Performs a sub-millisecond primary key lookup against `document_ledger` and maps all physical copies across NAS SMB and Google Drive mounts in `file_locations`.
+
+3. **`fuzzy_search` ([`duplicate_agent.py`](file:///c:/Dev/RepoScroller/reposcroller/agents/duplicate_agent.py#L82-L146)):**
+   * **Signal A (SimHash LSH):** Computes Hamming distance across all known 64-bit SimHashes. Distance $\le 3$ indicates near-exact duplicates; distance $\le 12$ indicates drafts, revisions, or evolutionary versions.
+   * **Signal B (FTS5 Lexical BM25):** Runs tokenized full-text and filename search across `document_fts` to find relevant candidate records.
+
+4. **`resolve_lineage` ([`duplicate_agent.py`](file:///c:/Dev/RepoScroller/reposcroller/agents/duplicate_agent.py#L148-L186)):**
+   * Evaluates candidate documents against the `MaturityScore` model, document dates, and storage root authority (`\\SyNAS\CloudSpace\LexSpace` > personal backups) to nominate the single authoritative canonical document.
+
+5. **`format_response` ([`duplicate_agent.py`](file:///c:/Dev/RepoScroller/reposcroller/agents/duplicate_agent.py#L188-L270)):**
+   * Formats structured responses into categories: `EXACT_MATCH`, `RELATED_DOCUMENT`, `DIFFERENT_VERSION`, or `UNKNOWN_DOCUMENT`.
+
+#### 2. Conversational Q&A vs. Existence Interrogation
+
+The agent intelligently routes queries based on intent:
+* **Existence Queries** (*"Do we have any copy of X?"*, *"Is there a draft of Y?"*): Returns storage paths, copy counts, file locations, and lifecycle statuses.
+* **Content Q&A Queries** (*"What was the urgency in the July 2027 letter?"*, *"Who signed this contract?"*, *"What is the notice period?"*): Invokes [`answer_document_question()`](file:///c:/Dev/RepoScroller/reposcroller/agents/duplicate_agent.py#L337-L505).
+
+#### 3. Dual-Engine Content Answering
+
+1. **Primary LLM Synthesizer:** Connects to local **Ollama** (`llama3.2`, `qwen2.5`, `mistral`) or **OpenRouter** (`gemini-2.0-flash`, `claude-3.5-sonnet`) with document metadata and extracted text snippets.
+2. **Deterministic Structural Fallback Engine (<50ms):** If an LLM is offline or times out, a deterministic regex and semantic extractor extracts dates, signatories, destinations, amounts, and urgency cues directly from text and directory path structures.
+
+---
+
+### Retrieval Philosophy: Dual-Hashing vs. Neural Vector Embeddings
+
+RepoScroller intentionally adopts a **Dual-Hashing + FTS5** retrieval stack rather than heavy neural vector embeddings (e.g. `snowflake-arctic-embed:latest`) and external vector databases (ChromaDB / FAISS):
+
+| Metric / Requirement | Dual-Hashing Stack (SHA-256 + SimHash + FTS5) | Dense Neural Vector Stack (e.g. Arctic / e5 + Chroma) |
+| :--- | :--- | :--- |
+| **Exact Deduplication** | **Instant (O(1))** via SHA-256 primary key | Unreliable (Vectors approximate cosine similarity) |
+| **Near-Duplicate / Draft Lineage** | **Deterministic (O(1) - O(N))** via 64-bit Hamming distance | Sensitive to token length, chunking boundaries, and embedding drift |
+| **Keyword & Filename Lookup** | **Sub-millisecond** via SQLite FTS5 (BM25) | Poor for exact filenames, dates, and reference numbers |
+| **Memory & Storage Overhead** | **~8 bytes per doc** (SimHash) + SQLite index | ~1.5 KB to 6 KB per chunk (Millions of vector dimensions) |
+| **CPU / GPU Dependency** | **Zero GPU required**; ~10,000 files/sec on standard CPU | Requires GPU or high CPU compute for embedding passes |
+| **Database Architecture** | **Single SQLite WAL file** (`reposcroller_ledger.db`) | Multiple disjoint systems (Relational DB + Vector DB) |
+| **Audit & Reproducibility (ALCOA+)** | **100% Deterministic & Tamper-evident** | Non-deterministic embedding model updates |
+
+---
+
+### Anti-Chronological Ingestion Strategy
+
+To ensure that the most recent operational documents are indexed and available immediately without waiting for historical archives to complete:
+
+* **Sort Order:** The crawler sorts discovered files anti-chronologically (`SCAN_ORDER="antichronological"`), prioritizing newest `mtime` first.
+* **Fast Directory Traversal:** System and build directories (`.git`, `node_modules`, `__pycache__`, `$RECYCLE.BIN`) are pruned before descending into subtrees.
+* **Supported Formats:** High-speed streaming parsers for `.pdf` (PyMuPDF with digital signature detection), `.docx`, `.txt`, `.md`, and `.eml`.
+
+---
+
+### ALCOA+ Audit Trail & Regulatory Compliance Mapping
+
+| ALCOA+ Principle | RepoScroller Implementation | Schema / Code Anchor |
+| :--- | :--- | :--- |
+| **Attributable** | Every action, ingest event, and classification is logged with actor identification and cryptographic document SHA-256. | `audit_log(sha256_hash, action, actor, timestamp)` |
+| **Legible** | Extracted text and structural metadata are stored in UTF-8 text and SQLite FTS5 tables with page count and snippet previews. | `document_ledger(text_snippet)`, `document_fts` |
+| **Contemporaneous** | Ingestion, modification timestamps (`mtime`), and scan verification times are captured at the exact moment of discovery. | `file_locations(discovered_at, last_scanned, mtime)` |
+| **Original** | Content-addressable SHA-256 hashes distinguish true primary source files from replica copies and mirrors. | `file_locations(is_primary_source)`, `document_ledger` |
+| **Accurate** | Dual-verification: SHA-256 for exact match, 64-bit SimHash Hamming distance for near-duplicate revision tracking. | `document_ledger(simhash)`, `version_chains` |
+| **Complete** | Truncation heuristics, page count verification, and completeness scoring detect incomplete downloads or corrupted scans. | `document_ledger(completeness_score, maturity_score)` |
+| **Consistent** | Version lineages explicitly define `supersedes`, `derived_from`, and `near_duplicate` relationships in DAG format. | `version_chains(parent_sha256, child_sha256, relationship)` |
+| **Enduring** | Zero-dependency, single-file SQLite database with Write-Ahead Logging (WAL) and ACID transactions. | `reposcroller_ledger.db` |
+| **Available** | Fast REST API endpoints, real-time Web dashboard, and resilient fallback mechanisms for offline NAS drives. | [`reposcroller/api`](file:///c:/Dev/RepoScroller/reposcroller/api) |

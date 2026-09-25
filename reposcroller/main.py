@@ -45,7 +45,14 @@ def main():
     chat_p = subparsers.add_parser("interrogate", help="Ask the chatbot about document availability")
     chat_p.add_argument("query", help="Question to ask (e.g. 'Do we have the 2024 Kantonsgericht decision?')")
 
+    # Command: sidecar
+    sidecar_p = subparsers.add_parser("sidecar", help="Run the Knowledge Base Sidecar Worker to chunk and embed documents")
+    sidecar_p.add_argument("--batch", action="store_true", help="Process pending items once and exit")
+    sidecar_p.add_argument("--limit", type=int, default=10, help="Number of documents to process in batch")
+    sidecar_p.add_argument("--poll-interval", type=float, default=3.0, help="Poll interval in seconds for continuous mode")
+
     args = parser.parse_args()
+
 
     # Ensure DB is initialized
     init_db()
@@ -139,8 +146,25 @@ def main():
         print(f"\n{res['answer']}")
         print(f"\nRecommendation: {res['recommendation']}")
 
+    elif args.command == "sidecar":
+        from reposcroller.ai.sidecar_worker import KnowledgeBaseSidecarWorker
+        worker = KnowledgeBaseSidecarWorker()
+        if args.batch:
+            print(f"Running Knowledge Base Sidecar batch (limit: {args.limit})...")
+            res = worker.process_pending_batch(limit=args.limit)
+            print(f"Processed: {res['processed_count']} documents.")
+            for r in res.get("results", []):
+                print(f"  - [{r['status']}] {r.get('canonical_filename', r['sha256'])} ({r.get('chunks_count', 0)} chunks)")
+        else:
+            print(f"Starting Knowledge Base Sidecar daemon loop (poll interval: {args.poll_interval}s)...")
+            try:
+                worker.run_worker_loop(poll_interval=args.poll_interval)
+            except KeyboardInterrupt:
+                print("\nSidecar worker stopped.")
+
     else:
         parser.print_help()
+
 
 
 if __name__ == "__main__":

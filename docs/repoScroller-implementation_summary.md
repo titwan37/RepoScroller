@@ -407,7 +407,6 @@ Both requested improvements to the __AI Interrogation Assistant__ have been impl
 - __Typography & Styling ([`style.css`](file:///c:/Dev/RepoScroller/reposcroller/api/static/style.css)):__
   - Added dedicated CSS rules for `.chat-msg.bot .msg-bubble` elements ensuring high contrast, clean line-heights, and responsive formatting.
 
----
 
 ### 2. Conversational Interrogation on Selected Documents (Without Repeating Filename)
 
@@ -424,3 +423,113 @@ Both requested improvements to the __AI Interrogation Assistant__ have been impl
     - Features a fast, deterministic semantic fallback engine that extracts destination, signatories, dates, and topics in `< 50ms` even if an LLM is offline.
 
 ---
+
+#### How it handles questions
+
+- When a question is asked about a specific document (e.g. `query='what was the urgency'`), the agent routes to [`answer_document_question()`](file:///c:/Dev/RepoScroller/reposcroller/agents/duplicate_agent.py#L337-L505).
+
+- It extracts the extracted full text / snippet and folder path metadata from the ledger database and queries an LLM (via local __Ollama__ or __OpenRouter__) to synthesize a factual answer.
+
+---
+
+### 2. Did RepoScroller index documentation with `snowflake-arctic-embed:latest`?
+
+Originally, RepoScroller relied purely on cryptographic SHA-256 + 64-bit SimHash + SQLite FTS5 BM25.
+With the implementation of the __Knowledge Base Sidecar Worker__, RepoScroller now supports optional asynchronous dense vector embeddings via __`snowflake-arctic-embed:latest`__ (or configured Ollama embedding models) alongside structured __Knowledge Graph (Neo4j / SQLite property graph)__ extraction for multi-signal __GraphRAG__.
+
+---
+
+### 3. Knowledge Base Sidecar Agent & Hybrid GraphRAG Engine (Phases 1 - 4)
+
+- __Asynchronous CDC Queue (`kb_processing_queue`):__
+  - Newly discovered and ingested documents are enqueued into `kb_processing_queue` with zero latency overhead to the fast crawler.
+- __Context-Aware Semantic Chunker ([`chunker.py`](file:///c:/Dev/RepoScroller/reposcroller/ai/chunker.py)):__
+  - Chunks text into 500–800 token passages with metadata header prepending (`[Document: ... | Category: ... | Date: ... | Source: ...]`).
+- __Dense Vector Embedding Adapter ([`embeddings.py`](file:///c:/Dev/RepoScroller/reposcroller/ai/embeddings.py) & [`vector_store.py`](file:///c:/Dev/RepoScroller/reposcroller/ledger/vector_store.py)):__
+  - Integrates `snowflake-arctic-embed:latest` via Ollama `/api/embed` and `/api/embeddings`, with SQLite-embedded dense vector storage (`document_chunks` table) and Cosine similarity search.
+- __Knowledge Graph Entity & Relationship Extractor ([`graph_extractor.py`](file:///c:/Dev/RepoScroller/reposcroller/ai/graph_extractor.py)):__
+  - Extracts entities (`Person`, `Organization`, `Location`, `Statute`, `ContractType`), relationships (`SIGNS`, `PARTY_TO`, `GOVERNED_BY`, `SUPERSEDES`), and document associations into a Property Graph (`knowledge_nodes`, `knowledge_edges`, `document_entity_links`) with optional Neo4j sync.
+- __Multi-Signal GraphRAG Retrieval Engine ([`graph_rag.py`](file:///c:/Dev/RepoScroller/reposcroller/agents/graph_rag.py)):__
+  - Fuses __Dense Vector Search__ + __Sparse FTS5 BM25__ + __Graph 1-Hop/2-Hop Neighborhood Expansion__ using __Reciprocal Rank Fusion (RRF, $k=60$)__.
+- __CLI & REST API Integration:__
+  - `uv run python -m reposcroller.main sidecar --batch` (one-off batch consolidation) or daemon mode.
+  - Endpoints: `GET /api/v1/sidecar/stats`, `POST /api/v1/sidecar/process`, `POST /api/v1/sidecar/search`, `GET /api/v1/sidecar/graph/node/{node_id}`, `POST /api/v1/sidecar/graph-rag`.
+- __Test Suite:__
+  - Verified across __52 automated unit & integration tests__ (`uv run pytest`).
+
+---
+
+### 🎉 Knowledge Base Sidecar Agent & Hybrid GraphRAG Successfully Built
+
+All 4 phases of the Knowledge Base Sidecar Agent architecture have been implemented, integrated, and verified across __52 automated unit and integration tests__.
+
+---
+
+### 📦 System Architecture Summary
+
+```
+                       [RepoScroller Ingestion Crawler]
+                                      │
+                                      ▼  (Zero-latency async enqueue)
+                   [reposcroller_ledger.db: kb_processing_queue]
+                                      │
+                                      ▼  (CLI / API / Daemon Worker)
+         ┌─────────────────────────────────────────────────────────────┐
+         │             KnowledgeBaseSidecarWorker                      │
+         │                                                             │
+         │  1. DocumentChunker (500–800 tokens + context header)       │
+         │  2. EmbeddingAdapter (snowflake-arctic-embed:latest)        │
+         │  3. KnowledgeGraphExtractor (NER & Relation Extraction)     │
+         │  4. Entity Resolution & Canonicalization (Alias Merging)    │
+         └───────────────┬─────────────────────────────┬───────────────┘
+                         │                             │
+                         ▼                             ▼
+         [Dense Vector Chunks Store]         [Property Graph Store]
+         • Table: document_chunks            • Tables: knowledge_nodes,
+         • Cosine semantic search                      knowledge_edges,
+         • Top-k passages                              document_entity_links
+                         │                   • Optional Neo4j driver sync
+                         │                             │
+                         └──────────────┬──────────────┘
+                                        │
+                                        ▼
+                         [GraphRAGQueryEngine (Hybrid)]
+                         • Signal A: Dense Vectors (snowflake-arctic-embed)
+                         • Signal B: Lexical Sparse (SQLite FTS5 BM25)
+                         • Signal C: 1-Hop / 2-Hop Graph Expansion
+                         • Fusion: Reciprocal Rank Fusion (RRF, k=60)
+```
+
+---
+
+### 🛠️ Key Modules Implemented
+
+1. __Database Schema & Persistence ([`schema.py`](file:///c:/Dev/RepoScroller/reposcroller/ledger/schema.py)):__
+   - Added `kb_processing_queue`, `document_chunks`, `knowledge_nodes`, `knowledge_edges`, and `document_entity_links` tables.
+2. __Context-Aware Semantic Chunker ([`chunker.py`](file:///c:/Dev/RepoScroller/reposcroller/ai/chunker.py)):__
+   - Splits documents into 500–800 token passages with metadata header prepending (`[Document: ... | Category: ... | Date: ... | Source: ...]`).
+3. __Dense Vector Embeddings & Vector Store ([`embeddings.py`](file:///c:/Dev/RepoScroller/reposcroller/ai/embeddings.py) & [`vector_store.py`](file:///c:/Dev/RepoScroller/reposcroller/ledger/vector_store.py)):__
+   - Connects to Ollama `snowflake-arctic-embed:latest` with fallback pseudo-embeddings and Cosine similarity scoring.
+4. __Structured Knowledge Graph Extractor & Property Graph Store ([`graph_extractor.py`](file:///c:/Dev/RepoScroller/reposcroller/ai/graph_extractor.py) & [`graph_store.py`](file:///c:/Dev/RepoScroller/reposcroller/ledger/graph_store.py)):__
+   - Extracts structured entities (`Person`, `Organization`, `Location`, `Statute`, `ContractType`), relationships (`SIGNS`, `PARTY_TO`, `GOVERNED_BY`, `SUPERSEDES`), and document associations with 1-hop/2-hop neighborhood expansion.
+5. __Hybrid GraphRAG Query Engine ([`graph_rag.py`](file:///c:/Dev/RepoScroller/reposcroller/agents/graph_rag.py)):__
+   - Combines dense vectors, lexical FTS5 BM25, and entity graph expansion via Reciprocal Rank Fusion (RRF).
+6. __Sidecar Worker ([`sidecar_worker.py`](file:///c:/Dev/RepoScroller/reposcroller/ai/sidecar_worker.py)):__
+   - Batch and daemon worker execution.
+7. __REST API & CLI Integration:__
+   - __CLI:__ `uv run python -m reposcroller.main sidecar --batch --limit 20`
+   - __REST Endpoints:__
+     - `GET /api/v1/sidecar/stats`
+     - `POST /api/v1/sidecar/process`
+     - `POST /api/v1/sidecar/search`
+     - `GET /api/v1/sidecar/graph/node/{node_id}`
+     - `POST /api/v1/sidecar/graph-rag`
+
+---
+
+### 🧪 Test Verification
+
+```powershell
+uv run pytest
+============================== 52 passed in 14.59s ==============================
+```

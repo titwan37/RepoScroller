@@ -82,6 +82,22 @@ class Settings(BaseSettings):
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     OLLAMA_MODEL: str = "llama3.2"
 
+    # Dense Vector Embeddings & Knowledge Base Sidecar Settings
+    EMBEDDING_PROVIDER: str = "auto"  # 'auto', 'ollama', 'openrouter', or 'mock'
+    OLLAMA_EMBEDDING_MODEL: str = "snowflake-arctic-embed:latest"
+    CHUNK_SIZE_TOKENS: int = 600
+    CHUNK_OVERLAP_TOKENS: int = 80
+    VECTOR_STORE_PATH: Path = Field(default=Path("reposcroller_vectors"))
+    KB_SIDECAR_BATCH_SIZE: int = 10
+
+    # Knowledge Graph & Neo4j Settings (Optional Sidecar Integration)
+    GRAPH_STORE_TYPE: str = "sqlite"  # 'sqlite' or 'neo4j'
+    NEO4J_URI: Optional[str] = "bolt://localhost:7687"
+    NEO4J_USER: Optional[str] = "neo4j"
+    NEO4J_PASSWORD: Optional[str] = "password"
+
+
+
     @field_validator("STORAGE_ROOTS", "SUPPORTED_EXTENSIONS", "IGNORE_DIRS", mode="before")
     @classmethod
     def parse_list(cls, v: Union[str, List[str]]) -> List[str]:

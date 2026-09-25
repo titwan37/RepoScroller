@@ -25,6 +25,10 @@ dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
 ]
+graph = [
+    "neo4j>=5.18.0",
+]
+
 
 [tool.pytest.ini_options]
 minversion = "8.0"

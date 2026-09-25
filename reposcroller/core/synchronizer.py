@@ -114,32 +114,54 @@ class DocumentSynchronizer:
             mtime=mtime
         )
 
-        # Step 6: Commit to SQLite WAL document ledger & FTS5
-        self.repo.upsert_document(
-            sha256_hash=sha256_hash,
-            simhash=simhash_val,
-            canonical_filename=file_path.name,
-            doc_type=doc_type,
-            lifecycle_status=eval_result["lifecycle_status"],
-            completeness_score=eval_result["completeness_score"],
-            maturity_score=eval_result["maturity_score"],
-            page_count=metadata.get("page_count", 1),
-            text_snippet=text_snippet,
-            doc_date=doc_date,
-            doc_date_source=doc_date_source,
-            full_text=text,
-        )
+        # Step 6: Atomically commit to SQLite WAL document ledger or record duplicate
+        with self.repo._lock:
+            existing_doc = self.repo.get_document_by_sha256(sha256_hash)
+            if existing_doc:
+                self.repo.record_location(
+                    sha256_hash=sha256_hash,
+                    storage_root=storage_root,
+                    relative_path=rel_path,
+                    absolute_path=abs_path,
+                    file_size=file_size,
+                    mtime=mtime,
+                    is_primary=is_primary,
+                )
+                return {
+                    "status": "exact_duplicate_recorded",
+                    "sha256": sha256_hash,
+                    "canonical_filename": existing_doc["canonical_filename"],
+                    "lifecycle_status": existing_doc["lifecycle_status"],
+                    "path": abs_path,
+                    "existing_locations_count": len(existing_doc["locations"]),
+                }
 
-        # Record physical location
-        self.repo.record_location(
-            sha256_hash=sha256_hash,
-            storage_root=storage_root,
-            relative_path=rel_path,
-            absolute_path=abs_path,
-            file_size=file_size,
-            mtime=mtime,
-            is_primary=is_primary,
-        )
+            self.repo.upsert_document(
+                sha256_hash=sha256_hash,
+                simhash=simhash_val,
+                canonical_filename=file_path.name,
+                doc_type=doc_type,
+                lifecycle_status=eval_result["lifecycle_status"],
+                completeness_score=eval_result["completeness_score"],
+                maturity_score=eval_result["maturity_score"],
+                page_count=metadata.get("page_count", 1),
+                text_snippet=text_snippet,
+                doc_date=doc_date,
+                doc_date_source=doc_date_source,
+                full_text=text,
+            )
+
+            # Record physical location
+            self.repo.record_location(
+                sha256_hash=sha256_hash,
+                storage_root=storage_root,
+                relative_path=rel_path,
+                absolute_path=abs_path,
+                file_size=file_size,
+                mtime=mtime,
+                is_primary=is_primary,
+            )
+
 
         # Step 7: Check for near-duplicates and link version chains
         near_matches = self.repo.find_near_duplicates_simhash(
@@ -175,6 +197,9 @@ class DocumentSynchronizer:
                 )
             linked_chains.append({"target": match_sha, "relationship": rel, "similarity": sim_score})
 
+        # Step 8: Enqueue for asynchronous Knowledge Base sidecar processing (Chunking, Embedding, Entities)
+        self.repo.enqueue_kb_processing(sha256_hash)
+
         return {
             "status": "ingested",
             "sha256": sha256_hash,
@@ -184,3 +209,4 @@ class DocumentSynchronizer:
             "linked_versions": linked_chains,
             "path": abs_path,
         }
+
