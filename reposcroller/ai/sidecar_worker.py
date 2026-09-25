@@ -292,20 +292,37 @@ class KnowledgeBaseSidecarWorker:
 
         logger.info("Sidecar continuous loop exited gracefully.")
 
-    def run_worker_loop(self, poll_interval: float = 4.0, stop_event=None) -> None:
+    def run_worker_loop(self, poll_interval: float = 3.0, stop_event=None) -> None:
         """CLI entrypoint for standalone background sidecar daemon."""
-        logger.info(f"Starting standalone Knowledge Base Sidecar loop with model '{settings.OLLAMA_EMBEDDING_MODEL}' on {settings.embed_url}...")
+        from reposcroller.ai.telemetry import workload_telemetry
+        logger.info(f"Knowledge Base Sidecar daemon started | Model: {settings.OLLAMA_EMBEDDING_MODEL} | Target: {settings.embed_url}")
         last_reported_hundred = 0
+        is_idle_reported = False
+
         while not (stop_event and stop_event.is_set()):
             try:
                 batch_res = self.process_pending_batch(limit=settings.KB_SIDECAR_BATCH_SIZE)
-                if batch_res["processed_count"] > 0:
+                processed = batch_res.get("processed_count", 0)
+                if processed > 0:
+                    is_idle_reported = False
+                    batch_chunks = sum(r.get("chunks_count", 0) for r in batch_res.get("results", []))
+                    tier_label = workload_telemetry.active_tier_label
+                    logger.info(
+                        f"⚡ [BATCH] Processed {processed} docs ({batch_chunks} chunks) -> Session: {self.session_docs_processed} docs ({self.session_chunks_embedded} chunks) | Tier: {tier_label}"
+                    )
+
                     current_hundred = self.session_docs_processed // 100
                     if current_hundred > last_reported_hundred:
                         last_reported_hundred = current_hundred
-                        logger.info(f"⚡ Sidecar Milestone: {self.session_docs_processed} docs processed ({self.session_chunks_embedded} chunks) into vector index.")
+                        logger.info(
+                            f"🏆 [MILESTONE] {self.session_docs_processed} documents indexed into Knowledge Base & Vector Index!"
+                        )
                 else:
+                    if not is_idle_reported:
+                        logger.info("⏳ [IDLE] All queued documents processed. Waiting for new files...")
+                        is_idle_reported = True
                     time.sleep(poll_interval)
             except Exception as e:
                 logger.error(f"Error in standalone KB Sidecar loop: {e}")
                 time.sleep(poll_interval)
+

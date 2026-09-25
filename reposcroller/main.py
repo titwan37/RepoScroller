@@ -1,7 +1,6 @@
-"""CLI Entrypoint for RepoScroller command center."""
-
 import argparse
 import sys
+import logging
 import uvicorn
 from pathlib import Path
 from reposcroller.config import settings
@@ -9,6 +8,13 @@ from reposcroller.ledger.db import init_db
 from reposcroller.ledger.repository import DocumentRepository
 from reposcroller.core.crawler import MultiRootCrawler
 from reposcroller.agents.duplicate_agent import DuplicateResolverAgent
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%H:%M:%S"
+)
+
 
 
 def main():
