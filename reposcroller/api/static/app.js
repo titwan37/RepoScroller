@@ -131,10 +131,15 @@ async function initDashboard() {
     loadMetrics(),
     loadSidecarStats(),
     loadTaxonomyCategories(),
-    loadLedger()
+    loadLedger(),
+    typeof loadProcessScrollerData === "function" ? loadProcessScrollerData() : Promise.resolve(),
+    typeof pollOllamaProcessInspector === "function" ? pollOllamaProcessInspector() : Promise.resolve(),
+    typeof loadLineageChains === "function" ? loadLineageChains() : Promise.resolve()
   ]);
 
-  // Periodic refresh for metrics, sidecar queue, and workload telemetry
+  if (typeof renderWs0DiagLogs === "function") renderWs0DiagLogs();
+
+  // Periodic refresh for metrics, sidecar queue, workload telemetry, and Workspace 0 live data
   setInterval(() => {
     loadMetrics();
     loadSidecarStats();
@@ -2369,6 +2374,7 @@ function logDiagnosticEntry(entry) {
 
   updateDiagnosticBadges();
   renderDiagnosticLogs();
+  if (typeof renderWs0DiagLogs === "function") renderWs0DiagLogs();
 }
 
 async function fetchDiagnosticLogs() {
@@ -2398,6 +2404,7 @@ async function fetchDiagnosticLogs() {
 
       updateDiagnosticBadges();
       renderDiagnosticLogs();
+      if (typeof renderWs0DiagLogs === "function") renderWs0DiagLogs();
     }
   } catch (err) {
     // Silently continue to prevent cascading failures

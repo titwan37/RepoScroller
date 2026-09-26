@@ -1214,6 +1214,219 @@ snowflake-arctic-embed2:latest    5de93a84837d    664 MB    100% GPU     2048   
 
 The updated configuration has been saved directly to [start_pc2_cuda_node.ps1](file:///c:/Dev/RepoScroller/start_pc2_cuda_node.ps1). Whenever you run `.\start_pc2_cuda_node.bat`, both models will remain loaded and displayed together.
 
+Ran command: `curl.exe -s http://127.0.0.1:11434/api/ps`
+Ran command: `curl.exe -s --connect-timeout 3 http://nitro-an51755:11434/api/ps`
+Ran command: `curl.exe -s http://127.0.0.1:8090/api/v1/sidecar/stats`
+Ran command: `curl.exe -s "http://127.0.0.1:8090/api/v1/diagnostics/logs?limit=5"`
+Ran command: `curl.exe -I -s http://127.0.0.1:11434/api/ps`
+Ran command: `curl.exe -v -H "Origin: http://127.0.0.1:8090" -s http://127.0.0.1:11434/api/ps`
+Ran command: `curl.exe -v -H "Origin: http://127.0.0.1:8090" -s http://nitro-an51755:11434/api/ps`
+Ran command: `python -c "from reposcroller.ledger.repository import DocumentRepository; r = DocumentRepository(); print(r.get_stats())"`
+Ran command: `python -c "from reposcroller.ledger.repository import DocumentRepository; r = DocumentRepository(); cur = r.conn.cursor(); cur.execute('SELECT vc.*, dl1.canonical_filename, dl2.canonical_filename FROM version_chains vc JOIN document_ledger dl1 ON vc.parent_sha256 = dl1.sha256_hash JOIN document_ledger dl2 ON vc.child_sha256 = dl2.sha256_hash LIMIT 5'); print(cur.fetchall())"`
+Ran command: `python -c "from reposcroller.ledger.repository import DocumentRepository; r = DocumentRepository(); cur = r.conn.cursor(); cur.execute('SELECT vc.parent_sha256, vc.child_sha256, vc.relationship, vc.similarity_score, dl1.canonical_filename as parent_name, dl2.canonical_filename as child_name, dl1.lifecycle_status as parent_status, dl2.lifecycle_status as child_status FROM version_chains vc JOIN document_ledger dl1 ON vc.parent_sha256 = dl1.sha256_hash JOIN document_ledger dl2 ON vc.child_sha256 = dl2.sha256_hash LIMIT 5'); print([dict(r) for r in cur.fetchall()])"`
+Ran command: `python -c "import time; from reposcroller.ledger.repository import DocumentRepository; r = DocumentRepository(); t0 = time.time(); cur = r.conn.cursor(); cur.execute('SELECT vc.parent_sha256, vc.child_sha256, vc.relationship, vc.similarity_score, dl1.canonical_filename as parent_name, dl1.lifecycle_status as parent_status, dl2.canonical_filename as child_name, dl2.lifecycle_status as child_status FROM version_chains vc JOIN document_ledger dl1 ON vc.parent_sha256 = dl1.sha256_hash JOIN document_ledger dl2 ON vc.child_sha256 = dl2.sha256_hash LIMIT 10'); print(len(cur.fetchall()), 'rows in', round((time.time() - t0)*1000, 2), 'ms')"`
+Ran command: `curl.exe -s http://127.0.0.1:8090/api/v1/documents/lineage/chains?limit=2`
+Ran command: `Get-Process -Name "python*"`
+Ran command: `curl.exe -s --max-time 3 http://127.0.0.1:8090/api/v1/health`
+Ran command: `curl.exe -s --max-time 5 "http://127.0.0.1:8090/api/v1/documents/lineage/chains?limit=2"`
+Ran command: `python -c "import time; from reposcroller.ledger.repository import DocumentRepository; r = DocumentRepository(); t0 = time.time(); cur = r.conn.cursor(); cur.execute('SELECT vc.parent_sha256, vc.child_sha256, vc.relationship, vc.similarity_score, dl1.canonical_filename, dl2.canonical_filename FROM version_chains vc JOIN document_ledger dl1 ON vc.parent_sha256 = dl1.sha256_hash JOIN document_ledger dl2 ON vc.child_sha256 = dl2.sha256_hash ORDER BY vc.chain_id DESC LIMIT 25'); rows = cur.fetchall(); print(len(rows), 'rows in', round((time.time() - t0)*1000, 2), 'ms')"`
+Ran command: `curl.exe -s "http://127.0.0.1:8090/api/v1/documents/lineage/chains?limit=2"`
+Used tool: manage_task
+Ran command: `curl.exe -s "http://127.0.0.1:8090/api/v1/diagnostics/ollama/ps?node=pc1"`
+Ran command: `curl.exe -s "http://127.0.0.1:8090/api/v1/diagnostics/ollama/ps?node=pc2"`
+Ran command: `curl.exe -s http://127.0.0.1:8090/api/v1/health`
+Ran command: `curl.exe -s --max-time 5 "http://127.0.0.1:8090/api/v1/documents/lineage/chains?limit=2"`
+Ran command: `curl.exe -s --max-time 5 "http://127.0.0.1:8090/api/v1/sidecar/stats"`
+Ran command: `Get-ChildItem -Path "c:\Dev\RepoScroller" -Filter "app.js" -Recurse | Select-Object FullName`
+Ran command: `python tests/verify_v1_dual.py`
+
+import urllib.request, json
+
+endpoints = [
+    ('PC1 PS', 'http://127.0.0.1:11434/api/ps'),
+    ('PC2 PS', 'http://nitro-an51755:11434/api/ps'),
+    ('Sidecar Stats', 'http://127.0.0.1:8090/api/v1/sidecar/stats'),
+    ('Diagnostics Logs', 'http://127.0.0.1:8090/api/v1/diagnostics/logs?limit=5'),
+    ('Lineage Chains', 'http://127.0.0.1:8090/api/v1/documents/lineage/chains?limit=5'),
+    ('Lineage Summary', 'http://127.0.0.1:8090/api/v1/documents/lineage/summary'),
+]
+
+for name, url in endpoints:
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent': 'RepoScroller-Verifier'})
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+            print(f'✅ {name}: HTTP {resp.status} - keys: {list(data.keys())[:4]}')
+    except Exception as e:
+        print(f'❌ {name}: {e}')
+"`
+Ran command: `python -c "
+import urllib.request, json
+
+endpoints = [
+    ('PC1 PS', 'http://127.0.0.1:11434/api/ps'),
+    ('PC2 PS', 'http://nitro-an51755:11434/api/ps'),
+    ('Sidecar Stats', 'http://127.0.0.1:8090/api/v1/sidecar/stats'),
+    ('Diagnostics Logs', 'http://127.0.0.1:8090/api/v1/diagnostics/logs?limit=5'),
+    ('Lineage Chains', 'http://127.0.0.1:8090/api/v1/documents/lineage/chains?limit=5'),
+    ('Lineage Summary', 'http://127.0.0.1:8090/api/v1/documents/lineage/summary'),
+]
+
+for name, url in endpoints:
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent': 'RepoScroller-Verifier'})
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+            print(f'[OK] {name}: HTTP {resp.status} - keys: {list(data.keys())[:4]}')
+    except Exception as e:
+        print(f'[FAIL] {name}: {e}')
+"`
+Used tool: manage_task
+Viewed task-325.log:1-7
+Searched for "def get_sidecar_stats"
+Viewed sidecar.py:1-80
+Ran command: `python -c "
+import time
+from reposcroller.ledger.repository import DocumentRepository
+from reposcroller.ledger.graph_store import PropertyGraphStore
+
+repo = DocumentRepository()
+graph = PropertyGraphStore(repository=repo)
+
+t0 = time.time()
+q = repo.get_kb_queue_stats()
+t1 = time.time()
+print(f'get_kb_queue_stats: {(t1-t0)*1000:.1f}ms - {q}')
+
+t0 = time.time()
+g = graph.get_graph_stats()
+t1 = time.time()
+print(f'get_graph_stats: {(t1-t0)*1000:.1f}ms - {g}')
+"`
+Viewed graph_store.py:195-250
+Viewed graph_store.py:20-50
+Viewed graph_store.py:1-25
+Viewed graph_store.py:218-244
+Edited graph_store.py
+Ran command: `python -c "
+import urllib.request, json, time
+
+endpoints = [
+    ('PC1 PS', 'http://127.0.0.1:11434/api/ps'),
+    ('PC2 PS', 'http://nitro-an51755:11434/api/ps'),
+    ('Sidecar Stats', 'http://127.0.0.1:8090/api/v1/sidecar/stats'),
+    ('Diagnostics Logs', 'http://127.0.0.1:8090/api/v1/diagnostics/logs?limit=5'),
+    ('Lineage Chains', 'http://127.0.0.1:8090/api/v1/documents/lineage/chains?limit=5'),
+    ('Lineage Summary', 'http://127.0.0.1:8090/api/v1/documents/lineage/summary'),
+]
+
+for name, url in endpoints:
+    t0 = time.time()
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent': 'RepoScroller-Verifier'})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+            ms = (time.time() - t0) *1000
+            print(f'[OK] {name:16} in {ms:6.1f}ms - HTTP {resp.status}')
+    except Exception as e:
+        ms = (time.time() - t0)* 1000
+        print(f'[FAIL] {name:16} in {ms:6.1f}ms: {e}')
+"`
+Used tool: manage_task
+Viewed task-348.log
+Ran command: `Get-Process -Name "python*" | Select-Object Id, ProcessName, CommandLine`
+Used tool: manage_task
+Viewed kill_and_test.py:1-60
+Viewed test_fresh_server.py:1-60
+Viewed test_db_lock_fix.py:1-60
+Viewed main.py:1-60
+Viewed db.py:1-53
+Ran command: `netstat -ano | findstr "8090"`
+Ran command: `Get-WmiObject Win32_Process -Filter "ProcessId = 63136 or ProcessId = 67616" | Select-Object ProcessId, CommandLine`
+Ran command: `curl -s -i "<http://127.0.0.1:8090/api/v1/diagnostics/health"`>
+Ran command: `curl -s -o NUL -w "1. PC1 PS: HTTP %%{http_code} in %%{time_total}s\n" "http://127.0.0.1:11434/api/ps"
+curl -s -o NUL -w "2. PC2 PS: HTTP %%{http_code} in %%{time_total}s\n" "http://nitro-an51755:11434/api/ps"
+curl -s -o NUL -w "3. Sidecar Stats: HTTP %%{http_code} in %%{time_total}s\n" "http://127.0.0.1:8090/api/v1/sidecar/stats"
+curl -s -o NUL -w "4. Diagnostics Logs: HTTP %%{http_code} in %%{time_total}s\n" "http://127.0.0.1:8090/api/v1/diagnostics/logs"
+curl -s -o NUL -w "5. Lineage Chains: HTTP %%{http_code} in %%{time_total}s\n" "http://127.0.0.1:8090/api/v1/documents/lineage/chains?limit=10"
+`
+Used tool: manage_task
+Viewed task-376.log:1-6
+Browser task: "Verify Workspace 0 Final Telemetry and Lineage"
+
+### Workspace 0: Process Scroller & Lineage Explorer Enhancement Summary
+
+The __"WORKSPACE 0: PROCESS SCROLLER & LINEAGE EXPLORER"__ dashboard has been enhanced with dynamic content and pulsed real-time data streaming from all requested APIs:
+
+1. `http://127.0.0.1:11434/api/ps` (PC1 Localhost CPU Ollama Engine)
+2. `http://nitro-an51755:11434/api/ps` (PC2 Remote CUDA NVIDIA RTX 3060 GPU Node)
+3. `http://127.0.0.1:8090/api/v1/sidecar/stats` (Knowledge Base Queue, Throughput & Graph State)
+4. `http://127.0.0.1:8090/api/v1/diagnostics/logs` (Unified Real-Time Diagnostic Event Stream)
+
+---
+
+### Key Architectural & Functional Enhancements
+
+#### 1. Real-Time Telemetry Pulse Hero Bar
+
+- Added live pulse chips across all 4 critical APIs:
+  - __`127.0.0.1:11434/api/ps`__: Displays live resident model count (`3 models` in host RAM).
+  - __`nitro-an51755:11434/api/ps`__: Displays active CUDA VRAM footprint (`633 MB CUDA`).
+  - __`sidecar/stats`__: Displays total indexed vectors (`90.7k chunks`).
+  - __`diagnostics/logs`__: Displays active event stream buffer status.
+- Added knowledge base ingestion progress bar (`49.4%` completed, `12,418` documents chunked, `15,196` graph nodes).
+- Added interactive __Continuous Sidecar Ingestion__ toggle switch (`⚡ Ingestion Active (CUDA Node)`).
+
+#### 2. Split Workload HUD & Zoo Matrix Observatory Strip
+
+- Displays dual-node architecture metrics:
+  - __PC1 Localhost Engine (CPU)__: Resident models (`snowflake-arctic-embed (F16)`, `llama3.2:3b (Q4_K_M)`, `llama3.2:1b (Q8_0)`).
+  - __LAN Gigabit Stream Throughput__: Bidirectional `PC1 ⇄ PC2` payload streaming for document batches and 1024-dim dense float32 vectors.
+  - __PC2 CUDA GPU Server (RTX 3060)__: `100% GPU` acceleration with `snowflake-arctic-embed2:latest`.
+  - __Matrix Strip__: Live I/O PDF reading rate, LAN latency ping, SQLite DB/WAL sizes, and dynamic chat routing targets.
+
+#### 3. 5-Stage Digitalization Pipeline (The Process Scroller)
+
+Dynamic stage cards reflecting telemetry from codebase components:
+
+- __Stage 1: Storage Ingestion & File Crawler__ ([crawler.py](file:///c:/Dev/RepoScroller/reposcroller/api/routes/crawler.py)) — 6 configured mounts, 6/6 accessible, watching in continuous polling mode.
+- __Stage 2: Context-Aware Document Chunker & PDF I/O__ ([chunker.py](file:///c:/Dev/RepoScroller/reposcroller/ai/chunker.py) & [telemetry.py](file:///c:/Dev/RepoScroller/reposcroller/ai/telemetry.py)) — 512-token windows, 64-token overlap, 12,418 documents processed.
+- __Stage 3: Cascaded Intelligence Analyzer__ ([analyzer.py](file:///c:/Dev/RepoScroller/reposcroller/ai/analyzer.py)) — Dynamic routing to PC2 (3B CUDA Active), 18 taxonomy categories, maturity scoring.
+- __Stage 4: Remote CUDA GPU Embedder__ ([sidecar_worker.py](file:///c:/Dev/RepoScroller/reposcroller/ai/sidecar_worker.py)) — 1024-dim float32 vectors via 6x asynchronous HTTP streaming workers.
+- __Stage 5: Lineage & SQLite WAL Graph Store__ ([repository.py](file:///c:/Dev/RepoScroller/reposcroller/ledger/repository.py) & [graph_store.py](file:///c:/Dev/RepoScroller/reposcroller/ledger/graph_store.py)) — 4,037,884 version links, 15,196 graph nodes, 1,078,792 edges, and 8,177 deduplication savings.
+
+#### 4. Dual-Node Ollama Process Inspector (`/api/ps`)
+
+- Parallel inspection tables querying both hosts every 3.5s with backend proxy fallbacks ([diagnostics.py](file:///c:/Dev/RepoScroller/reposcroller/api/routes/diagnostics.py)):
+  - __PC1 (Localhost CPU)__: Model name, parameter size, quantization level, context length, memory allocation (`6.5 GB Host RAM`), and expiration countdowns.
+  - __PC2 (nitro-an51755 CUDA)__: `snowflake-arctic-embed2:latest` (566.7M, F16, 4096 ctx, 633.2 MB resident in NVIDIA VRAM, 100% GPU).
+
+#### 5. Version Lineage & Document Evolution Explorer
+
+- Built high-performance indexed queries in [repository.py](file:///c:/Dev/RepoScroller/reposcroller/ledger/repository.py) (`get_recent_version_chains` and `get_lineage_summary`) operating over 4.03M rows in ~12ms.
+- Exposed via `GET /api/v1/documents/lineage/chains` and `GET /api/v1/documents/lineage/summary` in [documents.py](file:///c:/Dev/RepoScroller/reposcroller/api/routes/documents.py).
+- Live interactive table rendering predecessor documents, relationship badges (`↳ DERIVED_FROM`, `⇮ SUPERSEDES`), successor documents, SimHash similarity scores (`81.3%`), maturity score deltas (`0.328 ➔ 0.415`), lifecycle status transitions (`truncated ➔ review`), and deep-link `Inspect 🔍` actions.
+
+#### 6. Real-Time Telemetry & Diagnostic Event Stream Ticker
+
+- Connected to `/api/v1/diagnostics/logs` with real-time stream rendering.
+- Subsystem filter tabs: `All`, `Sidecar`, `Chunker / IO`, `Analyzer`, `Crawler`, and `Errors / Warn`.
+- Auto-scroll lock toggle, micro badges, and source tags.
+
+---
+
+### Files Modified & Verified
+
+- [reposcroller/api/static/index.html](file:///c:/Dev/RepoScroller/reposcroller/api/static/index.html): Workspace 0 cyber-glassmorphic DOM structure, Hero Pulse Bar, Split HUD, 5-stage pipeline, dual `/api/ps` tables, Lineage Explorer, and diagnostic log ticker.
+- [reposcroller/api/static/style.css](file:///c:/Dev/RepoScroller/reposcroller/api/static/style.css): Glassmorphic styling, pulse dot animations, connector arrows, lineage badges, and dark terminal stream styling.
+- [reposcroller/api/static/app.js](file:///c:/Dev/RepoScroller/reposcroller/api/static/app.js): Workspace 0 polling loop (3.5s refresh), dual `/api/ps` pollers, lineage chain pagination, and log filtering.
+- [reposcroller/ledger/repository.py](file:///c:/Dev/RepoScroller/reposcroller/ledger/repository.py): Primary-key indexed version chain retrieval (`get_recent_version_chains`) and lineage aggregation summary.
+- [reposcroller/ledger/graph_store.py](file:///c:/Dev/RepoScroller/reposcroller/ledger/graph_store.py): Added lightweight TTL caching on `get_graph_stats()` for near-instantaneous `sidecar/stats` responses over 1M+ edge tables.
+- [reposcroller/api/routes/documents.py](file:///c:/Dev/RepoScroller/reposcroller/api/routes/documents.py): Registered `/lineage/chains` and `/lineage/summary` endpoints.
+- [reposcroller/api/routes/diagnostics.py](file:///c:/Dev/RepoScroller/reposcroller/api/routes/diagnostics.py): Registered dual-node Ollama proxy `/ollama/ps`.
+
+---
+
 curl.exe -v -H "Origin: <http://127.0.0.1:8090>" -s <http://nitro-an51755:11434/api/ps>
 python -c "from reposcroller.ledger.repository import DocumentRepository; r = DocumentRepository(); print(r.get_stats())"
 python -c "from reposcroller.ledger.repository import DocumentRepository; r = DocumentRepository(); cur = r.conn.cursor(); cur.execute('SELECT vc.*, dl1.canonical_filename, dl2.canonical_filename FROM version_chains vc JOIN document_ledger dl1 ON vc.parent_sha256 = dl1.sha256_hash JOIN document_ledger dl2 ON vc.child_sha256 = dl2.sha256_hash LIMIT 5'); print(cur.fetchall())"
@@ -1224,3 +1437,37 @@ curl.exe -s <http://127.0.0.1:8090/api/v1/documents/lineage/chains?limit=2>
 curl.exe -s --max-time 3 <http://127.0.0.1:8090/api/v1/health>
 curl.exe -s <http://127.0.0.1:8090/api/v1/health>
 curl.exe -s --max-time 5 "<http://127.0.0.1:8090/api/v1/sidecar/stats>"
+curl -s -i "<http://127.0.0.1:8090/api/v1/diagnostics/health>"
+
+netstat -ano | findstr "8090"
+Get-WmiObject Win32_Process -Filter "ProcessId = 63136 or ProcessId = 67616" | Select-Object ProcessId, CommandLine
+curl -s -o NUL -w "1. PC1 PS: HTTP %%{http_code} in %%{time_total}s\n" "<http://127.0.0.1:11434/api/ps>"
+curl -s -o NUL -w "2. PC2 PS: HTTP %%{http_code} in %%{time_total}s\n" "<http://nitro-an51755:11434/api/ps>"
+curl -s -o NUL -w "3. Sidecar Stats: HTTP %%{http_code} in %%{time_total}s\n" "<http://127.0.0.1:8090/api/v1/sidecar/stats>"
+curl -s -o NUL -w "4. Diagnostics Logs: HTTP %%{http_code} in %%{time_total}s\n" "<http://127.0.0.1:8090/api/v1/diagnostics/logs>"
+curl -s -o NUL -w "5. Lineage Chains: HTTP %%{http_code} in %%{time_total}s\n" "<http://127.0.0.1:8090/api/v1/documents/lineage/chains?limit=10>"
+
+09:36:23
+INFO
+[reposcroller.kb_sidecar]
+Starting Multi-Threaded Sidecar Pipeline (Producer, HTTP Pool, DB Writer) | Target: <http://NITRO-AN51755:11434>
+09:36:23
+INFO
+[reposcroller.kb_sidecar]
+Sidecar Indexing Pipeline continuous processing STARTED. Embedding Model: snowflake-arctic-embed2:latest on <http://NITRO-AN51755:11434>
+09:31:09
+WARNING
+[reposcroller.ai.embeddings]
+Tier 1 (Remote CUDA Node at <http://NITRO-AN51755:11434>) failed: Legacy HTTP 503: {"error":"server busy, please try again. maximum pending requests exceeded"}. Trying Tier 2 Local CPU Fallback (<http://localhost:11434>)...
+09:31:49
+WARNING
+[reposcroller.ai.embeddings]
+Tier 1 (Remote CUDA Node at <http://NITRO-AN51755:11434>) failed: Slice [0:32] on <http://NITRO-AN51755:11434> failed (HTTP 503: {"error":"server busy, please try again. maximum pending requests exceeded"}). Attempting Tier 2 Localhost CPU Fallback (<http://localhost:11434>)...
+09:32:49
+INFO
+[reposcroller.ai.embeddings]
+⚡ Successfully embedded 43 chunks using Tier 2 Localhost CPU Fallback (snowflake-arctic-embed:latest) at <http://localhost:11434>.
+09:33:45
+INFO
+[reposcroller.ai.telemetry]
+🔄 Switched Chat Routing -> Active Node: PC2 | Model: llama3.2:3b | URL: <http://NITRO-AN51755:11434>

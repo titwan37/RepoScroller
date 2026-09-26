@@ -1,4 +1,5 @@
 import json
+import time
 from typing import List, Dict, Any, Optional
 from reposcroller.config import settings
 from reposcroller.ledger.db import transaction
@@ -15,6 +16,8 @@ class PropertyGraphStore:
         self.graph_type = settings.GRAPH_STORE_TYPE
         self.neo4j_uri = neo4j_uri or settings.NEO4J_URI
         self._neo4j_driver = None
+        self._graph_stats_cache = None
+        self._graph_stats_cache_time = 0.0
 
         if self.graph_type == "neo4j":
             try:
@@ -215,8 +218,12 @@ class PropertyGraphStore:
                     })
             return grouped
 
-    def get_graph_stats(self) -> Dict[str, Any]:
-        """Aggregate statistics on knowledge graph nodes, edges, and document links."""
+    def get_graph_stats(self, max_age: float = 4.0) -> Dict[str, Any]:
+        """Aggregate statistics on knowledge graph nodes, edges, and document links with lightweight TTL caching."""
+        now = time.time()
+        if self._graph_stats_cache is not None and (now - self._graph_stats_cache_time) < max_age:
+            return self._graph_stats_cache
+
         with self.repo._lock:
             cur = self.repo.conn.cursor()
             cur.execute("SELECT COUNT(*) FROM knowledge_nodes")
@@ -234,13 +241,16 @@ class PropertyGraphStore:
             cur.execute("SELECT COUNT(*) FROM document_entity_links")
             total_links = cur.fetchone()[0]
 
-            return {
+            stats = {
                 "total_nodes": total_nodes,
                 "node_types": node_types,
                 "total_edges": total_edges,
                 "edge_types": edge_types,
                 "total_document_links": total_links,
             }
+            self._graph_stats_cache = stats
+            self._graph_stats_cache_time = now
+            return stats
 
     def get_3d_knowledge_universe(self, limit: int = 350) -> Dict[str, Any]:
         """Generate 3D Euclidean coordinates along axes of importance with unsupervised topological clustering."""
