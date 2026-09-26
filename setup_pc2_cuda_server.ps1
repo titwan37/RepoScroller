@@ -71,6 +71,20 @@ else {
     Write-Host "  -> Created Inbound Firewall Rule: TCP Port $Port [ALLOW]" -ForegroundColor Green
 }
 
+$telemetryRule = Get-NetFirewallRule -DisplayName "RepoScroller PC2 Telemetry" -ErrorAction SilentlyContinue
+if ($telemetryRule) {
+    Write-Host "  -> Firewall rule 'RepoScroller PC2 Telemetry' already exists (Active)." -ForegroundColor Green
+}
+else {
+    New-NetFirewallRule -DisplayName "RepoScroller PC2 Telemetry" `
+        -Description "Allow RepoScroller dashboard to query PC2 hardware telemetry (CPU, RAM, GPU) on port 11435" `
+        -Direction Inbound `
+        -LocalPort 11435 `
+        -Protocol TCP `
+        -Action Allow | Out-Null
+    Write-Host "  -> Created Inbound Firewall Rule: TCP Port 11435 [ALLOW]" -ForegroundColor Green
+}
+
 # 5. Restart Ollama Service / Background Process
 Write-Host ""
 Write-Host "[4/5] Restarting Ollama service with new network settings..." -ForegroundColor Cyan

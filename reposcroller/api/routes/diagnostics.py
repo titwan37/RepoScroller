@@ -84,6 +84,43 @@ def get_ollama_ps(node: str = Query("pc1", pattern="^(pc1|pc2)$")):
     return {"models": [], "node": node, "target_url": target_url, "online": False}
 
 
+_last_pc2_hw_state = None
+
+
+@router.get("/node/pc2/hardware")
+def get_pc2_hardware_telemetry():
+    """Proxy hardware probe (CPU %, RAM %, GPU %, Temp) to PC2 telemetry agent on port 11435."""
+    global _last_pc2_hw_state
+    import httpx
+    from urllib.parse import urlparse
+    from reposcroller.config import settings
+    base_host = "nitro-an51755"
+    if settings.OLLAMA_EMBED_BASE_URL:
+        try:
+            parsed = urlparse(settings.OLLAMA_EMBED_BASE_URL)
+            if parsed.hostname:
+                base_host = parsed.hostname
+        except Exception:
+            pass
+    target_url = f"http://{base_host}:11435/"
+    try:
+        with httpx.Client(timeout=1.5) as client:
+            resp = client.get(target_url)
+            if resp.status_code == 200:
+                data = resp.json()
+                data["online"] = True
+                data["target_url"] = target_url
+                if _last_pc2_hw_state != "online":
+                    logger.info(f"PC2 hardware telemetry agent connected successfully ({target_url})")
+                    _last_pc2_hw_state = "online"
+                return data
+    except Exception as e:
+        if _last_pc2_hw_state != "standby":
+            logger.debug(f"PC2 hardware telemetry standby ({target_url}): {e}")
+            _last_pc2_hw_state = "standby"
+    return {"online": False, "target_url": target_url, "reason": "PC2 telemetry agent in standby on port 11435"}
+
+
 
 @router.post("/clear")
 def clear_diagnostic_logs():

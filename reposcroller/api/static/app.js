@@ -72,9 +72,12 @@ window.fetch = async function(...args) {
     const response = await _rawFetch.apply(this, args);
     const latency = Math.round(performance.now() - startTime);
 
+    const isProbeOrDiag = url.includes("/api/v1/diagnostics") ||
+                          url.includes(":11435") ||
+                          url.includes("/api/ps");
+
     if (!response.ok) {
-      const isDiagEndpoint = url.includes("/api/v1/diagnostics");
-      if (!isDiagEndpoint) {
+      if (!isProbeOrDiag) {
         let errSnippet = "";
         try {
           const clone = response.clone();
@@ -100,8 +103,10 @@ window.fetch = async function(...args) {
     return response;
   } catch (netErr) {
     const latency = Math.round(performance.now() - startTime);
-    const isDiagEndpoint = url.includes("/api/v1/diagnostics");
-    if (!isDiagEndpoint) {
+    const isProbeOrDiag = url.includes("/api/v1/diagnostics") ||
+                          url.includes(":11435") ||
+                          url.includes("/api/ps");
+    if (!isProbeOrDiag) {
       logDiagnosticEntry({
         source: "network",
         level: "ERROR",
@@ -459,7 +464,7 @@ async function loadWorkloadTelemetry(force = false) {
     }
     if (flowWorkers) {
       const activeW = pl.active_http_workers !== undefined ? pl.active_http_workers : 0;
-      const totW = pl.total_http_workers || 6;
+      const totW = pl.total_http_workers || 4;
       flowWorkers.textContent = `${totW}x (${activeW} busy)`;
       flowWorkers.className = activeW > 0 ? "text-emerald font-bold" : "text-faint";
     }
@@ -2527,6 +2532,7 @@ async function clearDiagnosticLogs() {
   diagWatermarkId = 0;
   updateDiagnosticBadges();
   renderDiagnosticLogs();
+  if (typeof renderWs0DiagLogs === "function") renderWs0DiagLogs();
   showToast("Diagnostic logs cleared", "info", 2500);
 }
 
@@ -3547,13 +3553,21 @@ async function pollOllamaProcessInspector(force = false) {
   // 1B. Probe PC2 (nitro-an51755:11434/api/ps)
   try {
     let pc2Data = null;
+    const pc2Start = performance.now();
+    let pc2PingMs = 0;
     try {
       const pc2Direct = await fetch("http://nitro-an51755:11434/api/ps", { signal: AbortSignal.timeout(2800) });
-      if (pc2Direct.ok) pc2Data = await pc2Direct.json();
+      if (pc2Direct.ok) {
+        pc2Data = await pc2Direct.json();
+        pc2PingMs = Math.round(performance.now() - pc2Start);
+      }
     } catch (directErr) {
       // Fallback to backend proxy
       const pc2Proxy = await fetch("/api/v1/diagnostics/ollama/ps?node=pc2");
-      if (pc2Proxy.ok) pc2Data = await pc2Proxy.json();
+      if (pc2Proxy.ok) {
+        pc2Data = await pc2Proxy.json();
+        pc2PingMs = Math.round(performance.now() - pc2Start);
+      }
     }
 
     const tbodyPc2 = document.getElementById("ps-pc2-models-tbody");
@@ -3565,6 +3579,30 @@ async function pollOllamaProcessInspector(force = false) {
       const models = pc2Data.models;
       let totalVram = 0;
       models.forEach(m => totalVram += (m.size_vram || m.size || 0));
+
+      // Calculate VRAM Capacity vs NVIDIA GeForce RTX 3060 6GB (6,144 MB)
+      const rtx3060CapacityBytes = 6144 * 1024 * 1024;
+      const vramPct = Math.min(100, Math.round((totalVram / rtx3060CapacityBytes) * 1000) / 10);
+
+      // Update immediate VRAM Capacity Banner
+      const vramGaugeText = document.getElementById("ps-pc2-vram-gauge-text");
+      const vramBar = document.getElementById("ps-pc2-vram-bar");
+      const pingLiveEl = document.getElementById("ps-pc2-live-ping");
+      const pingValEl = document.getElementById("ps-pc2-ping-val");
+
+      if (vramGaugeText) vramGaugeText.textContent = `${formatBytes(totalVram)} / 6,144 MB (${vramPct}%)`;
+      if (vramBar) vramBar.style.width = `${Math.max(1, vramPct)}%`;
+      if (pingValEl) pingValEl.textContent = `${pc2PingMs} ms`;
+      if (pingLiveEl) {
+        const isFast = pc2PingMs < 100;
+        pingLiveEl.innerHTML = `<span class="ping-dot ${isFast ? 'ping-fast' : 'ping-slow'}"></span> Probe Latency: <strong>${pc2PingMs} ms</strong>`;
+      }
+
+      // Update Top Node Card VRAM Gauge
+      const topHwVram = document.getElementById("pc2-hw-vram");
+      const topHwVramBar = document.getElementById("pc2-hw-vram-bar");
+      if (topHwVram) topHwVram.textContent = `${formatBytes(totalVram)} (${vramPct}%)`;
+      if (topHwVramBar) topHwVramBar.style.width = `${Math.max(1, vramPct)}%`;
 
       if (countPc2) countPc2.textContent = `${formatBytes(totalVram)} CUDA`;
       if (badgePc2) {
@@ -3609,10 +3647,64 @@ async function pollOllamaProcessInspector(force = false) {
       }
       if (tbodyPc2) tbodyPc2.innerHTML = `<tr><td colspan="6" class="text-center text-muted">PC2 Node offline or unreachable (nitro-an51755:11434)</td></tr>`;
     }
+
+    // Probe PC2 Hardware Telemetry Sidecar (CPU, RAM, GPU Compute %)
+    await pollPc2HardwareMetrics();
+
   } catch (err) {
     console.debug("PC2 PS inspection error:", err);
   }
 }
+
+// 1C. Probe PC2 Hardware Telemetry Sidecar (via backend proxy)
+async function pollPc2HardwareMetrics() {
+  const cpuEl = document.getElementById("pc2-hw-cpu");
+  const cpuBar = document.getElementById("pc2-hw-cpu-bar");
+  const ramEl = document.getElementById("pc2-hw-ram");
+  const ramBar = document.getElementById("pc2-hw-ram-bar");
+  const gpuEl = document.getElementById("pc2-hw-gpu");
+  const gpuBar = document.getElementById("pc2-hw-gpu-bar");
+
+  try {
+    let hwData = null;
+    try {
+      const proxyRes = await fetch("/api/v1/diagnostics/node/pc2/hardware");
+      if (proxyRes.ok) {
+        const j = await proxyRes.json();
+        if (j.online) hwData = j;
+      }
+    } catch (_) {}
+
+    if (hwData && (hwData.online || hwData.status === "online")) {
+      const cpuVal = hwData.cpu_percent ?? 0;
+      if (cpuEl) cpuEl.textContent = `${cpuVal}%`;
+      if (cpuBar) cpuBar.style.width = `${Math.min(100, Math.max(1, cpuVal))}%`;
+
+      const ram = hwData.ram || {};
+      const ramUsedGb = ram.used_gb ?? (ram.used_mb ? (ram.used_mb / 1024).toFixed(1) : "--");
+      const ramTotGb = ram.total_gb ?? (ram.total_mb ? (ram.total_mb / 1024).toFixed(1) : "--");
+      const ramPct = ram.percent ?? 0;
+      if (ramEl) ramEl.textContent = `${ramUsedGb} / ${ramTotGb} GB (${ramPct}%)`;
+      if (ramBar) ramBar.style.width = `${Math.min(100, Math.max(1, ramPct))}%`;
+
+      const gpu = hwData.gpu || {};
+      const gpuLoad = gpu.load_percent ?? 0;
+      const gpuTemp = gpu.temperature_c ? ` (${gpu.temperature_c}°C)` : "";
+      if (gpuEl) gpuEl.textContent = `${gpuLoad}%${gpuTemp}`;
+      if (gpuBar) gpuBar.style.width = `${Math.min(100, Math.max(1, gpuLoad))}%`;
+    } else {
+      if (cpuEl) cpuEl.textContent = "Standby (:11435)";
+      if (ramEl) ramEl.textContent = "Standby";
+      if (gpuEl) gpuEl.textContent = "Standby";
+      if (cpuBar) cpuBar.style.width = "0%";
+      if (ramBar) ramBar.style.width = "0%";
+      if (gpuBar) gpuBar.style.width = "0%";
+    }
+  } catch (e) {
+    console.debug("PC2 hardware probe notice:", e);
+  }
+}
+
 
 // 2. Load Process Scroller 5-Stage Pipeline Telemetry & Hero Banner
 async function loadProcessScrollerData() {
@@ -3692,7 +3784,7 @@ async function loadProcessScrollerData() {
     // E. Stage 4: Remote CUDA GPU Embedder
     setTxt("ps-embedder-model", sidecarData.model || "snowflake-arctic-embed2");
     const activeWorkers = pl.active_http_workers || 0;
-    const totWorkers = pl.total_http_workers || 6;
+    const totWorkers = pl.total_http_workers || 4;
     setTxt("ps-embedder-pool", `${totWorkers}x Pool (${activeWorkers} busy)`);
 
     // F. Stage 5: Lineage & SQLite WAL Graph Store
@@ -3860,6 +3952,8 @@ function renderWs0DiagLogs() {
 
   const setCnt = (id, count) => { const el = document.getElementById(id); if (el) el.textContent = count; };
   setCnt("ws0-log-count-all", logs.length);
+  setCnt("ws0-log-count-last10", Math.min(10, logs.length));
+  setCnt("ws0-log-count-last10errors", Math.min(10, countErrors));
   setCnt("ws0-log-count-sidecar", countSidecar);
   setCnt("ws0-log-count-chunker", countChunker);
   setCnt("ws0-log-count-analyzer", countAnalyzer);
@@ -3867,28 +3961,40 @@ function renderWs0DiagLogs() {
   setCnt("ws0-log-count-errors", countErrors);
 
   // Apply Filter
-  const filtered = logs.filter(l => {
-    if (ws0DiagFilter === "all") return true;
-    const lmsg = (l.message || "").toLowerCase();
-    const llogger = (l.logger || "").toLowerCase();
-    if (ws0DiagFilter === "errors") return l.level === "ERROR" || l.level === "WARNING";
-    if (ws0DiagFilter === "sidecar") return llogger.includes("sidecar") || lmsg.includes("sidecar") || lmsg.includes("embed") || lmsg.includes("chunk");
-    if (ws0DiagFilter === "chunker") return llogger.includes("extractor") || lmsg.includes("pdf") || lmsg.includes("read") || lmsg.includes("chunker") || lmsg.includes("io");
-    if (ws0DiagFilter === "analyzer") return llogger.includes("analyzer") || lmsg.includes("classify") || lmsg.includes("taxonomy") || lmsg.includes("llm");
-    if (ws0DiagFilter === "crawler") return llogger.includes("crawler") || lmsg.includes("scan") || lmsg.includes("mount");
-    return true;
-  });
+  let filtered = [];
+  if (ws0DiagFilter === "last10") {
+    filtered = logs.slice(-10);
+  } else if (ws0DiagFilter === "last10errors") {
+    filtered = logs.filter(l => l.level === "ERROR" || l.level === "WARNING").slice(-10);
+  } else {
+    filtered = logs.filter(l => {
+      if (ws0DiagFilter === "all") return true;
+      const lmsg = (l.message || "").toLowerCase();
+      const llogger = (l.logger || "").toLowerCase();
+      if (ws0DiagFilter === "errors") return l.level === "ERROR" || l.level === "WARNING";
+      if (ws0DiagFilter === "sidecar") return llogger.includes("sidecar") || lmsg.includes("sidecar") || lmsg.includes("embed") || lmsg.includes("chunk");
+      if (ws0DiagFilter === "chunker") return llogger.includes("extractor") || lmsg.includes("pdf") || lmsg.includes("read") || lmsg.includes("chunker") || lmsg.includes("io");
+      if (ws0DiagFilter === "analyzer") return llogger.includes("analyzer") || lmsg.includes("classify") || lmsg.includes("taxonomy") || lmsg.includes("llm");
+      if (ws0DiagFilter === "crawler") return llogger.includes("crawler") || lmsg.includes("scan") || lmsg.includes("mount");
+      return true;
+    });
+  }
 
   if (emptyEl) {
     emptyEl.style.display = filtered.length === 0 ? "flex" : "none";
   }
 
-  // Display newest logs (limit to latest 80 for high performance)
-  const displaySlice = filtered.slice(-80);
+  // Display newest logs (if last10/last10errors already sliced, else limit to latest 80)
+  const displaySlice = (ws0DiagFilter === "last10" || ws0DiagFilter === "last10errors")
+    ? filtered
+    : filtered.slice(-80);
+
+  currentWs0FilteredLogs = displaySlice;
+
   listEl.innerHTML = displaySlice.map(l => {
     const lvl = (l.level || "INFO").toUpperCase();
     const lvlClass = lvl === "ERROR" ? "level-error" : (lvl === "WARNING" ? "level-warn" : "level-info");
-    const timeStr = l.timestamp ? l.timestamp.split("T")[1]?.substring(0, 8) || l.timestamp : "--:--:--";
+    const timeStr = l.timestamp ? (l.timestamp.includes("T") ? l.timestamp.split("T")[1]?.substring(0, 8) : l.timestamp) : "--:--:--";
     const src = l.logger || l.source || "sys";
 
     return `
@@ -3903,6 +4009,48 @@ function renderWs0DiagLogs() {
 
   if (container && autoscrollCb && autoscrollCb.checked) {
     container.scrollTop = container.scrollHeight;
+  }
+}
+
+let currentWs0FilteredLogs = [];
+
+// 5. Copy Filtered Diagnostic Logs to Clipboard
+async function copyWs0FilteredLogs() {
+  if (!currentWs0FilteredLogs || currentWs0FilteredLogs.length === 0) {
+    showToast("No log events in current view to copy", "info");
+    return;
+  }
+
+  const textLines = currentWs0FilteredLogs.map(l => {
+    const timeStr = l.timestamp ? (l.timestamp.includes("T") ? l.timestamp.split("T")[1]?.substring(0, 8) : l.timestamp) : "--:--:--";
+    const lvl = (l.level || "INFO").toUpperCase();
+    const src = l.logger || l.source || "sys";
+    let line = `[${timeStr}] [${lvl}] [${src}] ${l.message || ""}`;
+    if (l.exception) {
+      line += `\n  Exception / Stack:\n  ${l.exception}`;
+    }
+    return line;
+  }).join("\n");
+
+  try {
+    await navigator.clipboard.writeText(textLines);
+    showToast(`Copied ${currentWs0FilteredLogs.length} log events to clipboard!`, "success", 3000);
+    const btn = document.getElementById("btn-copy-ws0-logs");
+    if (btn) {
+      const origText = btn.innerHTML;
+      btn.innerHTML = `✓ Copied!`;
+      setTimeout(() => { btn.innerHTML = origText; }, 1800);
+    }
+  } catch (err) {
+    const textArea = document.createElement("textarea");
+    textArea.value = textLines;
+    textArea.style.position = "fixed";
+    textArea.style.opacity = "0";
+    document.body.appendChild(textArea);
+    textArea.select();
+    document.execCommand("copy");
+    document.body.removeChild(textArea);
+    showToast(`Copied ${currentWs0FilteredLogs.length} log events to clipboard!`, "success", 3000);
   }
 }
 

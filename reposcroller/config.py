@@ -101,6 +101,7 @@ class Settings(BaseSettings):
     CHUNK_OVERLAP_TOKENS: int = 80
     VECTOR_STORE_PATH: Path = Field(default=Path("reposcroller_vectors"))
     KB_SIDECAR_BATCH_SIZE: int = 10
+    KB_SIDECAR_HTTP_WORKERS: int = 4  # Concurrency matching PC2 Ollama OLLAMA_NUM_PARALLEL (prevents queue overflow)
 
     @property
     def chat_url(self) -> str:

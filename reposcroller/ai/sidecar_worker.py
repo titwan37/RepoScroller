@@ -45,7 +45,7 @@ class KnowledgeBaseSidecarWorker:
         self.embed_queue: Optional[Any] = None
         self.db_queue: Optional[Any] = None
         self.active_http_workers: int = 0
-        self.total_http_workers: int = 6
+        self.total_http_workers: int = int(getattr(settings, "KB_SIDECAR_HTTP_WORKERS", 4))
         self.producer_stage: str = "stopped"
         self.db_writer_stage: str = "stopped"
         self._workers_counter_lock = threading.Lock()

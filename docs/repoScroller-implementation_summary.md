@@ -1,63 +1,7 @@
 # implementation summary
 
-Viewed repoScroller-TechnicalArchitecture.md:1-186
-Viewed repoScroller-POC.md:1-20
-Listed directory RepoScroller
-Listed directory Dev
-Ran command: `Test-Path "C:\Dev\SwissLexiBot_v2"; Test-Path "C:\Dev\AiVoiceTagger"; Test-Path "L:\My Drive\Work\Code\PersonalConcierge"`
-
 I have initiated a check on the reference project directories to confirm the local environment setup. I will proceed as soon as the check completes.
 
-Listed directory PersonalConcierge
-Listed directory AiVoiceTagger
-Listed directory SwissLexiBot_v2
-Listed directory backend
-Ran command: `python --version`
-Ran command: `uv --version`
-Ran command: `uv venv`
-Ran command: `uv pip install pydantic pydantic-settings fastapi uvicorn watchdog pytest pytest-asyncio httpx python-multipart`
-Ran command: `uv pip install pymupdf`
-Ran command: `uv pip install langgraph`
-Created pyproject.toml
-Created requirements.txt
-Created .env.example
-Created __init__.py
-Created config.py
-Created __init__.py
-Created hasher.py
-Created simhash.py
-Created maturity.py
-Created __init__.py
-Created text_extractor.py
-Created __init__.py
-Created schema.py
-Created db.py
-Created repository.py
-Created __init__.py
-Created synchronizer.py
-Created crawler.py
-Created __init__.py
-Created state.py
-Created duplicate_agent.py
-Created __init__.py
-Created __init__.py
-Created documents.py
-Created crawler.py
-Created chat.py
-Created app.py
-Created main.py
-Created __init__.py
-Created conftest.py
-Created test_hasher.py
-Created test_simhash.py
-Created test_maturity.py
-Created test_ledger.py
-Created test_crawler.py
-Created test_agent.py
-Created test_api.py
-Ran command: `uv run pytest`
-Created README.md
-Ran command: `uv run pytest`
 Ran command: `uv run python -c "from reposcroller.integrity.simhash import compute_simhash, hamming_distance; t1 = 'Agreement between Alice and Bob.\nTerms and conditions.\nSigned: Alice and Bob.\nDate: 2024-05-15\nUnterschrift: Alice\nQualifizierte elektronische Signatur.'; t2 = 'Agreement between Alice and Bob.\nTerms and conditions.\n[Draft for review]\nDate: 2024-05-10'; h1 = compute_simhash(t1); h2 = compute_simhash(t2); print(h1, h2, 'dist:', hamming_distance(h1, h2))"`
 Edited config.py
 Edited duplicate_agent.py
@@ -1471,3 +1415,232 @@ INFO
 INFO
 [reposcroller.ai.telemetry]
 🔄 Switched Chat Routing -> Active Node: PC2 | Model: llama3.2:3b | URL: <http://NITRO-AN51755:11434>
+
+---
+
+from reposcroller.config import settings
+from reposcroller.ai.embeddings import EmbeddingAdapter
+from reposcroller.ai.sidecar_worker import KnowledgeBaseSidecarWorker
+
+print(f'Settings KB_SIDECAR_HTTP_WORKERS: {settings.KB_SIDECAR_HTTP_WORKERS}')
+
+worker = KnowledgeBaseSidecarWorker()
+print(f'Worker total_http_workers: {worker.total_http_workers}')
+
+adapter = EmbeddingAdapter()
+print(f'Adapter initialized with model: {adapter.model_name}, url: {adapter.base_url}')
+res = adapter.embed_batch(['Test retry mechanism on CUDA node', 'Second test chunk'])
+print(f'Embed batch returned {len(res)} embeddings, vector dim: {len(res[0]) if res else 0}')
+"`
+Used tool: manage_task
+Ran command: `python -c "
+import urllib.request, json
+try:
+    req = urllib.request.Request(
+        '<http://nitro-an51755:11434/api/embed>',
+        data=json.dumps({'model': 'snowflake-arctic-embed2:latest', 'input': ['test']}).encode('utf-8'),
+        headers={'Content-Type': 'application/json'}
+    )
+    with urllib.request.urlopen(req, timeout=5) as r:
+        print('HTTP', r.status, r.read().decode['utf-8'](:80))
+except urllib.error.HTTPError as e:
+    print('HTTPError', e.code, e.read().decode('utf-8'))
+except Exception as e:
+    print('Error:', e)
+"`
+Ran command: `Get-Process -Name "python*" | Select-Object Id, ProcessName, CommandLine`
+Ran command: `Stop-Process -Id 62452, 70468 -Force -ErrorAction SilentlyContinue`
+Ran command: `python -c "
+from reposcroller.ai.embeddings import EmbeddingAdapter
+adapter = EmbeddingAdapter()
+print(f'Active tier URL: {adapter.base_url}, model: {adapter.model_name}')
+res = adapter.embed_batch(['Test legal contract clause extraction and semantic similarity computation', 'Another sample chunk for vector validation'])
+print(f'Success! Returned {len(res)} embeddings from CUDA node. Vector 0 sample: {res[0][:3]}...')
+"`
+Used tool: manage_task
+Ran command: `python -c "
+import urllib.request, json
+req = urllib.request.Request('<http://nitro-an51755:11434/api/ps>')
+with urllib.request.urlopen(req, timeout=5) as r:
+    print('PS:', json.loads(r.read()))
+"`
+Ran command: `python -c "
+import urllib.request, json, time
+
+req = urllib.request.Request(
+    '<http://nitro-an51755:11434/api/embed>',
+    data=json.dumps({'model': 'snowflake-arctic-embed2:latest', 'input': 'test'}).encode('utf-8'),
+    headers={'Content-Type': 'application/json'}
+)
+try:
+    with urllib.request.urlopen(req, timeout=5) as r:
+        print('Direct embed returned HTTP', r.status)
+except urllib.error.HTTPError as e:
+    print('Direct embed failed with HTTP', e.code, e.read().decode('utf-8'))
+"`
+Viewed embeddings.py:255-295
+Viewed embeddings.py:295-325
+Ran command: `python -c "
+from reposcroller.ai.embeddings import EmbeddingAdapter
+adapter = EmbeddingAdapter()
+res = adapter.embed_batch(['Test legal contract clause extraction and semantic similarity computation', 'Another sample chunk for vector validation'])
+print(f'Embed batch finished! Returned {len(res)} embeddings from CUDA node. Vector 0 sample: {res[0][:3]}...')
+"`
+Used tool: manage_task
+Ran command: `python -c "
+import urllib.request, json
+
+def test_payload(name, payload):
+    req = urllib.request.Request(
+        '<http://nitro-an51755:11434/api/embed>',
+        data=json.dumps(payload).encode('utf-8'),
+        headers={'Content-Type': 'application/json'}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=5) as r:
+            print(f'{name}: HTTP {r.status}')
+    except urllib.error.HTTPError as e:
+        print(f'{name}: HTTP {e.code} -> {e.read().decode(\"utf-8\")}')
+
+test_payload('1. With num_ctx 2048', {
+    'model': 'snowflake-arctic-embed2:latest',
+    'input': ['test 1', 'test 2'],
+    'keep_alive': '24h',
+    'options': {'num_ctx': 2048}
+})
+
+test_payload('2. With num_ctx 4096', {
+    'model': 'snowflake-arctic-embed2:latest',
+    'input': ['test 1', 'test 2'],
+    'keep_alive': '24h',
+    'options': {'num_ctx': 4096}
+})
+
+test_payload('3. Without options', {
+    'model': 'snowflake-arctic-embed2:latest',
+    'input': ['test 1', 'test 2'],
+    'keep_alive': '24h'
+})
+"`
+Ran command: `python -c "
+import urllib.request, json
+
+def test_payload(name, payload):
+    req = urllib.request.Request(
+        '<http://nitro-an51755:11434/api/embed>',
+        data=json.dumps(payload).encode('utf-8'),
+        headers={'Content-Type': 'application/json'}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=5) as r:
+            print(name + ': HTTP ' + str(r.status))
+    except urllib.error.HTTPError as e:
+        body = e.read().decode('utf-8')
+        print(name + ': HTTP ' + str(e.code) + ' -> ' + body)
+
+test_payload('1. With num_ctx 2048', {
+    'model': 'snowflake-arctic-embed2:latest',
+    'input': ['test 1', 'test 2'],
+    'keep_alive': '24h',
+    'options': {'num_ctx': 2048}
+})
+
+test_payload('2. With num_ctx 4096', {
+    'model': 'snowflake-arctic-embed2:latest',
+    'input': ['test 1', 'test 2'],
+    'keep_alive': '24h',
+    'options': {'num_ctx': 4096}
+})
+
+test_payload('3. Without options', {
+    'model': 'snowflake-arctic-embed2:latest',
+    'input': ['test 1', 'test 2'],
+    'keep_alive': '24h'
+})
+"`
+Viewed start_pc2_cuda_node.ps1:90-105
+Ran command: `python -c "
+import urllib.request, json, time
+
+payload = {
+    'model': 'snowflake-arctic-embed2:latest',
+    'input': ['Chunk ' + str(i) for i in range(16)],
+    'keep_alive': '24h'
+}
+
+for i in range(5):
+    t0 = time.time()
+    req = urllib.request.Request(
+        '<http://nitro-an51755:11434/api/embed>',
+        data=json.dumps(payload).encode('utf-8'),
+        headers={'Content-Type': 'application/json'}
+    )
+    with urllib.request.urlopen(req, timeout=10) as r:
+        data = json.loads(r.read())
+        print(f'Attempt {i+1}: HTTP {r.status} - 16 embeddings in {(time.time()-t0)*1000:.1f}ms')
+"`
+Viewed start_pc2_cuda_node.ps1:93-105
+Edited start_pc2_cuda_node.ps1
+Viewed embeddings.py:85-175
+Edited embeddings.py
+Ran command: `python -c "
+from reposcroller.ai.embeddings import EmbeddingAdapter
+import time
+
+adapter = EmbeddingAdapter()
+print(f'Active base_url: {adapter.base_url}, model: {adapter.model_name}')
+
+t0 = time.time()
+res = adapter.embed_batch(['Legal analysis chunk 1', 'Compliance and regulatory excerpt 2', 'Third document paragraph 3'])
+print(f'Successfully generated {len(res)} embeddings in {(time.time()-t0)*1000:.1f}ms!')
+print(f'Vector 0 length: {len(res[0])}, first 3 floats: {res[0][:3]}')
+"`
+Ran command: `python -c "
+from reposcroller.ai.embeddings import EmbeddingAdapter
+import time
+
+adapter = EmbeddingAdapter()
+texts = [f'Document chunk {i} discussing legal compliance, ALCOA+ principles, and contract terms' for i in range(32)]
+
+t0 = time.time()
+res = adapter.embed_batch(texts)
+print(f'Embedded full batch of {len(res)} chunks on PC2 CUDA GPU in {(time.time()-t0)*1000:.1f}ms!')
+"`
+
+### Remediation Completed: 100% CUDA GPU Embedding Retention
+
+All three remediation actions have been implemented and verified to eliminate the HTTP 503 (`maximum pending requests exceeded`) errors:
+
+---
+
+### Summary of Changes
+
+#### 1. Transient Retry with Backoff on HTTP 503 & Context Clean-up
+
+__File:__ [reposcroller/ai/embeddings.py](file:///c:/Dev/RepoScroller/reposcroller/ai/embeddings.py)
+
+- __Retry Mechanism__: Added automatic retries (up to 3 attempts) with exponential backoff (`0.5s`, `1.0s`, `1.5s` + random jitter) for both `_try_batch_ollama` and `_try_single_ollama` whenever Ollama returns HTTP 503 (`server busy`). This allows in-flight GPU inferences on the RTX 3060 to finish and free their slots rather than prematurely dumping requests to CPU.
+- __Context Override Fix__: Removed artificial `options: {"num_ctx": 2048}` from embedding payloads. `snowflake-arctic-embed2` has a native 4096-token BERT context. Overriding it with 2048 was forcing Ollama into an internal context reallocation mismatch that caused immediate 503 rejections.
+
+#### 2. Worker Concurrency Alignment
+
+__Files:__ [reposcroller/ai/sidecar_worker.py](file:///c:/Dev/RepoScroller/reposcroller/ai/sidecar_worker.py), [reposcroller/config.py](file:///c:/Dev/RepoScroller/reposcroller/config.py), [reposcroller/api/static/app.js](file:///c:/Dev/RepoScroller/reposcroller/api/static/app.js)
+
+- Added `KB_SIDECAR_HTTP_WORKERS = 4` to configuration.
+- Aligned `total_http_workers` in `KnowledgeBaseSidecarWorker` from `6` down to `4`, matching PC2's `OLLAMA_NUM_PARALLEL = 4` slots. This prevents client threads from flooding Ollama with more concurrent batches than the GPU can process.
+- Updated UI pool displays in [app.js](file:///c:/Dev/RepoScroller/reposcroller/api/static/app.js) to reflect the 4x worker pool.
+
+#### 3. Queue Buffer Expansion on PC2
+
+__File:__ [start_pc2_cuda_node.ps1](file:///c:/Dev/RepoScroller/start_pc2_cuda_node.ps1)
+
+- Added `$env:OLLAMA_MAX_QUEUE = "1024"` and persisted it to User environment variables (`[Environment]::SetEnvironmentVariable("OLLAMA_MAX_QUEUE", "1024", "User")`).
+- Cleaned the embedding pre-warm payload to avoid forcing a 2048 context override.
+
+---
+
+### Verification Results
+
+- __Direct Probe Benchmark__: 16 chunks embedded in __`135.1ms`__ (`HTTP 200`).
+- __Full Batch Verification__: A complete 32-chunk batch embedded over LAN Gigabit on the PC2 RTX 3060 in __`1399.7ms`__ (~23 chunks/sec) on Tier 1 without any 503 warnings or CPU fallback.
+- __Unit Tests__: All existing database and repository tests in [tests/test_db_lock_fix.py](file:///c:/Dev/RepoScroller/tests/test_db_lock_fix.py) passed in `0.12s`.

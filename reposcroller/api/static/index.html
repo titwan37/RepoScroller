@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/style.css?v=15">
+  <link rel="stylesheet" href="/static/style.css?v=17">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 </head>
@@ -466,6 +466,38 @@
             <div class="node-metric-val text-cyan" id="pc2-activity-status">100% GPU</div>
           </div>
         </div>
+
+        <!-- PC2 Hardware Telemetry Live Gauges (CPU, Host RAM, RTX 3060 Compute, VRAM) -->
+        <div class="pc2-hw-live-gauges" id="pc2-hw-live-gauges">
+          <div class="hw-gauge-cell">
+            <div class="hw-gauge-label-row">
+              <span class="hw-lbl">CPU Load</span>
+              <span class="hw-val text-cyan" id="pc2-hw-cpu">-- %</span>
+            </div>
+            <div class="hw-bar-track"><div class="hw-bar-fill bg-cyan" id="pc2-hw-cpu-bar" style="width: 0%"></div></div>
+          </div>
+          <div class="hw-gauge-cell">
+            <div class="hw-gauge-label-row">
+              <span class="hw-lbl">Host RAM</span>
+              <span class="hw-val text-indigo" id="pc2-hw-ram">-- GB</span>
+            </div>
+            <div class="hw-bar-track"><div class="hw-bar-fill bg-indigo" id="pc2-hw-ram-bar" style="width: 0%"></div></div>
+          </div>
+          <div class="hw-gauge-cell">
+            <div class="hw-gauge-label-row">
+              <span class="hw-lbl">GPU Compute</span>
+              <span class="hw-val text-emerald" id="pc2-hw-gpu">-- %</span>
+            </div>
+            <div class="hw-bar-track"><div class="hw-bar-fill bg-emerald" id="pc2-hw-gpu-bar" style="width: 0%"></div></div>
+          </div>
+          <div class="hw-gauge-cell">
+            <div class="hw-gauge-label-row">
+              <span class="hw-lbl">VRAM (6GB Max)</span>
+              <span class="hw-val text-amber font-bold" id="pc2-hw-vram">-- MB (0%)</span>
+            </div>
+            <div class="hw-bar-track"><div class="hw-bar-fill bg-amber" id="pc2-hw-vram-bar" style="width: 0%"></div></div>
+          </div>
+        </div>
       </div>
     </div>
   </section>
@@ -717,6 +749,22 @@
           <span class="node-status-badge badge-online" id="ps-pc2-status-badge"><span class="dot"></span> ⚡ CUDA Ready</span>
         </div>
 
+        <!-- Immediate VRAM Capacity & LAN Latency Banner -->
+        <div class="pc2-vram-gauge-banner" id="pc2-vram-gauge-banner">
+          <div class="vram-banner-header">
+            <span class="vram-banner-title">
+              <span class="text-cyan font-bold">⚡ RTX 3060 VRAM Allocation:</span>
+              <strong id="ps-pc2-vram-gauge-text">664 MB / 6,144 MB (10.8%)</strong>
+            </span>
+            <span class="vram-banner-ping" id="ps-pc2-live-ping">
+              <span class="ping-dot ping-fast"></span> Probe Latency: <strong id="ps-pc2-ping-val">-- ms</strong>
+            </span>
+          </div>
+          <div class="vram-bar-track">
+            <div class="vram-bar-fill" id="ps-pc2-vram-bar" style="width: 10.8%"></div>
+          </div>
+        </div>
+
         <div class="ps-models-table-wrap">
           <table class="ps-models-table">
             <thead>
@@ -868,6 +916,8 @@
       <div class="diag-stream-controls">
         <div class="diag-stream-filter-buttons">
           <button class="stream-filter-btn active" data-filter="all" onclick="setWs0DiagFilter('all')">All (<span id="ws0-log-count-all">0</span>)</button>
+          <button class="stream-filter-btn" data-filter="last10" onclick="setWs0DiagFilter('last10')">Last 10 (<span id="ws0-log-count-last10">0</span>)</button>
+          <button class="stream-filter-btn" data-filter="last10errors" onclick="setWs0DiagFilter('last10errors')">Last 10 Errors/Warn (<span id="ws0-log-count-last10errors">0</span>)</button>
           <button class="stream-filter-btn" data-filter="sidecar" onclick="setWs0DiagFilter('sidecar')">Sidecar (<span id="ws0-log-count-sidecar">0</span>)</button>
           <button class="stream-filter-btn" data-filter="chunker" onclick="setWs0DiagFilter('chunker')">Chunker / IO (<span id="ws0-log-count-chunker">0</span>)</button>
           <button class="stream-filter-btn" data-filter="analyzer" onclick="setWs0DiagFilter('analyzer')">Analyzer (<span id="ws0-log-count-analyzer">0</span>)</button>
@@ -878,6 +928,7 @@
           <label class="diag-autoscroll-label">
             <input type="checkbox" id="ws0-diag-autoscroll" checked> Auto-scroll
           </label>
+          <button class="btn btn-outline btn-xs" id="btn-copy-ws0-logs" onclick="copyWs0FilteredLogs()" title="Copy current filtered logs to clipboard">📋 Copy</button>
           <button class="btn btn-outline btn-xs" onclick="clearDiagnosticLogs()" title="Clear buffered logs">Clear</button>
         </div>
       </div>
@@ -1522,6 +1573,6 @@
     </div>
   </div>
   
-  <script src="/static/app.js?v=15"></script>
+  <script src="/static/app.js?v=18"></script>
 </body>
 </html>

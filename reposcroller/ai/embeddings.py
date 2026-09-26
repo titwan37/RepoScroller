@@ -3,6 +3,7 @@
 import math
 import hashlib
 import time
+import random
 import logging
 from typing import List, Optional, Union, Tuple
 import httpx
@@ -78,43 +79,56 @@ class EmbeddingAdapter:
             vec = [v / norm for v in vec]
         return vec
 
-    def _try_single_ollama(self, url: str, model: str, text: str) -> Tuple[Optional[List[float]], Optional[str]]:
-        """Attempt single text embedding on a specific Ollama node, returning (embedding, error_reason)."""
+    def _try_single_ollama(self, url: str, model: str, text: str, max_retries: int = 3) -> Tuple[Optional[List[float]], Optional[str]]:
+        """Attempt single text embedding on a specific Ollama node with transient retry on HTTP 503 (server busy)."""
         last_err = None
-        # 1. Try modern Ollama /api/embed
-        try:
-            resp = self._client.post(
-                f"{url}/api/embed",
-                json={
-                    "model": model,
-                    "input": text,
-                    "keep_alive": self.keep_alive,
-                    "options": {"num_ctx": getattr(settings, "OLLAMA_NUM_CTX", 2048)}
-                }
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                embeddings = data.get("embeddings", [])
-                if embeddings and isinstance(embeddings[0], list):
-                    return embeddings[0], None
-            else:
-                last_err = f"HTTP {resp.status_code}: {resp.text[:120]}"
-        except httpx.TimeoutException:
-            last_err = f"Request timed out (>{self.timeout}s)"
-        except httpx.ConnectError:
-            last_err = "Connection refused (host offline or port closed)"
-        except Exception as exc:
-            last_err = str(exc)
+        backoff_delays = [0.5, 1.0, 1.5]
 
-        # 2. Try legacy Ollama /api/embeddings
+        # 1. Try modern Ollama /api/embed with 503 backoff
+        for attempt in range(max_retries + 1):
+            try:
+                resp = self._client.post(
+                    f"{url}/api/embed",
+                    json={
+                        "model": model,
+                        "input": text,
+                        "keep_alive": self.keep_alive
+                    }
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    embeddings = data.get("embeddings", [])
+                    if embeddings and isinstance(embeddings[0], list):
+                        return embeddings[0], None
+                elif resp.status_code == 503 or "server busy" in resp.text.lower() or "maximum pending requests" in resp.text.lower():
+                    if attempt < max_retries:
+                        delay = backoff_delays[min(attempt, len(backoff_delays) - 1)] + random.uniform(0.05, 0.20)
+                        logger.info(f"Ollama node {url} busy (HTTP 503). Retrying single embedding attempt {attempt + 1}/{max_retries} in {delay:.2f}s...")
+                        time.sleep(delay)
+                        continue
+                last_err = f"HTTP {resp.status_code}: {resp.text[:120]}"
+                break
+            except httpx.TimeoutException:
+                if attempt < max_retries:
+                    time.sleep(0.5)
+                    continue
+                last_err = f"Request timed out (>{self.timeout}s)"
+                break
+            except httpx.ConnectError:
+                last_err = "Connection refused (host offline or port closed)"
+                break
+            except Exception as exc:
+                last_err = str(exc)
+                break
+
+        # 2. Try legacy Ollama /api/embeddings fallback if /api/embed not supported
         try:
             resp_legacy = self._client.post(
                 f"{url}/api/embeddings",
                 json={
                     "model": model,
                     "prompt": text,
-                    "keep_alive": self.keep_alive,
-                    "options": {"num_ctx": getattr(settings, "OLLAMA_NUM_CTX", 2048)}
+                    "keep_alive": self.keep_alive
                 }
             )
             if resp_legacy.status_code == 200:
@@ -131,34 +145,50 @@ class EmbeddingAdapter:
 
         return None, last_err
 
-    def _try_batch_ollama(self, url: str, model: str, texts: List[str]) -> Tuple[Optional[List[List[float]]], int, Optional[str]]:
-        """Attempt batch text embedding on a specific Ollama node, returning (embeddings, tokens, error_reason)."""
-        try:
-            resp = self._client.post(
-                f"{url}/api/embed",
-                json={
-                    "model": model,
-                    "input": texts,
-                    "keep_alive": self.keep_alive,
-                    "options": {"num_ctx": getattr(settings, "OLLAMA_NUM_CTX", 2048)}
-                }
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                embeddings = data.get("embeddings", [])
-                tokens = data.get("prompt_eval_count")
-                if not tokens:
-                    tokens = sum(len(t.split()) for t in texts)
-                if embeddings and len(embeddings) == len(texts):
-                    return embeddings, int(tokens), None
-                return None, 0, f"Incomplete batch returned: got {len(embeddings or [])}/{len(texts)} embeddings"
-            return None, 0, f"HTTP {resp.status_code}: {resp.text[:120]}"
-        except httpx.TimeoutException:
-            return None, 0, f"Request timed out (>{self.timeout}s)"
-        except httpx.ConnectError:
-            return None, 0, f"Connection refused to {url}"
-        except Exception as exc:
-            return None, 0, str(exc)
+    def _try_batch_ollama(self, url: str, model: str, texts: List[str], max_retries: int = 3) -> Tuple[Optional[List[List[float]]], int, Optional[str]]:
+        """Attempt batch text embedding on a specific Ollama node with transient retry on HTTP 503 (server busy)."""
+        backoff_delays = [0.5, 1.0, 1.5]
+
+        for attempt in range(max_retries + 1):
+            try:
+                resp = self._client.post(
+                    f"{url}/api/embed",
+                    json={
+                        "model": model,
+                        "input": texts,
+                        "keep_alive": self.keep_alive
+                    }
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    embeddings = data.get("embeddings", [])
+                    tokens = data.get("prompt_eval_count")
+                    if not tokens:
+                        tokens = sum(len(t.split()) for t in texts)
+                    if embeddings and len(embeddings) == len(texts):
+                        return embeddings, int(tokens), None
+                    return None, 0, f"Incomplete batch returned: got {len(embeddings or [])}/{len(texts)} embeddings"
+
+                # Check if transient HTTP 503 server busy
+                if resp.status_code == 503 or "server busy" in resp.text.lower() or "maximum pending requests" in resp.text.lower():
+                    if attempt < max_retries:
+                        delay = backoff_delays[min(attempt, len(backoff_delays) - 1)] + random.uniform(0.05, 0.25)
+                        logger.info(f"Ollama node {url} busy (HTTP 503). Retrying batch attempt {attempt + 1}/{max_retries} in {delay:.2f}s...")
+                        time.sleep(delay)
+                        continue
+
+                return None, 0, f"HTTP {resp.status_code}: {resp.text[:120]}"
+            except httpx.TimeoutException:
+                if attempt < max_retries:
+                    time.sleep(1.0)
+                    continue
+                return None, 0, f"Request timed out (>{self.timeout}s)"
+            except httpx.ConnectError:
+                return None, 0, f"Connection refused to {url}"
+            except Exception as exc:
+                return None, 0, str(exc)
+
+        return None, 0, f"HTTP 503: server busy after {max_retries} retries"
 
     def embed_text(self, text: str) -> List[float]:
         """Embed a single string through the 3-tier resilient embedding hierarchy."""
