@@ -319,3 +319,112 @@ I have added the contextual story on the **"Taxonomy as a Skill" (`SKILL.md`)** 
    - Outlines how Qdrant payload updates (`set_payload`) execute instantaneously without requiring vector re-computation, complete with ALCOA+ audit logging.
 
 You can inspect the full specification in [docs/repoScroller-ClassificationRules.md](file:///c:/Dev/RepoScroller/docs/repoScroller-ClassificationRules.md).
+
+---
+
+# 1. Sync skill
+
+sync_info = tm.sync_from_skill()
+print('[1/3] Synced skill:', sync_info['version'])
+
+# 2. Execute live evolution across all documents
+
+engine = TaxonomyEvolutionEngine(taxonomy_manager=tm)
+print('[2/3] Executing live evolution (dry_run=False)...')
+result = engine.evolve_ledger(dry_run=False, limit=30000, target_version='v1.0.0')
+
+elapsed = round(time.time() - t0, 2)
+print(f'[3/3] Completed live evolution in {elapsed}s!')
+print('  Candidates examined:', result['candidates_examined'])
+print('  Documents updated to v1.0.0:', result['applied_count'])
+print('  Category reclassifications:', result['reclassifications_count'])
+print('  Reclassified breakdown:')
+for cat, count in sorted(result['reclassified_by_type'].items(), key=lambda x: -x[1]):
+    print(f'    - {cat}: {count}')
+"`
+Used tool: manage_task
+Ran command: `python -c "
+from reposcroller.ledger.db import get_db_connection
+
+conn = get_db_connection()
+cur = conn.cursor()
+
+# 1. Audit log
+
+cur.execute('SELECT COUNT(*) FROM audit_log WHERE action = \'taxonomy_evolution\'')
+audit_count = cur.fetchone()[0]
+
+# 2. KB queue pending
+
+cur.execute('SELECT status, COUNT(*) FROM kb_processing_queue GROUP BY status')
+kb_counts = dict(cur.fetchall())
+
+# 3. Taxonomy version distribution
+
+cur.execute('SELECT taxonomy_version, COUNT(*) FROM document_ledger GROUP BY taxonomy_version')
+version_counts = dict(cur.fetchall())
+
+# 4. Top categories in ledger
+
+cur.execute('SELECT doc_type, COUNT(*) as c FROM document_ledger GROUP BY doc_type ORDER BY c DESC LIMIT 15')
+cat_counts = [(r[0], r[1]) for r in cur.fetchall()]
+
+print('VERIFICATION RESULTS:')
+print('  - Audit log entries created:', audit_count)
+print('  - KB Queue status:', kb_counts)
+print('  - Taxonomy versions in ledger:', version_counts)
+print('  - Top categories in ledger:')
+for cat, count in cat_counts:
+    print(f'      {cat}: {count}')
+"`
+Used tool: manage_task
+Viewed task-1054.log
+Used tool: manage_task
+Ran command: `python -c "import httpx; r = httpx.get('<http://127.0.0.1:8090/api/v1/taxonomy/evolution/status>'); print(r.status_code, r.json())"`
+Ran command: `python -c "
+import sqlite3
+conn = sqlite3.connect('reposcroller_ledger.db')
+cur = conn.cursor()
+cur.execute('SELECT COUNT(*) FROM audit_log WHERE action = \'taxonomy_evolution\'')
+print('Audit entries:', cur.fetchone()[0])
+cur.execute('SELECT status, COUNT(*) FROM kb_processing_queue GROUP BY status')
+print('KB Queue counts:', cur.fetchall())
+"`
+Used tool: manage_task
+Used tool: manage_task
+Ran command: `python -c "import httpx; r = httpx.get('<http://127.0.0.1:8090/api/v1/sidecar/stats>'); print(r.json()['queue'])"`
+Browser task: "Verify Document Ledger after Taxonomy Evolution"
+
+### 🚀 Live Taxonomy Evolution Completed Successfully
+
+The live evolution (`dry_run=False`) was executed across the entire repository in **4.76 seconds**.
+
+---
+
+### Key Execution Highlights
+
+1. **Document Ledger Migration**:
+   - **26,287 total documents** examined and stamped with **`taxonomy_version = 'v1.0.0'`**.
+   - **Migration Completion**: **100.0%** (0 pending unversioned documents).
+
+2. **Reclassification into the Career Research Axis**:
+   A total of **3,842 documents** were reclassified from previous generic buckets into their precise canonical categories:
+
+   | Canonical Category | Documents Reclassified | Examples / Origins |
+   | :--- | :--- | :--- |
+   | **`career_cover_letter`** | **3,147** | Job applications, motivation letters (Siemens, Kyndryl, StackBlitz, Tecan, etc.) |
+   | **`career_cv`** | **555** | Curricula Vitae, resumes, functional skill profiles |
+   | **`career_portfolio`** | **82** | Technical portfolios, enterprise architecture case studies, work samples |
+   | **`identity_credentials`** | **54** | Employer reference letters (*Arbeitszeugnisse* / *Certificats de travail*) disambiguated from CVs |
+   | **`career_profile`** | **4** | Professional bio profiles and LinkedIn exports |
+
+3. **CDC Sidecar & Vector Re-indexing**:
+   - All 3,842 reclassified documents were atomically enqueued into **`kb_processing_queue`** with status `'pending'`.
+   - The remote CUDA worker on **PC2** is picking up the queue to re-embed vector chunks with their updated category headers (`Category: CAREER_COVER_LETTER`, `Category: CAREER_CV`, etc.) and synchronize GraphRAG entity nodes contemporaneously.
+
+4. **ALCOA+ Traceability**:
+   - Every single reclassified document has an audit log entry in the SQLite WAL ledger under `action = 'taxonomy_evolution'`, logging the prior category, the newly assigned category, the applied heuristic rule, and the timestamp.
+
+5. **Frontend Verification**:
+   - Navigated to the dashboard at `http://127.0.0.1:8090/` (**Workspace 1: Document Ledger & Duplicates**).
+   - Confirmed that the Category Filter dropdown reflects the new categories with live document counts, and table rows now proudly display their updated badges (`CAREER_COVER_LETTER`, `CAREER_CV`, etc.).

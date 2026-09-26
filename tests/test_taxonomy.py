@@ -4,7 +4,6 @@ from reposcroller.ai.taxonomy import TaxonomyManager, TaxonomyCategory
 from reposcroller.ai.analyzer import DocumentAnalyzer
 from reposcroller.ledger.repository import DocumentRepository
 
-
 def test_taxonomy_seeding_multilingual(temp_db):
     mgr = TaxonomyManager(db_conn=temp_db)
     cats = mgr.get_all_categories()
