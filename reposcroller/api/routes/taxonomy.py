@@ -3,7 +3,7 @@
 from typing import Dict, Any, List, Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
-from reposcroller.ai.taxonomy import TaxonomyManager, TaxonomyCategory, TaxonomyRefiner
+from reposcroller.ai.taxonomy import TaxonomyManager, TaxonomyCategory, TaxonomyRefiner, TaxonomyEvolutionEngine
 
 router = APIRouter(prefix="/taxonomy", tags=["Taxonomy & Topics"])
 
@@ -17,6 +17,17 @@ class RefineRequest(BaseModel):
     sample_size: int = 100
 
 
+class EvolutionRequest(BaseModel):
+    dry_run: bool = True
+    limit: int = 500
+    source_root_filter: Optional[str] = None
+    target_version: str = "v1.0.0"
+
+
+class SyncSkillRequest(BaseModel):
+    skill_path: Optional[str] = None
+
+
 @router.get("/")
 def list_taxonomy() -> Dict[str, Any]:
     """Retrieve full global multilingual taxonomy (EN, FR, DE) with live document counts."""
@@ -26,6 +37,25 @@ def list_taxonomy() -> Dict[str, Any]:
         "count": len(categories),
         "categories": [c.model_dump() for c in categories]
     }
+
+
+@router.get("/versions")
+def list_taxonomy_versions() -> Dict[str, Any]:
+    """List all registered taxonomy versions in the ledger."""
+    mgr = TaxonomyManager()
+    versions = mgr.get_registered_versions()
+    return {
+        "count": len(versions),
+        "versions": versions
+    }
+
+
+@router.post("/sync-skill")
+def sync_taxonomy_from_skill(req: Optional[SyncSkillRequest] = None) -> Dict[str, Any]:
+    """Sync taxonomy categories and metadata from declarative .skill.md specification."""
+    mgr = TaxonomyManager()
+    path = req.skill_path if req and req.skill_path else None
+    return mgr.sync_from_skill(skill_path=path)
 
 
 @router.post("/categories")
@@ -59,4 +89,27 @@ def trigger_taxonomy_refinement(req: RefineRequest) -> Dict[str, Any]:
     """Trigger LLM-driven topic clustering: associates synonyms and dissociates broad categories into subtopics."""
     refiner = TaxonomyRefiner()
     result = refiner.run_refinement(sample_size=req.sample_size)
+    return result
+
+
+@router.get("/evolution/status")
+def get_taxonomy_evolution_status(target_version: str = Query("v1.0.0", description="Target taxonomy version")) -> Dict[str, Any]:
+    """Get document distribution by taxonomy version and pending evolution counts."""
+    engine = TaxonomyEvolutionEngine()
+    return engine.get_evolution_status(target_version=target_version)
+
+
+@router.post("/evolve")
+def evolve_document_taxonomy(req: EvolutionRequest) -> Dict[str, Any]:
+    """
+    Evolve documents to the target taxonomy version.
+    Supports dry_run=True (preview) or dry_run=False (persist to ledger and enqueue to KB sidecar).
+    """
+    engine = TaxonomyEvolutionEngine()
+    result = engine.evolve_ledger(
+        dry_run=req.dry_run,
+        limit=req.limit,
+        source_root_filter=req.source_root_filter,
+        target_version=req.target_version
+    )
     return result

@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS document_ledger (
     text_snippet TEXT,
     doc_date TEXT,                  -- Substantive date of document (YYYY-MM-DD)
     doc_date_source TEXT,           -- filename, content, mtime
+    taxonomy_version TEXT DEFAULT 'v0.9.0', -- Version of taxonomy applied (e.g. v1.0.0)
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     last_verified TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -73,9 +74,20 @@ CREATE TABLE IF NOT EXISTS global_taxonomy (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Taxonomy Version Registry
+CREATE TABLE IF NOT EXISTS taxonomy_versions (
+    version TEXT PRIMARY KEY,            -- e.g. "v1.0.0"
+    name TEXT NOT NULL,
+    description TEXT,
+    skill_file TEXT,
+    status TEXT DEFAULT 'active',        -- candidate, staging, active, superseded
+    applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Indices for rapid duplicate lookup & lineage navigation
 CREATE INDEX IF NOT EXISTS idx_taxonomy_parent ON global_taxonomy(parent_id);
 CREATE INDEX IF NOT EXISTS idx_ledger_simhash ON document_ledger(simhash);
+CREATE INDEX IF NOT EXISTS idx_ledger_taxonomy_version ON document_ledger(taxonomy_version);
 CREATE INDEX IF NOT EXISTS idx_locations_sha256 ON file_locations(sha256_hash);
 CREATE INDEX IF NOT EXISTS idx_locations_abs_path ON file_locations(absolute_path);
 CREATE INDEX IF NOT EXISTS idx_locations_root ON file_locations(storage_root);

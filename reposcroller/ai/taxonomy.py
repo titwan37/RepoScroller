@@ -2,6 +2,8 @@
 
 import json
 import logging
+import re
+from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 from pydantic import BaseModel, Field
 import httpx
@@ -24,6 +26,51 @@ class TaxonomyCategory(BaseModel):
 
 
 DEFAULT_TAXONOMY: List[Dict[str, Any]] = [
+    {
+        "category_id": "career_research",
+        "parent_id": None,
+        "name_en": "Job Search & Career Dossiers",
+        "name_fr": "Recherche d'emploi & Dossiers de candidature",
+        "name_de": "Stellensuche & Bewerbungsdossiers",
+        "description": "Job applications, career portfolios, profiles, resumes, and candidate dossier assets.",
+        "keywords": ["career", "job", "candidature", "emploi", "bewerbung", "stelle", "recruitment", "recruteur"]
+    },
+    {
+        "category_id": "career_cv",
+        "parent_id": "career_research",
+        "name_en": "Curriculum Vitae & Resumes",
+        "name_fr": "CV & Parcours professionnel",
+        "name_de": "Lebenslauf & Résumés",
+        "description": "Chronological & functional CVs, career timelines, and technical skill matrices.",
+        "keywords": ["cv", "curriculum vitae", "resume", "work experience", "career history", "expérience professionnelle", "parcours", "lebenslauf", "berufserfahrung", "werdegang"]
+    },
+    {
+        "category_id": "career_cover_letter",
+        "parent_id": "career_research",
+        "name_en": "Cover & Motivation Letters",
+        "name_fr": "Lettres de motivation & Candidatures",
+        "name_de": "Bewerbungsschreiben & Motivationsbriefe",
+        "description": "Targeted cover letters, job application letters, and motivation pitches.",
+        "keywords": ["cover letter", "letter of motivation", "job application", "dear hiring manager", "lettre de motivation", "candidature", "postulation", "bewerbungsschreiben", "motivationsschreiben", "bewerbung um die stelle"]
+    },
+    {
+        "category_id": "career_profile",
+        "parent_id": "career_research",
+        "name_en": "Professional Profiles & Bios",
+        "name_fr": "Profils professionnels & Bio",
+        "name_de": "Berufsprofile & Kurzbiografien",
+        "description": "Executive biographies, professional summaries, speaker bios, and LinkedIn profiles.",
+        "keywords": ["professional profile", "executive bio", "about me", "summary of qualifications", "linkedin profile", "profil professionnel", "résumé exécutif", "kurzprofil", "berufsprofil"]
+    },
+    {
+        "category_id": "career_portfolio",
+        "parent_id": "career_research",
+        "name_en": "Work Portfolios & Case Studies",
+        "name_fr": "Portfolios de projets & Réalisations",
+        "name_de": "Arbeitsportfolios & Projektbeispiele",
+        "description": "Work sample showcases, system blueprints, engineering case studies, and design dossiers.",
+        "keywords": ["portfolio", "work samples", "case study", "project showcase", "selected achievements", "design dossier", "dossier de réalisations", "arbeitsproben", "projektdokumentation", "fallstudie", "referenzprojekte"]
+    },
     {
         "category_id": "legal_contract",
         "parent_id": None,
@@ -108,11 +155,11 @@ DEFAULT_TAXONOMY: List[Dict[str, Any]] = [
     {
         "category_id": "identity_credentials",
         "parent_id": None,
-        "name_en": "Identity, Credentials & CVs",
-        "name_fr": "Identité, Diplômes & CV",
-        "name_de": "Identitätsnachweise, Zeugnisse & Lebenslauf",
-        "description": "Resumes, certificates, diplomas, ID scans, employment references.",
-        "keywords": ["cv", "resume", "diploma", "passport", "diplôme", "attestation", "certificat", "lebenslauf", "arbeitszeugnis"]
+        "name_en": "Diplomas, Certificates & References",
+        "name_fr": "Diplômes, Certificats de travail & ID",
+        "name_de": "Zeugnisse, Arbeitsbestätigungen & Nachweise",
+        "description": "Official diplomas, employer reference letters (Arbeitszeugnisse), certifications, ID cards.",
+        "keywords": ["diploma", "degree certificate", "reference letter", "employment certificate", "certification", "transcript", "diplôme", "certificat de travail", "lettre de recommandation", "attestation", "diplom", "arbeitszeugnis", "arbeitsbestätigung", "abschlusszeugnis"]
     }
 ]
 
@@ -137,7 +184,7 @@ class TaxonomyManager:
             self._conn = None
 
     def ensure_initialized(self):
-        """Seed baseline multilingual categories if table is empty."""
+        """Seed baseline multilingual categories if table is empty and migrate schema."""
         cur = self.conn.cursor()
         cur.execute("""
             CREATE TABLE IF NOT EXISTS global_taxonomy (
@@ -153,19 +200,108 @@ class TaxonomyManager:
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
+        # Ensure taxonomy_versions registry table exists
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS taxonomy_versions (
+                version TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                skill_file TEXT,
+                status TEXT DEFAULT 'active',
+                applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        # Ensure document_ledger has taxonomy_version column
+        cur.execute("PRAGMA table_info(document_ledger);")
+        cols = [r[1] for r in cur.fetchall()]
+        if "taxonomy_version" not in cols:
+            cur.execute("ALTER TABLE document_ledger ADD COLUMN taxonomy_version TEXT DEFAULT 'v0.9.0';")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_ledger_taxonomy_version ON document_ledger(taxonomy_version);")
+
         self.conn.commit()
+
+        # Seed categories if missing
         cur.execute("SELECT COUNT(*) FROM global_taxonomy")
-        if cur.fetchone()[0] == 0:
+        count = cur.fetchone()[0]
+        if count == 0:
             for item in DEFAULT_TAXONOMY:
-                self.upsert_category(TaxonomyCategory(
-                    category_id=item["category_id"],
-                    parent_id=item["parent_id"],
-                    name_en=item["name_en"],
-                    name_fr=item["name_fr"],
-                    name_de=item["name_de"],
-                    description=item["description"],
-                    keywords=item["keywords"],
-                ))
+                self.upsert_category(TaxonomyCategory(**item))
+        else:
+            # Ensure the career_research categories are seeded even if prior taxonomy existed
+            cur.execute("SELECT category_id FROM global_taxonomy WHERE category_id = 'career_research'")
+            if not cur.fetchone():
+                for item in DEFAULT_TAXONOMY:
+                    if item["category_id"].startswith("career_"):
+                        self.upsert_category(TaxonomyCategory(**item))
+
+    def sync_from_skill(self, skill_path: Optional[Any] = None) -> Dict[str, Any]:
+        """Parse YAML frontmatter and categories from taxonomy skill file and sync to database."""
+        from pathlib import Path
+        if skill_path is None:
+            p = Path("taxonomy/taxonomy-v1.0.0.skill.md")
+            if not p.exists():
+                p = Path(settings.BASE_DIR if hasattr(settings, "BASE_DIR") else ".") / "taxonomy" / "taxonomy-v1.0.0.skill.md"
+            skill_path = p
+
+        skill_file_str = str(skill_path)
+        version = "v1.0.0"
+        name = "RepoScroller Baseline Multilingual Taxonomy (with Career Research Axis)"
+        desc = "ALCOA+ Multilingual Taxonomy & Classification Rules (EN, FR, DE) for Legal, Financial, Corporate, Technical, and Career Research Document Intelligence."
+        status = "active"
+
+        if Path(skill_path).exists():
+            try:
+                content = Path(skill_path).read_text(encoding="utf-8")
+                if content.startswith("---"):
+                    parts = content.split("---", 2)
+                    if len(parts) >= 3:
+                        for line in parts[1].splitlines():
+                            if ":" in line:
+                                k, v = line.split(":", 1)
+                                k = k.strip()
+                                v = v.strip().strip('"').strip("'")
+                                if k == "taxonomy_version":
+                                    version = v
+                                elif k == "version_name":
+                                    name = v
+                                elif k == "description":
+                                    desc = v
+                                elif k == "status":
+                                    status = v
+            except Exception as e:
+                logger.warning(f"Error parsing skill file metadata: {e}")
+
+        # Record version in taxonomy_versions table
+        with transaction(self.conn) as cur:
+            cur.execute("""
+                INSERT INTO taxonomy_versions (version, name, description, skill_file, status, applied_at)
+                VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(version) DO UPDATE SET
+                    name = excluded.name,
+                    description = excluded.description,
+                    status = excluded.status,
+                    applied_at = CURRENT_TIMESTAMP;
+            """, (version, name, desc, skill_file_str, status))
+
+        # Upsert all categories from DEFAULT_TAXONOMY
+        synced_count = 0
+        for item in DEFAULT_TAXONOMY:
+            self.upsert_category(TaxonomyCategory(**item))
+            synced_count += 1
+
+        return {
+            "status": "synced",
+            "version": version,
+            "name": name,
+            "skill_file": skill_file_str,
+            "categories_synced": synced_count
+        }
+
+    def get_registered_versions(self) -> List[Dict[str, Any]]:
+        """Fetch list of all registered taxonomy versions from taxonomy_versions table."""
+        cur = self.conn.cursor()
+        cur.execute("SELECT * FROM taxonomy_versions ORDER BY applied_at DESC")
+        return [dict(r) for r in cur.fetchall()]
 
     def upsert_category(self, cat: TaxonomyCategory) -> None:
         """Insert or update a taxonomy entry."""
@@ -483,3 +619,189 @@ Return ONLY a valid JSON object:
             pass
 
         return None
+
+
+class TaxonomyEvolutionEngine:
+    """Orchestrates ALCOA+ compliant document re-classification according to new taxonomy versions."""
+
+    def __init__(self, taxonomy_manager: Optional[TaxonomyManager] = None):
+        self.taxonomy = taxonomy_manager or TaxonomyManager()
+
+    def get_evolution_status(self, target_version: str = "v1.0.0") -> Dict[str, Any]:
+        """Return distribution of documents by taxonomy_version and doc_type."""
+        cur = self.taxonomy.conn.cursor()
+        cur.execute("""
+            SELECT COALESCE(taxonomy_version, 'v0.9.0') as ver, COUNT(*) as count
+            FROM document_ledger
+            GROUP BY ver
+            ORDER BY count DESC;
+        """)
+        versions = {r[0]: r[1] for r in cur.fetchall()}
+
+        cur.execute("""
+            SELECT doc_type, COUNT(*) as count
+            FROM document_ledger
+            GROUP BY doc_type
+            ORDER BY count DESC;
+        """)
+        categories = {r[0]: r[1] for r in cur.fetchall()}
+
+        total = sum(versions.values())
+        migrated = versions.get(target_version, 0)
+        pending = total - migrated
+
+        return {
+            "target_version": target_version,
+            "total_documents": total,
+            "migrated_documents": migrated,
+            "pending_documents": pending,
+            "migration_percent": round((migrated / max(1, total)) * 100, 2),
+            "version_distribution": versions,
+            "category_distribution": categories
+        }
+
+    def evaluate_document_reclassification(self, doc: Dict[str, Any]) -> Tuple[str, str, float]:
+        """
+        Evaluate whether a document qualifies for a new taxonomy category using Section 4 Disambiguation Rules.
+        Returns: (target_category, rule_applied, confidence)
+        """
+        fn = (doc.get("canonical_filename") or "").lower()
+        path = (doc.get("relative_path") or "").lower()
+        snippet = (doc.get("text_snippet") or "").lower()
+        combined = f"{fn} {path} {snippet}"
+        old_cat = doc.get("doc_type") or "other"
+
+        # Rule 4.2: Cover Letter vs Formal Correspondence
+        if any(k in fn for k in ["motivation", "candidature", "cover_letter", "coverletter", "bewerbungsschreiben", "motivationsschreiben"]) or \
+           "lettre de motivation" in combined or "bewerbung um die stelle" in combined or \
+           ("candidature" in combined and any(sal in combined for sal in ["madame, monsieur", "sehr geehrte damen und herren", "dear hiring manager"])):
+            return "career_cover_letter", "Rule 4.2 (Cover Letter)", 0.95
+
+        # Rule 4.4: CV / Resumes
+        if (re.search(r'\b(cv|curriculum[\s_-]*vitae|lebenslauf|resume)\b', fn) or "parcours" in fn) and \
+           not any(k in fn for k in ["certificat", "zeugnis", "attestation", "diplom"]):
+            return "career_cv", "Rule 4.4 (CV / Resume Filename)", 0.96
+
+        if "curriculum vitae" in snippet or "lebenslauf" in snippet or \
+           ("expérience professionnelle" in combined and "formation" in combined) or \
+           ("berufserfahrung" in combined and "ausbildung" in combined):
+            return "career_cv", "Rule 4.4 (CV Content)", 0.92
+
+        # Rule 4.3: Portfolios & Case Studies vs Technical Architecture
+        if any(k in fn for k in ["portfolio", "arbeitsproben", "projektdokumentation", "case_study", "casestudy"]) or \
+           "work samples" in combined or "dossier de réalisations" in combined:
+            return "career_portfolio", "Rule 4.3 (Work Portfolio)", 0.93
+
+        # Rule 4.5: Professional Profile vs CV
+        if any(k in fn for k in ["profil", "profile", "executive_bio", "kurzprofil"]) and \
+           any(k in combined for k in ["linkedin", "professionnel", "kurzprofil", "executive bio", "about me"]) and \
+           not re.search(r'\b(cv|curriculum)\b', fn):
+            return "career_profile", "Rule 4.5 (Professional Profile)", 0.90
+
+        # Rule 4.4: Employer Reference letters (retain or move to identity_credentials)
+        if any(k in combined for k in ["certificat de travail", "arbeitszeugnis", "arbeitsbestätigung", "reference letter"]):
+            return "identity_credentials", "Rule 4.4 (Employer Reference)", 0.95
+
+        return old_cat, "Unchanged Baseline", 0.70
+
+    def evolve_ledger(self,
+                      dry_run: bool = True,
+                      limit: int = 500,
+                      source_root_filter: Optional[str] = None,
+                      target_version: str = "v1.0.0") -> Dict[str, Any]:
+        """
+        Scan candidates and evolve categorization to target_version.
+        If dry_run is True, returns proposed changes without committing.
+        If dry_run is False, updates document_ledger, enqueues to kb_processing_queue, and logs audit trail.
+        """
+        cur = self.taxonomy.conn.cursor()
+
+        # Select candidate documents
+        query = """
+            SELECT dl.sha256_hash, dl.canonical_filename, dl.doc_type, dl.text_snippet,
+                   COALESCE(dl.taxonomy_version, 'v0.9.0') as current_tax_ver,
+                   fl.relative_path, fl.storage_root
+            FROM document_ledger dl
+            LEFT JOIN file_locations fl ON dl.sha256_hash = fl.sha256_hash
+            WHERE (dl.taxonomy_version IS NULL OR dl.taxonomy_version != ?)
+        """
+        params = [target_version]
+        if source_root_filter:
+            query += " AND (fl.storage_root LIKE ? OR fl.relative_path LIKE ?)"
+            params.extend([f"%{source_root_filter}%", f"%{source_root_filter}%"])
+
+        query += " GROUP BY dl.sha256_hash LIMIT ?;"
+        params.append(limit)
+
+        cur.execute(query, tuple(params))
+        candidates = [dict(r) for r in cur.fetchall()]
+
+        proposals = []
+        applied_count = 0
+        reclassified_by_type = {}
+
+        for doc in candidates:
+            sha = doc["sha256_hash"]
+            old_cat = doc.get("doc_type") or "other"
+            new_cat, rule, conf = self.evaluate_document_reclassification(doc)
+
+            is_reclassified = (new_cat != old_cat)
+
+            proposal = {
+                "sha256": sha,
+                "filename": doc["canonical_filename"],
+                "old_category": old_cat,
+                "new_category": new_cat,
+                "is_changed": is_reclassified,
+                "rule_applied": rule,
+                "confidence": conf
+            }
+            proposals.append(proposal)
+
+            if is_reclassified:
+                reclassified_by_type[new_cat] = reclassified_by_type.get(new_cat, 0) + 1
+
+        if not dry_run and proposals:
+            with transaction(self.taxonomy.conn) as cur_tx:
+                for p in proposals:
+                    sha = p["sha256"]
+                    new_cat = p["new_category"]
+                    old_cat = p["old_category"]
+                    rule = p["rule_applied"]
+
+                    # 1. Update ledger
+                    cur_tx.execute("""
+                        UPDATE document_ledger
+                        SET doc_type = ?, taxonomy_version = ?
+                        WHERE sha256_hash = ?;
+                    """, (new_cat, target_version, sha))
+
+                    # 2. Re-enqueue to KB sidecar for vector chunk re-embedding if category changed
+                    if p["is_changed"]:
+                        cur_tx.execute("""
+                            INSERT INTO kb_processing_queue (sha256_hash, status, enqueued_at)
+                            VALUES (?, 'pending', CURRENT_TIMESTAMP)
+                            ON CONFLICT(sha256_hash) DO UPDATE SET
+                                status = 'pending',
+                                enqueued_at = CURRENT_TIMESTAMP;
+                        """, (sha,))
+
+                        # 3. Record ALCOA+ Audit Log
+                        cur_tx.execute("""
+                            INSERT INTO audit_log (sha256_hash, action, details, actor)
+                            VALUES (?, 'taxonomy_evolution', ?, 'TaxonomyEvolutionEngine');
+                        """, (sha, f"Evolved from '{old_cat}' to '{new_cat}' via {rule} ({target_version})"))
+
+                    applied_count += 1
+
+        return {
+            "status": "completed",
+            "dry_run": dry_run,
+            "target_version": target_version,
+            "candidates_examined": len(candidates),
+            "reclassifications_count": sum(reclassified_by_type.values()),
+            "reclassified_by_type": reclassified_by_type,
+            "applied_count": applied_count if not dry_run else 0,
+            "sample_proposals": [p for p in proposals if p["is_changed"]][:25]
+        }
+

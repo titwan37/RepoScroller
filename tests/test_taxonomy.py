@@ -149,3 +149,70 @@ def test_taxonomy_topic_dissociation_split(temp_db):
     doc_lease = repo.get_document_by_sha256("sha_lease")
     assert doc_emp["doc_type"] == "sub_employment"
     assert doc_lease["doc_type"] == "sub_lease"
+
+
+def test_taxonomy_skill_sync_and_evolution(temp_db):
+    """Test syncing taxonomy from skill file and running evolution engine."""
+    from reposcroller.ai.taxonomy import TaxonomyEvolutionEngine
+
+    mgr = TaxonomyManager(db_conn=temp_db)
+    sync_res = mgr.sync_from_skill()
+    assert sync_res["status"] == "synced"
+    assert sync_res["version"] == "v1.0.0"
+
+    # Verify career categories are present
+    cats = {c.category_id: c for c in mgr.get_all_categories()}
+    assert "career_research" in cats
+    assert "career_cv" in cats
+    assert "career_cover_letter" in cats
+    assert "career_portfolio" in cats
+
+    # Ingest test documents with older v0.9.0 taxonomy
+    repo = DocumentRepository(conn=temp_db)
+    repo.upsert_document(
+        sha256_hash="sha_cv_01",
+        simhash="1111000011110000",
+        canonical_filename="2025_Antoine_Falempin_resume.pdf",
+        doc_type="identity_credentials",
+        lifecycle_status="final",
+        completeness_score=0.95,
+        maturity_score=0.90,
+        page_count=2,
+        text_snippet="Curriculum Vitae of Senior Software Engineer"
+    )
+    repo.upsert_document(
+        sha256_hash="sha_mot_01",
+        simhash="2222000022220000",
+        canonical_filename="Lettre_de_motivation_Kyndryl.pdf",
+        doc_type="formal_correspondence",
+        lifecycle_status="final",
+        completeness_score=0.95,
+        maturity_score=0.90,
+        page_count=1,
+        text_snippet="Madame, Monsieur, je postule pour le poste..."
+    )
+
+    engine = TaxonomyEvolutionEngine(taxonomy_manager=mgr)
+    
+    # 1. Test Dry-Run
+    dry_res = engine.evolve_ledger(dry_run=True, limit=10)
+    assert dry_res["status"] == "completed"
+    assert dry_res["dry_run"] is True
+    assert dry_res["reclassifications_count"] == 2
+    assert dry_res["applied_count"] == 0
+
+    # 2. Test Execution
+    live_res = engine.evolve_ledger(dry_run=False, limit=10)
+    assert live_res["status"] == "completed"
+    assert live_res["reclassifications_count"] == 2
+    assert live_res["applied_count"] >= 2
+
+    # Check updated ledger
+    doc_cv = repo.get_document_by_sha256("sha_cv_01")
+    assert doc_cv["doc_type"] == "career_cv"
+    assert doc_cv["taxonomy_version"] == "v1.0.0"
+
+    doc_mot = repo.get_document_by_sha256("sha_mot_01")
+    assert doc_mot["doc_type"] == "career_cover_letter"
+    assert doc_mot["taxonomy_version"] == "v1.0.0"
+

@@ -253,6 +253,30 @@ Return ONLY a valid JSON object matching this schema:
         except Exception:
             pass
 
+        # Disambiguation Precedence Rules (Section 4 of taxonomy-v1.0.0.skill.md)
+        fn_lower = filename.lower()
+        if any(k in fn_lower for k in ["motivation", "candidature", "cover_letter", "coverletter", "bewerbungsschreiben", "motivationsschreiben"]) or \
+           "lettre de motivation" in combined or "bewerbung um die stelle" in combined or \
+           ("candidature" in combined and any(sal in combined for sal in ["madame, monsieur", "sehr geehrte damen und herren", "dear hiring manager"])):
+            best_category = "career_cover_letter"
+            best_score = max(best_score, 0.95)
+        elif (re.search(r'\b(cv|curriculum[\s_-]*vitae|lebenslauf|resume)\b', fn_lower) or "parcours" in fn_lower) and \
+             not any(k in fn_lower for k in ["certificat", "zeugnis", "attestation", "diplom"]):
+            best_category = "career_cv"
+            best_score = max(best_score, 0.96)
+        elif any(k in fn_lower for k in ["portfolio", "arbeitsproben", "projektdokumentation", "case_study", "casestudy"]) or \
+             "work samples" in combined or "dossier de réalisations" in combined:
+            best_category = "career_portfolio"
+            best_score = max(best_score, 0.93)
+        elif any(k in fn_lower for k in ["profil", "profile", "executive_bio", "kurzprofil"]) and \
+             any(k in combined for k in ["linkedin", "professionnel", "kurzprofil", "executive bio", "about me"]) and \
+             not re.search(r'\b(cv|curriculum)\b', fn_lower):
+            best_category = "career_profile"
+            best_score = max(best_score, 0.90)
+        elif any(k in combined for k in ["certificat de travail", "arbeitszeugnis", "arbeitsbestätigung", "reference letter"]):
+            best_category = "identity_credentials"
+            best_score = max(best_score, 0.95)
+
         category = best_category
         confidence = round(best_score, 2)
 
