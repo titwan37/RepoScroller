@@ -1213,3 +1213,14 @@ snowflake-arctic-embed2:latest    5de93a84837d    664 MB    100% GPU     2048   
 ```
 
 The updated configuration has been saved directly to [start_pc2_cuda_node.ps1](file:///c:/Dev/RepoScroller/start_pc2_cuda_node.ps1). Whenever you run `.\start_pc2_cuda_node.bat`, both models will remain loaded and displayed together.
+
+curl.exe -v -H "Origin: <http://127.0.0.1:8090>" -s <http://nitro-an51755:11434/api/ps>
+python -c "from reposcroller.ledger.repository import DocumentRepository; r = DocumentRepository(); print(r.get_stats())"
+python -c "from reposcroller.ledger.repository import DocumentRepository; r = DocumentRepository(); cur = r.conn.cursor(); cur.execute('SELECT vc.*, dl1.canonical_filename, dl2.canonical_filename FROM version_chains vc JOIN document_ledger dl1 ON vc.parent_sha256 = dl1.sha256_hash JOIN document_ledger dl2 ON vc.child_sha256 = dl2.sha256_hash LIMIT 5'); print(cur.fetchall())"
+python -c "from reposcroller.ledger.repository import DocumentRepository; r = DocumentRepository(); cur = r.conn.cursor(); cur.execute('SELECT vc.parent_sha256, vc.child_sha256, vc.relationship, vc.similarity_score, dl1.canonical_filename as parent_name, dl2.canonical_filename as child_name, dl1.lifecycle_status as parent_status, dl2.lifecycle_status as child_status FROM version_chains vc JOIN document_ledger dl1 ON vc.parent_sha256 = dl1.sha256_hash JOIN document_ledger dl2 ON vc.child_sha256 = dl2.sha256_hash LIMIT 5'); print([dict(r) for r in cur.fetchall()])"
+python -c "import time; from reposcroller.ledger.repository import DocumentRepository; r = DocumentRepository(); t0 = time.time(); cur = r.conn.cursor(); cur.execute('SELECT vc.parent_sha256, vc.child_sha256, vc.relationship, vc.similarity_score, dl1.canonical_filename as parent_name, dl1.lifecycle_status as parent_status, dl2.canonical_filename as child_name, dl2.lifecycle_status as child_status FROM version_chains vc JOIN document_ledger dl1 ON vc.parent_sha256 = dl1.sha256_hash JOIN document_ledger dl2 ON vc.child_sha256 = dl2.sha256_hash LIMIT 10'); print(len(cur.fetchall()), 'rows in', round((time.time() - t0)*1000, 2), 'ms')"
+python -c "import time; from reposcroller.ledger.repository import DocumentRepository; r = DocumentRepository(); t0 = time.time(); cur = r.conn.cursor(); cur.execute('SELECT vc.parent_sha256, vc.child_sha256, vc.relationship, vc.similarity_score, dl1.canonical_filename, dl2.canonical_filename FROM version_chains vc JOIN document_ledger dl1 ON vc.parent_sha256 = dl1.sha256_hash JOIN document_ledger dl2 ON vc.child_sha256 = dl2.sha256_hash ORDER BY vc.chain_id DESC LIMIT 25'); rows = cur.fetchall(); print(len(rows), 'rows in', round((time.time() - t0)*1000, 2), 'ms')"
+curl.exe -s <http://127.0.0.1:8090/api/v1/documents/lineage/chains?limit=2>
+curl.exe -s --max-time 3 <http://127.0.0.1:8090/api/v1/health>
+curl.exe -s <http://127.0.0.1:8090/api/v1/health>
+curl.exe -s --max-time 5 "<http://127.0.0.1:8090/api/v1/sidecar/stats>"

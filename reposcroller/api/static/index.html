@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/style.css?v=13">
+  <link rel="stylesheet" href="/static/style.css?v=14">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 </head>
@@ -91,7 +91,7 @@
          WORKSPACE 0: PROCESS SCROLLER & LINEAGE EXPLORER
          ========================================================================= -->
 
-<main id="ws-pane-process" class="workspace-pane active dashboard-grid">
+<main id="ws-pane-process" class="workspace-pane active process-scroller-layout">
   <!-- Storage Mounts Bar -->
   <section class="mounts-bar">
     <div class="mounts-label">Active Storage Mounts:</div>
@@ -135,6 +135,90 @@
       </div>
       <div id="metric-kb-chunks" class="metric-value text-indigo">--</div>
       <div class="metric-sub" id="metric-kb-sub">Vectors & Graph Nodes</div>
+    </div>
+  </section>
+
+  <!-- Live Pulsed Realtime Telemetry Heartbeat & Sidecar Ingestion Banner -->
+  <section class="telemetry-pulse-hero-bar" id="ws0-telemetry-pulse-bar">
+    <div class="pulse-hero-header">
+      <div class="pulse-hero-title-group">
+        <span class="pulse-live-icon">📡</span>
+        <div>
+          <div class="pulse-hero-title">Pulsed Realtime Telemetry & Ingestion Hub</div>
+          <div class="pulse-hero-subtitle">Continuous live heartbeats from dual Ollama engines, KB Sidecar, and Diagnostic Event stream</div>
+        </div>
+      </div>
+      <div class="pulse-endpoints-chips">
+        <a href="http://127.0.0.1:11434/api/ps" target="_blank" class="pulse-chip" id="pulse-chip-pc1" title="Localhost Host Engine /api/ps">
+          <span class="dot-pulse dot-emerald"></span>
+          <span class="pulse-chip-label">PC1 (127.0.0.1:11434)</span>
+          <strong id="pulse-pc1-models-count" class="pulse-chip-val">3 models</strong>
+          <span class="pulse-chip-ext">↗</span>
+        </a>
+        <a href="http://nitro-an51755:11434/api/ps" target="_blank" class="pulse-chip" id="pulse-chip-pc2" title="Remote CUDA GPU Node /api/ps">
+          <span class="dot-pulse dot-cyan"></span>
+          <span class="pulse-chip-label">PC2 (nitro-an51755:11434)</span>
+          <strong id="pulse-pc2-models-count" class="pulse-chip-val">664MB CUDA</strong>
+          <span class="pulse-chip-ext">↗</span>
+        </a>
+        <a href="http://127.0.0.1:8090/api/v1/sidecar/stats" target="_blank" class="pulse-chip" id="pulse-chip-sidecar" title="Knowledge Base Sidecar Pipeline Stats">
+          <span class="dot-pulse dot-indigo"></span>
+          <span class="pulse-chip-label">Sidecar /stats</span>
+          <strong id="pulse-sidecar-val" class="pulse-chip-val">87.7k chunks</strong>
+          <span class="pulse-chip-ext">↗</span>
+        </a>
+        <a href="http://127.0.0.1:8090/api/v1/diagnostics/logs" target="_blank" class="pulse-chip" id="pulse-chip-diag" title="Unified Diagnostic Logs Buffer">
+          <span class="dot-pulse dot-amber"></span>
+          <span class="pulse-chip-label">Diagnostics /logs</span>
+          <strong id="pulse-diag-val" class="pulse-chip-val">Active Stream</strong>
+          <span class="pulse-chip-ext">↗</span>
+        </a>
+      </div>
+    </div>
+
+    <!-- Live Ingestion Progress Bar & Controls -->
+    <div class="pulse-progress-panel">
+      <div class="pulse-progress-meta">
+        <div class="pulse-progress-title">
+          <span>⚡ Sidecar Knowledge Base Ingestion</span>
+          <span id="ws0-sidecar-status-pill" class="badge-status-pill badge-idle">Idle (Standby)</span>
+          <span id="ws0-sidecar-uptime-badge" class="badge-uptime hidden">⏱ 0s</span>
+        </div>
+        <div class="pulse-progress-stats">
+          <span>Processed: <strong id="ws0-docs-chunked-stat">11,202</strong> / <span id="ws0-docs-total-stat">25,137</span> docs (<strong id="ws0-progress-pct" class="text-emerald">44.5%</strong>)</span>
+          <span class="meta-sep">•</span>
+          <span>Indexed: <strong id="ws0-chunks-indexed-stat" class="text-cyan">87,721</strong> vectors</span>
+          <span class="meta-sep">•</span>
+          <span>Graph: <strong id="ws0-graph-nodes-stat" class="text-indigo">14,728</strong> nodes</span>
+        </div>
+      </div>
+      <div class="pulse-progress-track">
+        <div id="ws0-progress-bar-completed" class="pulse-bar-seg seg-completed" style="width: 44.5%;" title="Completed"></div>
+        <div id="ws0-progress-bar-processing" class="pulse-bar-seg seg-processing" style="width: 0%;" title="Processing"></div>
+        <div id="ws0-progress-bar-pending" class="pulse-bar-seg seg-pending" style="width: 55.5%;" title="Pending Ingestion Queue"></div>
+      </div>
+      <div class="pulse-actions-bar">
+        <div class="pulse-actions-left">
+          <button id="ws0-btn-sidecar-toggle" class="btn btn-primary btn-sm" onclick="toggleContinuousSidecar()">
+            <span class="btn-icon">🚀</span> <span id="ws0-sidecar-btn-text">Start Continuous Sidecar</span>
+          </button>
+          <button id="ws0-btn-trigger-batch" class="btn btn-outline btn-sm" onclick="triggerSidecarBatch()" title="Embed 32 queued documents in one GPU burst">
+            <span class="btn-icon">⚡</span> Single Batch (32)
+          </button>
+          <button class="btn btn-outline btn-sm" onclick="triggerScan()" title="Trigger filesystem multi-root scan">
+            <span class="btn-icon">📂</span> Scan Roots
+          </button>
+          <button class="btn btn-outline btn-sm" onclick="toggleWatcher()" title="Toggle continuous filesystem watcher">
+            <span class="btn-icon">👁️</span> <span id="ws0-watch-text">Start Watcher</span>
+          </button>
+        </div>
+        <div class="pulse-actions-right">
+          <span class="pulse-rate-tag" id="ws0-pulse-rate-tag">⚡ 0.0 files/m • 0.0 chunks/m</span>
+          <button class="btn-refresh-pill" onclick="loadWorkloadTelemetry(true); loadSidecarStats(); loadProcessScrollerData();" title="Force refresh all pulsed telemetry">
+            <span>⟳</span> Refresh All
+          </button>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -383,6 +467,429 @@
           </div>
         </div>
       </div>
+    </div>
+  </section>
+
+  <!-- =========================================================================
+       THE PROCESS SCROLLER: 5-STAGE ALCOA+ DIGITALIZATION & REASONING PIPELINE
+       ========================================================================= -->
+  <section class="process-scroller-section" id="process-scroller-section">
+    <div class="section-hero-header">
+      <div class="section-title-wrap">
+        <span class="section-icon">🔄</span>
+        <div>
+          <h2 class="section-title">The Process Scroller: 5-Stage Digitalization & Provenance Pipeline</h2>
+          <p class="section-subtitle">Real-time telemetry and activity tracking across Crawler, Chunker, Cascaded Analyzer, CUDA Embedder, and Lineage Graph Engine</p>
+        </div>
+      </div>
+      <div class="pipeline-live-indicator">
+        <span class="pulse-dot"></span>
+        <span id="pipeline-live-status-text">Pipeline Active</span>
+      </div>
+    </div>
+
+    <!-- 5 Pipeline Stage Cards Connected by Flow Channels -->
+    <div class="pipeline-stages-grid">
+      
+      <!-- Stage 1: Crawler & Storage Discovery -->
+      <div class="pipeline-stage-card" id="stage-card-crawler">
+        <div class="stage-card-header">
+          <div class="stage-number">01</div>
+          <div class="stage-icon">📂</div>
+          <div class="stage-info">
+            <div class="stage-name">Storage Ingest & Crawler</div>
+            <div class="stage-module">crawler.py</div>
+          </div>
+          <span class="stage-status-badge badge-active" id="stage-crawler-badge">Watching</span>
+        </div>
+        <div class="stage-body">
+          <p class="stage-desc">MultiRootCrawler scanning distributed mounts with antichronological priority and continuous PollingObserver.</p>
+          <div class="stage-metrics-list">
+            <div class="stage-metric"><span class="lbl">Configured Roots:</span> <strong id="ps-crawler-roots">6 Mounts</strong></div>
+            <div class="stage-metric"><span class="lbl">Online Roots:</span> <strong id="ps-crawler-accessible" class="text-emerald">6/6 Accessible</strong></div>
+            <div class="stage-metric"><span class="lbl">Scan Order:</span> <strong>Antichronological</strong></div>
+            <div class="stage-metric"><span class="lbl">Observer Status:</span> <strong id="ps-crawler-observer">Ready</strong></div>
+          </div>
+        </div>
+        <div class="stage-footer">
+          <button class="stage-action-btn" onclick="triggerScan()">⚡ Run Quick Scan</button>
+        </div>
+      </div>
+
+      <!-- Connector 1-2 -->
+      <div class="stage-connector">
+        <div class="connector-line"></div>
+        <div class="connector-arrow">➔</div>
+      </div>
+
+      <!-- Stage 2: Document Chunker & PDF I/O -->
+      <div class="pipeline-stage-card" id="stage-card-chunker">
+        <div class="stage-card-header">
+          <div class="stage-number">02</div>
+          <div class="stage-icon">📄</div>
+          <div class="stage-info">
+            <div class="stage-name">Context Chunker & PDF I/O</div>
+            <div class="stage-module">chunker.py + telemetry.py</div>
+          </div>
+          <span class="stage-status-badge badge-active" id="stage-chunker-badge">512 Tokens</span>
+        </div>
+        <div class="stage-body">
+          <p class="stage-desc">DocumentChunker sliding window tokenization with context header injection: <code>[Doc | Cat | Date | Src]</code>.</p>
+          <div class="stage-metrics-list">
+            <div class="stage-metric"><span class="lbl">Window / Overlap:</span> <strong>512 / 64 tokens</strong></div>
+            <div class="stage-metric"><span class="lbl">PDF / Doc I/O Speed:</span> <strong id="ps-chunker-io-speed" class="text-cyan">0.0 MB/s</strong></div>
+            <div class="stage-metric"><span class="lbl">Files Processed:</span> <strong id="ps-chunker-files-read">11,202 docs</strong></div>
+            <div class="stage-metric"><span class="lbl">Avg Extraction:</span> <strong id="ps-chunker-read-lat">-- ms</strong></div>
+          </div>
+        </div>
+        <div class="stage-footer">
+          <span class="stage-footer-tag" id="ps-chunker-types-tag">.pdf • .docx • .txt • .md</span>
+        </div>
+      </div>
+
+      <!-- Connector 2-3 -->
+      <div class="stage-connector">
+        <div class="connector-line"></div>
+        <div class="connector-arrow">➔</div>
+      </div>
+
+      <!-- Stage 3: Cascaded Intelligence Analyzer -->
+      <div class="pipeline-stage-card" id="stage-card-analyzer">
+        <div class="stage-card-header">
+          <div class="stage-number">03</div>
+          <div class="stage-icon">🤖</div>
+          <div class="stage-info">
+            <div class="stage-name">Cascaded LLM Analyzer</div>
+            <div class="stage-module">analyzer.py</div>
+          </div>
+          <span class="stage-status-badge badge-ai" id="stage-analyzer-badge">Cascaded</span>
+        </div>
+        <div class="stage-body">
+          <p class="stage-desc">DocumentAnalyzer: 3-tier cascade (OpenRouter ➔ Ollama Llama 3.2 ➔ Heuristic Rules) for taxonomy & maturity.</p>
+          <div class="stage-metrics-list">
+            <div class="stage-metric"><span class="lbl">Active LLM Target:</span> <strong id="ps-analyzer-target" class="text-indigo">PC2 (3B CUDA)</strong></div>
+            <div class="stage-metric"><span class="lbl">Taxonomy Categories:</span> <strong id="ps-analyzer-categories">18 Slugs</strong></div>
+            <div class="stage-metric"><span class="lbl">Lifecycle Scored:</span> <strong id="ps-analyzer-lifecycle">Final / Draft / Review</strong></div>
+            <div class="stage-metric"><span class="lbl">Auto-Taxonomy:</span> <strong class="text-emerald">Active Discovery</strong></div>
+          </div>
+        </div>
+        <div class="stage-footer">
+          <button class="stage-action-btn" onclick="switchChatNode(activeChatNode === 'pc1' ? 'pc2' : 'pc1')">⇄ Toggle Routing Node</button>
+        </div>
+      </div>
+
+      <!-- Connector 3-4 -->
+      <div class="stage-connector">
+        <div class="connector-line"></div>
+        <div class="connector-arrow">➔</div>
+      </div>
+
+      <!-- Stage 4: Remote CUDA GPU Embedder -->
+      <div class="pipeline-stage-card stage-card-cuda" id="stage-card-embedder">
+        <div class="stage-card-header">
+          <div class="stage-number">04</div>
+          <div class="stage-icon">⚡</div>
+          <div class="stage-info">
+            <div class="stage-name">CUDA Embedding Engine</div>
+            <div class="stage-module">sidecar_worker.py</div>
+          </div>
+          <span class="stage-status-badge badge-cuda" id="stage-embedder-badge">RTX 3060</span>
+        </div>
+        <div class="stage-body">
+          <p class="stage-desc">KnowledgeBaseSidecarWorker async HTTP pool (6x) to PC2 NVIDIA RTX 3060 CUDA GPU.</p>
+          <div class="stage-metrics-list">
+            <div class="stage-metric"><span class="lbl">Embedding Model:</span> <strong id="ps-embedder-model" class="text-cyan">snowflake-arctic-embed2</strong></div>
+            <div class="stage-metric"><span class="lbl">Vector Dimensions:</span> <strong>1024-dim Floats</strong></div>
+            <div class="stage-metric"><span class="lbl">GPU VRAM Allocated:</span> <strong id="ps-embedder-vram" class="text-emerald">664 MB Resident</strong></div>
+            <div class="stage-metric"><span class="lbl">Worker Pool:</span> <strong id="ps-embedder-pool">6x Async HTTP</strong></div>
+          </div>
+        </div>
+        <div class="stage-footer">
+          <span class="stage-footer-tag text-emerald font-bold" id="ps-embedder-velocity">⚡ 96.5k tokens/s</span>
+        </div>
+      </div>
+
+      <!-- Connector 4-5 -->
+      <div class="stage-connector">
+        <div class="connector-line"></div>
+        <div class="connector-arrow">➔</div>
+      </div>
+
+      <!-- Stage 5: Lineage & SQLite WAL Graph Store -->
+      <div class="pipeline-stage-card" id="stage-card-lineage">
+        <div class="stage-card-header">
+          <div class="stage-number">05</div>
+          <div class="stage-icon">🕒</div>
+          <div class="stage-info">
+            <div class="stage-name">Lineage & WAL Graph Store</div>
+            <div class="stage-module">repository.py + graph_store.py</div>
+          </div>
+          <span class="stage-status-badge badge-active" id="stage-lineage-badge">WAL Mode</span>
+        </div>
+        <div class="stage-body">
+          <p class="stage-desc">ACID document ledger with version lineage relationships, duplicate deduplication, and Property Graph indexing.</p>
+          <div class="stage-metrics-list">
+            <div class="stage-metric"><span class="lbl">Version Links:</span> <strong id="ps-lineage-links" class="text-cyan">3,555,530</strong></div>
+            <div class="stage-metric"><span class="lbl">Graph Entities:</span> <strong id="ps-lineage-nodes" class="text-indigo">14,728 Nodes</strong></div>
+            <div class="stage-metric"><span class="lbl">Graph Relationships:</span> <strong id="ps-lineage-edges">1,066,018 Edges</strong></div>
+            <div class="stage-metric"><span class="lbl">Dedup Savings:</span> <strong id="ps-lineage-savings" class="text-emerald">8,177 Files</strong></div>
+          </div>
+        </div>
+        <div class="stage-footer">
+          <button class="stage-action-btn" onclick="scrollToLineageExplorer()">🔍 Inspect Lineage</button>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- =========================================================================
+       DUAL-NODE REALTIME OLLAMA PROCESS INSPECTOR (/api/ps PULSED LIVE)
+       ========================================================================= -->
+  <section class="dual-ollama-ps-section" id="dual-ollama-ps-section">
+    <div class="section-hero-header">
+      <div class="section-title-wrap">
+        <span class="section-icon">🧠</span>
+        <div>
+          <h2 class="section-title">Dual-Node Realtime Ollama Process Inspector (`/api/ps`)</h2>
+          <p class="section-subtitle">Direct live telemetry on model residency in memory, VRAM allocation, context windows, quantization, and expiration countdowns</p>
+        </div>
+      </div>
+      <div class="ps-refresh-actions">
+        <span class="ps-sync-pill" id="ps-sync-timestamp">⟳ Synced: --:--:--</span>
+        <button class="btn btn-outline btn-xs" onclick="pollOllamaProcessInspector(true)" title="Force refresh /api/ps probes">
+          <span>⟳</span> Probe Hardware
+        </button>
+      </div>
+    </div>
+
+    <div class="dual-ps-cards-grid">
+      
+      <!-- PC1 Localhost Engine /api/ps -->
+      <div class="ps-node-panel" id="panel-ps-pc1">
+        <div class="ps-panel-header">
+          <div class="ps-panel-title-group">
+            <span class="ps-node-avatar">💻</span>
+            <div>
+              <div class="ps-node-heading">PC1 Host Engine (CPU / Host RAM)</div>
+              <div class="ps-node-url-tag">
+                <a href="http://127.0.0.1:11434/api/ps" target="_blank" title="Test direct API endpoint">http://127.0.0.1:11434/api/ps ↗</a>
+              </div>
+            </div>
+          </div>
+          <span class="node-status-badge badge-online" id="ps-pc1-status-badge"><span class="dot"></span> Online</span>
+        </div>
+
+        <div class="ps-models-table-wrap">
+          <table class="ps-models-table">
+            <thead>
+              <tr>
+                <th>Model</th>
+                <th>Family / Params</th>
+                <th>Quant</th>
+                <th>Context</th>
+                <th>Residency</th>
+                <th>Expires In</th>
+              </tr>
+            </thead>
+            <tbody id="ps-pc1-models-tbody">
+              <tr><td colspan="6" class="text-center text-muted">Probing http://127.0.0.1:11434/api/ps...</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="ps-panel-footer">
+          <span class="ps-footer-info" id="ps-pc1-summary">3 models loaded • ~15.4 GB Host RAM • 100% CPU</span>
+        </div>
+      </div>
+
+      <!-- PC2 Remote CUDA GPU Server /api/ps -->
+      <div class="ps-node-panel cuda-panel" id="panel-ps-pc2">
+        <div class="ps-panel-header">
+          <div class="ps-panel-title-group">
+            <span class="ps-node-avatar cuda-avatar">⚡</span>
+            <div>
+              <div class="ps-node-heading">PC2 Remote CUDA Node (NVIDIA RTX 3060)</div>
+              <div class="ps-node-url-tag">
+                <a href="http://nitro-an51755:11434/api/ps" target="_blank" title="Test direct API endpoint">http://nitro-an51755:11434/api/ps ↗</a>
+              </div>
+            </div>
+          </div>
+          <span class="node-status-badge badge-online" id="ps-pc2-status-badge"><span class="dot"></span> ⚡ CUDA Ready</span>
+        </div>
+
+        <div class="ps-models-table-wrap">
+          <table class="ps-models-table">
+            <thead>
+              <tr>
+                <th>Model</th>
+                <th>Family / Params</th>
+                <th>Quant</th>
+                <th>Context</th>
+                <th>GPU VRAM</th>
+                <th>Expires In</th>
+              </tr>
+            </thead>
+            <tbody id="ps-pc2-models-tbody">
+              <tr><td colspan="6" class="text-center text-muted">Probing http://nitro-an51755:11434/api/ps...</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="ps-panel-footer">
+          <span class="ps-footer-info text-emerald font-bold" id="ps-pc2-summary">1 model in VRAM (664 MB) • 100% GPU Accelerated</span>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- =========================================================================
+       VERSION LINEAGE & DOCUMENT EVOLUTION EXPLORER
+       ========================================================================= -->
+  <section class="lineage-explorer-section" id="lineage-explorer-section">
+    <div class="section-hero-header">
+      <div class="section-title-wrap">
+        <span class="section-icon">🕒</span>
+        <div>
+          <h2 class="section-title">Version Lineage & Document Evolution Explorer</h2>
+          <p class="section-subtitle">Single Source of Truth: Automated version provenance, evolutionary derivation chains, and duplicate savings</p>
+        </div>
+      </div>
+      <div class="lineage-kpis-strip">
+        <div class="lineage-kpi-chip">
+          <span class="kpi-icon">🔗</span>
+          <span class="kpi-label">Lineage Links:</span>
+          <strong id="lineage-kpi-total" class="text-cyan">3,555,530</strong>
+        </div>
+        <div class="lineage-kpi-chip">
+          <span class="kpi-icon">📄</span>
+          <span class="kpi-label">Duplicates Saved:</span>
+          <strong id="lineage-kpi-savings" class="text-emerald">8,177</strong>
+        </div>
+        <div class="lineage-kpi-chip">
+          <span class="kpi-icon">✅</span>
+          <span class="kpi-label">Final:</span>
+          <strong id="lineage-kpi-final">1,504</strong>
+        </div>
+        <div class="lineage-kpi-chip">
+          <span class="kpi-icon">📝</span>
+          <span class="kpi-label">Drafts:</span>
+          <strong id="lineage-kpi-drafts" class="text-amber">716</strong>
+        </div>
+      </div>
+    </div>
+
+    <!-- Lineage Filter & Search Toolbar -->
+    <div class="lineage-toolbar">
+      <div class="lineage-search-box">
+        <input type="text" id="lineage-search-input" placeholder="Search lineage by document name (e.g. IngestionReport, Roche, Qualifikationsprofil)..." oninput="handleLineageSearch(event)">
+        <button id="btn-lineage-search-clear" class="btn-clear-search hidden" onclick="clearLineageSearch()">✕</button>
+      </div>
+      <div class="lineage-filter-group">
+        <select id="lineage-rel-filter" onchange="loadLineageChains()">
+          <option value="">All Relationships</option>
+          <option value="derived_from">derived_from (Revision)</option>
+          <option value="supersedes">supersedes (Evolution)</option>
+        </select>
+        <button class="btn btn-outline btn-sm" onclick="loadLineageChains(true)">
+          <span>⟳</span> Refresh Chains
+        </button>
+      </div>
+    </div>
+
+    <!-- Live Lineage Chains Table -->
+    <div class="lineage-table-container">
+      <table class="lineage-table">
+        <thead>
+          <tr>
+            <th>Parent Document (Predecessor)</th>
+            <th>Relationship</th>
+            <th>Child Document (Successor)</th>
+            <th>SimHash Score</th>
+            <th>Maturity Delta</th>
+            <th>Status Transition</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="lineage-table-tbody">
+          <tr>
+            <td colspan="7" class="text-center loading-cell">Loading version lineage relationships...</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Visual Sample Evolutionary Lineage Flow Card -->
+    <div class="lineage-evolution-card">
+      <div class="evolution-card-header">
+        <span class="evolution-icon">🧬</span>
+        <span class="evolution-title">Sample Evolutionary Chain (Provenance Graph)</span>
+        <span class="evolution-badge">SimHash Cosine &gt; 96%</span>
+      </div>
+      <div class="evolution-chain-flow">
+        <div class="evolution-node node-draft">
+          <div class="evolution-node-tag">v1 • DRAFT</div>
+          <div class="evolution-node-name">260909_0813_IngestionReport.md</div>
+          <div class="evolution-node-sub">Maturity: 0.320 • SimHash 96.8%</div>
+        </div>
+        <div class="evolution-link-arrow">
+          <span class="link-label">derived_from</span>
+          <span class="arrow-glyph">➔</span>
+        </div>
+        <div class="evolution-node node-final">
+          <div class="evolution-node-tag">v2 • FINAL</div>
+          <div class="evolution-node-name">260909_1414_IngestionReport.md</div>
+          <div class="evolution-node-sub">Maturity: 0.850 • SimHash 98.4%</div>
+        </div>
+        <div class="evolution-link-arrow">
+          <span class="link-label">supersedes</span>
+          <span class="arrow-glyph">➔</span>
+        </div>
+        <div class="evolution-node node-latest">
+          <div class="evolution-node-tag">v3 • LATEST FINAL</div>
+          <div class="evolution-node-name">260909_1619_IngestionReport.md</div>
+          <div class="evolution-node-sub">Maturity: 0.980 • Single Source of Truth</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- =========================================================================
+       REAL-TIME TELEMETRY & DIAGNOSTIC EVENT STREAM TICKER (/api/v1/diagnostics/logs)
+       ========================================================================= -->
+  <section class="ws0-diag-stream-section" id="ws0-diag-stream-section">
+    <div class="section-hero-header">
+      <div class="section-title-wrap">
+        <span class="section-icon">🩺</span>
+        <div>
+          <h2 class="section-title">Real-Time Telemetry & Diagnostic Event Stream</h2>
+          <p class="section-subtitle">Live pulsed activity log from <code>/api/v1/diagnostics/logs</code> across Crawler, Chunker, Analyzer, Sidecar, and CUDA GPU</p>
+        </div>
+      </div>
+      <div class="diag-stream-controls">
+        <div class="diag-stream-filter-buttons">
+          <button class="stream-filter-btn active" data-filter="all" onclick="setWs0DiagFilter('all')">All (<span id="ws0-log-count-all">0</span>)</button>
+          <button class="stream-filter-btn" data-filter="sidecar" onclick="setWs0DiagFilter('sidecar')">Sidecar (<span id="ws0-log-count-sidecar">0</span>)</button>
+          <button class="stream-filter-btn" data-filter="chunker" onclick="setWs0DiagFilter('chunker')">Chunker / IO (<span id="ws0-log-count-chunker">0</span>)</button>
+          <button class="stream-filter-btn" data-filter="analyzer" onclick="setWs0DiagFilter('analyzer')">Analyzer (<span id="ws0-log-count-analyzer">0</span>)</button>
+          <button class="stream-filter-btn" data-filter="crawler" onclick="setWs0DiagFilter('crawler')">Crawler (<span id="ws0-log-count-crawler">0</span>)</button>
+          <button class="stream-filter-btn" data-filter="errors" onclick="setWs0DiagFilter('errors')">Errors / Warn (<span id="ws0-log-count-errors">0</span>)</button>
+        </div>
+        <div class="diag-stream-opts">
+          <label class="diag-autoscroll-label">
+            <input type="checkbox" id="ws0-diag-autoscroll" checked> Auto-scroll
+          </label>
+          <button class="btn btn-outline btn-xs" onclick="clearDiagnosticLogs()" title="Clear buffered logs">Clear</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stream List Output -->
+    <div class="ws0-diag-log-container" id="ws0-diag-log-container">
+      <div class="ws0-diag-empty" id="ws0-diag-empty-state">
+        <span class="pulse-dot"></span>
+        <span>Diagnostic event stream listening on http://127.0.0.1:8090/api/v1/diagnostics/logs...</span>
+      </div>
+      <div class="ws0-diag-log-list" id="ws0-diag-log-list"></div>
     </div>
   </section>
   </main>
@@ -1015,6 +1522,6 @@
     </div>
   </div>
   
-  <script src="/static/app.js?v=13"></script>
+  <script src="/static/app.js?v=14"></script>
 </body>
 </html>

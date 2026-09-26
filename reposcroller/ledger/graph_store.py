@@ -1,6 +1,7 @@
 import json
 from typing import List, Dict, Any, Optional
 from reposcroller.config import settings
+from reposcroller.ledger.db import transaction
 from reposcroller.ledger.repository import DocumentRepository
 from reposcroller.ai.graph_schemas import EntityNode, EntityEdge, DocumentEntityLink, DocumentKnowledgeGraph
 
@@ -29,17 +30,16 @@ class PropertyGraphStore:
     def upsert_node(self, node: EntityNode) -> None:
         """Insert or update an entity node in SQLite (and Neo4j if available)."""
         with self.repo._lock:
-            cur = self.repo.conn.cursor()
-            cur.execute("""
-                INSERT INTO knowledge_nodes (node_id, node_type, name, properties_json, updated_at)
-                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-                ON CONFLICT(node_id) DO UPDATE SET
-                    name = excluded.name,
-                    node_type = excluded.node_type,
-                    properties_json = excluded.properties_json,
-                    updated_at = CURRENT_TIMESTAMP;
-            """, (node.node_id, node.node_type, node.name, json.dumps(node.properties, ensure_ascii=False)))
-            self.repo.conn.commit()
+            with transaction(self.repo.conn) as cur:
+                cur.execute("""
+                    INSERT INTO knowledge_nodes (node_id, node_type, name, properties_json, updated_at)
+                    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(node_id) DO UPDATE SET
+                        name = excluded.name,
+                        node_type = excluded.node_type,
+                        properties_json = excluded.properties_json,
+                        updated_at = CURRENT_TIMESTAMP;
+                """, (node.node_id, node.node_type, node.name, json.dumps(node.properties, ensure_ascii=False)))
 
         # Optional Neo4j Sync
         if self._neo4j_driver:
@@ -55,15 +55,14 @@ class PropertyGraphStore:
     def upsert_edge(self, edge: EntityEdge) -> None:
         """Insert or update a relationship edge between two entity nodes."""
         with self.repo._lock:
-            cur = self.repo.conn.cursor()
-            cur.execute("""
-                INSERT INTO knowledge_edges (source_id, target_id, relation_type, weight, properties_json)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(source_id, target_id, relation_type) DO UPDATE SET
-                    weight = excluded.weight,
-                    properties_json = excluded.properties_json;
-            """, (edge.source_id, edge.target_id, edge.relation_type, edge.weight, json.dumps(edge.properties, ensure_ascii=False)))
-            self.repo.conn.commit()
+            with transaction(self.repo.conn) as cur:
+                cur.execute("""
+                    INSERT INTO knowledge_edges (source_id, target_id, relation_type, weight, properties_json)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(source_id, target_id, relation_type) DO UPDATE SET
+                        weight = excluded.weight,
+                        properties_json = excluded.properties_json;
+                """, (edge.source_id, edge.target_id, edge.relation_type, edge.weight, json.dumps(edge.properties, ensure_ascii=False)))
 
         # Optional Neo4j Sync
         if self._neo4j_driver:
@@ -81,14 +80,13 @@ class PropertyGraphStore:
     def link_document_entity(self, link: DocumentEntityLink) -> None:
         """Associate a document with an entity node."""
         with self.repo._lock:
-            cur = self.repo.conn.cursor()
-            cur.execute("""
-                INSERT INTO document_entity_links (sha256_hash, node_id, role, confidence)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(sha256_hash, node_id, role) DO UPDATE SET
-                    confidence = excluded.confidence;
-            """, (link.sha256_hash, link.node_id, link.role, link.confidence))
-            self.repo.conn.commit()
+            with transaction(self.repo.conn) as cur:
+                cur.execute("""
+                    INSERT INTO document_entity_links (sha256_hash, node_id, role, confidence)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(sha256_hash, node_id, role) DO UPDATE SET
+                        confidence = excluded.confidence;
+                """, (link.sha256_hash, link.node_id, link.role, link.confidence))
 
     def save_document_graph(self, doc_graph: DocumentKnowledgeGraph) -> None:
         """Atomically persist extracted nodes, edges, and document links for a single document."""
@@ -100,37 +98,35 @@ class PropertyGraphStore:
             return
 
         with self.repo._lock:
-            cur = self.repo.conn.cursor()
-            for doc_graph in doc_graphs:
-                for node in doc_graph.nodes:
-                    cur.execute("""
-                        INSERT INTO knowledge_nodes (node_id, node_type, name, properties_json, updated_at)
-                        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-                        ON CONFLICT(node_id) DO UPDATE SET
-                            name = excluded.name,
-                            node_type = excluded.node_type,
-                            properties_json = excluded.properties_json,
-                            updated_at = CURRENT_TIMESTAMP;
-                    """, (node.node_id, node.node_type, node.name, json.dumps(node.properties, ensure_ascii=False)))
+            with transaction(self.repo.conn) as cur:
+                for doc_graph in doc_graphs:
+                    for node in doc_graph.nodes:
+                        cur.execute("""
+                            INSERT INTO knowledge_nodes (node_id, node_type, name, properties_json, updated_at)
+                            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                            ON CONFLICT(node_id) DO UPDATE SET
+                                name = excluded.name,
+                                node_type = excluded.node_type,
+                                properties_json = excluded.properties_json,
+                                updated_at = CURRENT_TIMESTAMP;
+                        """, (node.node_id, node.node_type, node.name, json.dumps(node.properties, ensure_ascii=False)))
 
-                for edge in doc_graph.edges:
-                    cur.execute("""
-                        INSERT INTO knowledge_edges (source_id, target_id, relation_type, weight, properties_json)
-                        VALUES (?, ?, ?, ?, ?)
-                        ON CONFLICT(source_id, target_id, relation_type) DO UPDATE SET
-                            weight = excluded.weight,
-                            properties_json = excluded.properties_json;
-                    """, (edge.source_id, edge.target_id, edge.relation_type, edge.weight, json.dumps(edge.properties, ensure_ascii=False)))
+                    for edge in doc_graph.edges:
+                        cur.execute("""
+                            INSERT INTO knowledge_edges (source_id, target_id, relation_type, weight, properties_json)
+                            VALUES (?, ?, ?, ?, ?)
+                            ON CONFLICT(source_id, target_id, relation_type) DO UPDATE SET
+                                weight = excluded.weight,
+                                properties_json = excluded.properties_json;
+                        """, (edge.source_id, edge.target_id, edge.relation_type, edge.weight, json.dumps(edge.properties, ensure_ascii=False)))
 
-                for link in doc_graph.links:
-                    cur.execute("""
-                        INSERT INTO document_entity_links (sha256_hash, node_id, role, confidence)
-                        VALUES (?, ?, ?, ?)
-                        ON CONFLICT(sha256_hash, node_id, role) DO UPDATE SET
-                            confidence = excluded.confidence;
-                    """, (link.sha256_hash, link.node_id, link.role, link.confidence))
-
-            self.repo.conn.commit()
+                    for link in doc_graph.links:
+                        cur.execute("""
+                            INSERT INTO document_entity_links (sha256_hash, node_id, role, confidence)
+                            VALUES (?, ?, ?, ?)
+                            ON CONFLICT(sha256_hash, node_id, role) DO UPDATE SET
+                                confidence = excluded.confidence;
+                        """, (link.sha256_hash, link.node_id, link.role, link.confidence))
 
     def get_document_entities(self, sha256_hash: str) -> List[Dict[str, Any]]:
         """Retrieve all entities associated with a specific document."""

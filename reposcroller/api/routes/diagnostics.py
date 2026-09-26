@@ -62,6 +62,29 @@ def get_zoo_telemetry():
     return workload_telemetry.get_zoo_overview()
 
 
+@router.get("/ollama/ps")
+def get_ollama_ps(node: str = Query("pc1", pattern="^(pc1|pc2)$")):
+    """Proxy /api/ps probe to PC1 (127.0.0.1:11434) or PC2 (nitro-an51755:11434) for resilient browser telemetry."""
+    import httpx
+    from reposcroller.config import settings
+    target_url = "http://127.0.0.1:11434/api/ps" if node == "pc1" else (
+        settings.OLLAMA_EMBED_BASE_URL.rstrip("/") + "/api/ps" if settings.OLLAMA_EMBED_BASE_URL else "http://nitro-an51755:11434/api/ps"
+    )
+    try:
+        with httpx.Client(timeout=3.5) as client:
+            resp = client.get(target_url)
+            if resp.status_code == 200:
+                data = resp.json()
+                data["node"] = node
+                data["target_url"] = target_url
+                data["online"] = True
+                return data
+    except Exception as e:
+        logger.debug(f"Ollama ps probe failed for {node} ({target_url}): {e}")
+    return {"models": [], "node": node, "target_url": target_url, "online": False}
+
+
+
 @router.post("/clear")
 def clear_diagnostic_logs():
     """Clear the buffered diagnostic logs."""

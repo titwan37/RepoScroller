@@ -128,6 +128,33 @@ def get_ledger_stats() -> Dict[str, Any]:
     return repo.get_stats()
 
 
+@router.get("/lineage/chains")
+def get_lineage_chains(
+    limit: int = Query(25, ge=1, le=200, description="Max lineage chains to retrieve"),
+    query: Optional[str] = Query(None, description="Optional search filter for filename")
+) -> Dict[str, Any]:
+    """Retrieve version lineage chains showing evolutionary document versions and parent-child derivations."""
+    repo = DocumentRepository()
+    chains = repo.get_recent_version_chains(limit=limit, query=query)
+    summary = repo.get_lineage_summary()
+    return {
+        "status": "success",
+        "count": len(chains),
+        "summary": summary,
+        "chains": chains
+    }
+
+
+@router.get("/lineage/summary")
+def get_lineage_summary_endpoint() -> Dict[str, Any]:
+    """Retrieve overall lineage summary and relationship breakdown."""
+    repo = DocumentRepository()
+    return {
+        "status": "success",
+        "summary": repo.get_lineage_summary()
+    }
+
+
 @router.get("/{sha256_hash}")
 def get_document_details(sha256_hash: str) -> Dict[str, Any]:
     """Retrieve full document detail, all storage locations, and lineage history."""
