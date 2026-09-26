@@ -43,45 +43,43 @@ if (Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue) {
     Write-Host "  -> [WARNING] nvidia-smi not in PATH." -ForegroundColor Yellow
 }
 
-# 2. Environment Variables for the session
+# 2. Environment Variables for the session and User scope
+[Environment]::SetEnvironmentVariable("OLLAMA_HOST", "0.0.0.0:$Port", "User")
+[Environment]::SetEnvironmentVariable("OLLAMA_KEEP_ALIVE", "24h", "User")
+[Environment]::SetEnvironmentVariable("OLLAMA_NUM_PARALLEL", "4", "User")
+[Environment]::SetEnvironmentVariable("OLLAMA_MAX_LOADED_MODELS", "3", "User")
+[Environment]::SetEnvironmentVariable("OLLAMA_FLASH_ATTENTION", "1", "User")
+
 $env:OLLAMA_HOST = "0.0.0.0:$Port"
 $env:OLLAMA_KEEP_ALIVE = "24h"
 $env:OLLAMA_NUM_PARALLEL = "4"
 $env:OLLAMA_MAX_LOADED_MODELS = "3"
 $env:OLLAMA_FLASH_ATTENTION = "1"
 
-# 3. Check / Start Ollama Server
+# 3. Check / Restart Ollama Server to ensure multi-model VRAM settings take effect
 Write-Host ""
-Write-Host "[2/4] Checking Ollama Server on port $Port..." -ForegroundColor Cyan
-$isListening = $false
-try {
-    $null = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/tags" -Method Get -TimeoutSec 2 -ErrorAction Stop
-    $isListening = $true
-} catch {
-    $isListening = $false
-}
+Write-Host "[2/4] Ensuring Ollama Server is running with OLLAMA_MAX_LOADED_MODELS=3..." -ForegroundColor Cyan
 
-if (-not $isListening) {
-    Write-Host "  -> Starting Ollama server..." -ForegroundColor Yellow
-    if (Get-Service -Name "ollama" -ErrorAction SilentlyContinue) {
-        Start-Service -Name "ollama" -ErrorAction SilentlyContinue
-    } else {
-        Start-Process "ollama.exe" -ArgumentList "serve" -WindowStyle Minimized
-    }
-    
-    # Wait for server ready
-    for ($i = 0; $i -lt 15; $i++) {
-        Start-Sleep -Seconds 1
-        try {
-            $null = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/tags" -Method Get -TimeoutSec 2 -ErrorAction Stop
-            $isListening = $true
-            break
-        } catch {}
-    }
+# Stop old instances so they inherit the new environment variables
+Stop-Process -Name "ollama", "ollama app" -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 1
+
+Write-Host "  -> Launching Ollama server (0.0.0.0:$Port)..." -ForegroundColor Yellow
+Start-Process "ollama.exe" -ArgumentList "serve" -WindowStyle Minimized
+
+# Wait for server ready
+$isListening = $false
+for ($i = 0; $i -lt 15; $i++) {
+    Start-Sleep -Seconds 1
+    try {
+        $null = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/tags" -Method Get -TimeoutSec 2 -ErrorAction Stop
+        $isListening = $true
+        break
+    } catch {}
 }
 
 if ($isListening) {
-    Write-Host "  -> Ollama Server is ONLINE (0.0.0.0:$Port)" -ForegroundColor Green
+    Write-Host "  -> Ollama Server is ONLINE (0.0.0.0:$Port, Max Loaded Models: 3)" -ForegroundColor Green
 } else {
     Write-Host "  -> [ERROR] Failed to start Ollama. Ensure Ollama is installed." -ForegroundColor Red
     pause
@@ -99,10 +97,10 @@ try {
         options    = @{
             num_ctx = 2048
         }
-    } | ConvertTo-Json
+    } | ConvertTo-Json -Depth 5
     
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
-    $res = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/embed" -Method Post -Body $warmupPayload -ContentType "application/json" -TimeoutSec 45
+    $res = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/embed" -Method Post -Body $warmupPayload -ContentType "application/json" -TimeoutSec 120
     $sw.Stop()
     
     if ($res.embeddings) {
@@ -130,7 +128,7 @@ try {
     } | ConvertTo-Json -Depth 5
 
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
-    $null = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/chat" -Method Post -Body $warmupPayloadChat -ContentType "application/json" -TimeoutSec 60
+    $null = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/chat" -Method Post -Body $warmupPayloadChat -ContentType "application/json" -TimeoutSec 120
     $sw.Stop()
     Write-Host "  -> Chat model '$chatModel' loaded into VRAM (took $($sw.ElapsedMilliseconds)ms)" -ForegroundColor Green
 } catch {

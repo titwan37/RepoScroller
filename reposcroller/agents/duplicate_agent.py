@@ -415,7 +415,10 @@ User Question: {query}
                                 "messages": [{"role": "user", "content": prompt}],
                                 "stream": False,
                                 "keep_alive": settings.OLLAMA_KEEP_ALIVE,
-                                "options": {"temperature": 0.2}
+                                "options": {
+                                    "temperature": 0.2,
+                                    "num_ctx": getattr(settings, "OLLAMA_NUM_CTX", 2048)
+                                }
                             },
                             timeout=settings.OLLAMA_TIMEOUT
                         )

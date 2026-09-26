@@ -449,7 +449,8 @@ Return ONLY a valid JSON object:
                         "messages": [{"role": "user", "content": prompt}],
                         "format": "json",
                         "stream": False,
-                        "keep_alive": settings.OLLAMA_KEEP_ALIVE
+                        "keep_alive": settings.OLLAMA_KEEP_ALIVE,
+                        "options": {"num_ctx": getattr(settings, "OLLAMA_NUM_CTX", 2048)}
                     }
                 )
                 elapsed_ms = (time.time() - t0) * 1000
