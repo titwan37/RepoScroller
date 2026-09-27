@@ -1,0 +1,4 @@
+
+from reposcroller.ai.graph_extractor import KnowledgeGraphExtractor; ext = KnowledgeGraphExtractor(provider='mock'); kg = ext._extract_heuristic_fallback(text='Between Swisscom AG and Alice Dupont in Zurich and Steinhausen. Governed by Art. 253 OR. Total amount CHF 5,000 for Project ALPHA-9.', sha256_hash='testhash123', filename='doc.pdf', doc_type='lease_contract'); print('Nodes:', len(kg.nodes)); [print('  ', e.source_id, '->', e.relation_type, '->', e.target_id) for e in kg.edges]
+
+from reposcroller.ai.graph_extractor import KnowledgeGraphExtractor; ext = KnowledgeGraphExtractor(provider='mock'); kg = ext._extract_heuristic_fallback(text='Signed by Alice Dupont in Steinhausen.', sha256_hash='testhash456', filename='person_doc.pdf', doc_type='employment_contract'); [print('  ', e.source_id, '->', e.relation_type, '->', e.target_id) for e in kg.edges]

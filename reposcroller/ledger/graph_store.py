@@ -181,9 +181,27 @@ class PropertyGraphStore:
                 SELECT dl.sha256_hash, dl.canonical_filename, dl.doc_type, dl.doc_date, dl.lifecycle_status, l.role
                 FROM document_entity_links l
                 JOIN document_ledger dl ON l.sha256_hash = dl.sha256_hash
-                WHERE l.node_id = ?;
+                WHERE l.node_id = ?
+                LIMIT 50;
             """, (node_id,))
             docs = [dict(r) for r in cur.fetchall()]
+
+            # Co-occurrence Fallback: if explicit edges are empty (e.g. locations/statutes), bridge via shared documents
+            if not outgoing and not incoming and docs:
+                doc_hashes = [d["sha256_hash"] for d in docs[:15]]
+                placeholders = ",".join("?" for _ in doc_hashes)
+                cur.execute(f"""
+                    SELECT DISTINCT n.node_id, n.node_type, n.name, 
+                           CASE WHEN n.node_type = 'location' THEN 'LOCATED_IN'
+                                WHEN n.node_type = 'statute' THEN 'SUBJECT_TO'
+                                ELSE 'CO_OCCURS_IN_DOC' END AS relation_type,
+                           1.0 AS weight
+                    FROM document_entity_links l
+                    JOIN knowledge_nodes n ON l.node_id = n.node_id
+                    WHERE l.sha256_hash IN ({placeholders}) AND n.node_id != ?
+                    LIMIT 25;
+                """, doc_hashes + [node_id])
+                outgoing = [dict(r) for r in cur.fetchall()]
 
             return {
                 "node_id": node_id,
@@ -252,38 +270,101 @@ class PropertyGraphStore:
             self._graph_stats_cache_time = now
             return stats
 
-    def get_3d_knowledge_universe(self, limit: int = 350) -> Dict[str, Any]:
-        """Generate 3D Euclidean coordinates along axes of importance with unsupervised topological clustering."""
+    def get_3d_knowledge_universe(self, limit: int = 1000) -> Dict[str, Any]:
+        """Generate 3D Euclidean coordinates along axes of importance with stratified archetype sampling."""
         import hashlib
         import math
 
         cluster_definitions = [
-            {"id": 0, "name": "Corporate Alliances & Organizations", "color": "#38bdf8", "icon": "🏢"},
-            {"id": 1, "name": "Contracts & Commercial Agreements", "color": "#10b981", "icon": "📄"},
-            {"id": 2, "name": "Key Signatories & Management", "color": "#c084fc", "icon": "👤"},
-            {"id": 3, "name": "Jurisdictions & Geographic Hubs", "color": "#f59e0b", "icon": "📍"},
-            {"id": 4, "name": "Statutory & Regulatory Codes", "color": "#f43f5e", "icon": "⚖️"},
+            {
+                "id": 0,
+                "name": "Corporate Alliances & Organizations",
+                "archetype": "Organizations",
+                "color": "#38bdf8",
+                "icon": "🏢",
+                "types": ["organization"],
+                "representation_desc": "Top corporate hubs & counterparties",
+            },
+            {
+                "id": 1,
+                "name": "Contracts & Operational Projects",
+                "archetype": "Contract Types",
+                "color": "#10b981",
+                "icon": "📄",
+                "types": ["contract_type", "document_category", "document", "project_code"],
+                "representation_desc": "Full coverage of all document types & categories",
+            },
+            {
+                "id": 2,
+                "name": "Key Signatories & Management",
+                "archetype": "Persons",
+                "color": "#c084fc",
+                "icon": "👤",
+                "types": ["person"],
+                "representation_desc": "Top signatories & management",
+            },
+            {
+                "id": 3,
+                "name": "Jurisdictions & Geographic Hubs",
+                "archetype": "Locations",
+                "color": "#f59e0b",
+                "icon": "📍",
+                "types": ["location"],
+                "representation_desc": "Full coverage (Ottenbach, Steinhausen, Zug, CH, etc.)",
+            },
+            {
+                "id": 4,
+                "name": "Statutes, Milestones & Values",
+                "archetype": "Statutes",
+                "color": "#f43f5e",
+                "icon": "⚖️",
+                "types": ["statute", "monetary_value", "milestone_date"],
+                "representation_desc": "Swiss legal codes & governing articles",
+            },
         ]
 
         with self.repo._lock:
             cur = self.repo.conn.cursor()
 
-            # 1. Fetch top entity nodes with connection degree and linked document count
+            # Query entity population count per node_type to calculate representativity
+            cur.execute("SELECT node_type, COUNT(*) as cnt FROM knowledge_nodes GROUP BY node_type;")
+            type_counts = {r["node_type"]: r["cnt"] for r in cur.fetchall()}
+
+            # Stratified Cluster Sampling (Option A): Allocate quota per archetype to avoid hub monopolies
+            quota_per_type = max(100, limit // 4)
             cur.execute("""
-                SELECT n.node_id, n.node_type, n.name, n.properties_json,
-                       COUNT(DISTINCT l.sha256_hash) AS doc_count,
-                       (SELECT COUNT(*) FROM knowledge_edges e WHERE e.source_id = n.node_id OR e.target_id = n.node_id) AS degree,
-                       MAX(dl.doc_date) AS latest_doc_date
-                FROM knowledge_nodes n
-                LEFT JOIN document_entity_links l ON n.node_id = l.node_id
-                LEFT JOIN document_ledger dl ON l.sha256_hash = dl.sha256_hash
-                GROUP BY n.node_id, n.node_type, n.name
-                ORDER BY (degree * 2 + doc_count * 5) DESC
+                WITH EntityBase AS (
+                    SELECT n.node_id, n.node_type, n.name, n.properties_json,
+                           COUNT(DISTINCT l.sha256_hash) AS doc_count,
+                           (SELECT COUNT(*) FROM knowledge_edges e WHERE e.source_id = n.node_id OR e.target_id = n.node_id) AS degree,
+                           MAX(dl.doc_date) AS latest_doc_date
+                    FROM knowledge_nodes n
+                    LEFT JOIN document_entity_links l ON n.node_id = l.node_id
+                    LEFT JOIN document_ledger dl ON l.sha256_hash = dl.sha256_hash
+                    GROUP BY n.node_id, n.node_type, n.name
+                ),
+                RankedEntities AS (
+                    SELECT *,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY node_type
+                               ORDER BY (degree * 2 + doc_count * 5) DESC
+                           ) as type_rank
+                    FROM EntityBase
+                )
+                SELECT * FROM RankedEntities
+                WHERE type_rank <= ?
+                ORDER BY (degree * 2 + doc_count * 3 + (CAST(SUBSTR(COALESCE(latest_doc_date, '2005-01-01'), 1, 4) AS INT) - 2005) * 10) DESC
                 LIMIT ?;
-            """, (limit,))
+            """, (quota_per_type, limit))
             raw_nodes = cur.fetchall()
 
             if not raw_nodes:
+                for c in cluster_definitions:
+                    c["total_in_db"] = sum(type_counts.get(t, 0) for t in c.get("types", []))
+                    c["rendered_count"] = 0
+                    c["quota"] = quota_per_type
+                    c["is_capped"] = False
+                    c["representation_pct"] = 0.0
                 return {
                     "nodes": [],
                     "edges": [],
@@ -293,7 +374,7 @@ class PropertyGraphStore:
                         "y": "Temporal Recency & Lifecycle Maturity (PCA-2)",
                         "z": "Graph Centrality & Hub Authority (PCA-3)"
                     },
-                    "stats": {"total_nodes": 0, "rendered_nodes": 0, "rendered_edges": 0}
+                    "stats": {"total_nodes": 0, "rendered_nodes": 0, "rendered_edges": 0, "quota_per_type": quota_per_type}
                 }
 
             max_degree = max((r["degree"] for r in raw_nodes), default=1) or 1
@@ -303,10 +384,10 @@ class PropertyGraphStore:
             # Cluster centers in 3D space (PCA centroids)
             cluster_centers = {
                 0: (-55.0, 15.0, 30.0),    # Organizations
-                1: (50.0, -10.0, 45.0),    # Contracts
+                1: (50.0, -10.0, 45.0),    # Contracts & Projects
                 2: (-20.0, 40.0, -25.0),   # Persons
                 3: (-65.0, -35.0, -40.0),  # Locations
-                4: (60.0, 35.0, -15.0),    # Statutes
+                4: (60.0, 35.0, -15.0),    # Statutes, Milestones & Values
             }
 
             for idx, r in enumerate(raw_nodes):
@@ -322,13 +403,13 @@ class PropertyGraphStore:
                 # Cluster mapping based on entity type archetype
                 if ntype == "organization":
                     cid = 0
-                elif ntype in ["contract_type", "document"]:
+                elif ntype in ["contract_type", "document_category", "document", "project_code"]:
                     cid = 1
                 elif ntype == "person":
                     cid = 2
                 elif ntype == "location":
                     cid = 3
-                elif ntype == "statute":
+                elif ntype in ["statute", "monetary_value", "milestone_date"]:
                     cid = 4
                 else:
                     cid = idx % 5
@@ -390,7 +471,7 @@ class PropertyGraphStore:
                     FROM knowledge_edges
                     WHERE source_id IN ({placeholders}) AND target_id IN ({placeholders})
                     ORDER BY weight DESC
-                    LIMIT 600;
+                    LIMIT 3000;
                 """, list(node_id_set) + list(node_id_set))
                 raw_edges = cur.fetchall()
 
@@ -401,6 +482,51 @@ class PropertyGraphStore:
                         "relation": e["relation_type"] or "RELATED_TO",
                         "weight": round(e["weight"] or 1.0, 2)
                     })
+
+                # Bridge isolated locations, statutes, and contracts via shared document co-occurrence
+                connected_nodes = {e["source"] for e in edges_data} | {e["target"] for e in edges_data}
+                isolated_nodes = [nid for nid in node_id_set if nid not in connected_nodes]
+                if isolated_nodes:
+                    iso_placeholders = ",".join("?" for _ in isolated_nodes)
+                    all_placeholders = ",".join("?" for _ in node_id_set)
+                    cur.execute(f"""
+                        SELECT DISTINCT l1.node_id AS source_id, l2.node_id AS target_id,
+                               CASE WHEN n1.node_type = 'location' OR n2.node_type = 'location' THEN 'LOCATED_IN'
+                                    WHEN n1.node_type = 'statute' OR n2.node_type = 'statute' THEN 'SUBJECT_TO'
+                                    ELSE 'CO_OCCURS' END AS relation_type,
+                               1.0 AS weight
+                        FROM document_entity_links l1
+                        JOIN document_entity_links l2 ON l1.sha256_hash = l2.sha256_hash
+                        JOIN knowledge_nodes n1 ON l1.node_id = n1.node_id
+                        JOIN knowledge_nodes n2 ON l2.node_id = n2.node_id
+                        WHERE l1.node_id IN ({iso_placeholders})
+                          AND l2.node_id IN ({all_placeholders})
+                          AND l1.node_id != l2.node_id
+                        LIMIT 1000;
+                    """, isolated_nodes + list(node_id_set))
+                    for e in cur.fetchall():
+                        edges_data.append({
+                            "source": e["source_id"],
+                            "target": e["target_id"],
+                            "relation": e["relation_type"],
+                            "weight": 1.0
+                        })
+
+            # Compute cluster rendered counts and representativity percentages
+            cluster_rendered_counts = {c["id"]: 0 for c in cluster_definitions}
+            for n in nodes_data:
+                cid = n.get("cluster", 0)
+                if cid in cluster_rendered_counts:
+                    cluster_rendered_counts[cid] += 1
+
+            for c in cluster_definitions:
+                total_db = sum(type_counts.get(t, 0) for t in c.get("types", []))
+                rendered_cnt = cluster_rendered_counts[c["id"]]
+                c["total_in_db"] = total_db
+                c["rendered_count"] = rendered_cnt
+                c["quota"] = quota_per_type
+                c["is_capped"] = (total_db > quota_per_type) and (rendered_cnt >= quota_per_type)
+                c["representation_pct"] = round((rendered_cnt / total_db * 100.0), 1) if total_db > 0 else 100.0
 
             # Overall stats
             cur.execute("SELECT COUNT(*) FROM knowledge_nodes")
@@ -422,8 +548,11 @@ class PropertyGraphStore:
                     "rendered_nodes": len(nodes_data),
                     "total_edges": tot_edges,
                     "rendered_edges": len(edges_data),
-                    "dimensionality": "High-Dim 1024-D → 3D PCA Space",
-                    "clustering_algorithm": "Unsupervised Topological K-Means (k=5)"
+                    "quota_per_type": quota_per_type,
+                    "overall_representativity_pct": round((len(nodes_data) / tot_nodes * 100.0), 1) if tot_nodes > 0 else 100.0,
+                    "db_type_counts": type_counts,
+                    "dimensionality": "High-Dim 1024-D -> 3D PCA Space",
+                    "clustering_algorithm": "Stratified Topological Archetypes (k=5)"
                 }
             }
 

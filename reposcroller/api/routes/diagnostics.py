@@ -62,9 +62,14 @@ def get_zoo_telemetry():
     return workload_telemetry.get_zoo_overview()
 
 
+_last_pc1_ps_state = None
+_last_pc2_ps_state = None
+
+
 @router.get("/ollama/ps")
 def get_ollama_ps(node: str = Query("pc1", pattern="^(pc1|pc2)$")):
     """Proxy /api/ps probe to PC1 (127.0.0.1:11434) or PC2 (nitro-an51755:11434) for resilient browser telemetry."""
+    global _last_pc1_ps_state, _last_pc2_ps_state
     import httpx
     from reposcroller.config import settings
     target_url = "http://127.0.0.1:11434/api/ps" if node == "pc1" else (
@@ -78,9 +83,20 @@ def get_ollama_ps(node: str = Query("pc1", pattern="^(pc1|pc2)$")):
                 data["node"] = node
                 data["target_url"] = target_url
                 data["online"] = True
+                if node == "pc1" and _last_pc1_ps_state != "online":
+                    logger.info(f"Ollama PC1 host engine connected ({target_url})")
+                    _last_pc1_ps_state = "online"
+                elif node == "pc2" and _last_pc2_ps_state != "online":
+                    logger.info(f"Ollama PC2 CUDA engine connected ({target_url})")
+                    _last_pc2_ps_state = "online"
                 return data
     except Exception as e:
-        logger.debug(f"Ollama ps probe failed for {node} ({target_url}): {e}")
+        if node == "pc1" and _last_pc1_ps_state != "standby":
+            logger.debug(f"Ollama PC1 host standby (http://127.0.0.1:11434/api/ps): {e}")
+            _last_pc1_ps_state = "standby"
+        elif node == "pc2" and _last_pc2_ps_state != "standby":
+            logger.debug(f"Ollama PC2 remote standby ({target_url}): {e}")
+            _last_pc2_ps_state = "standby"
     return {"models": [], "node": node, "target_url": target_url, "online": False}
 
 
@@ -104,7 +120,7 @@ def get_pc2_hardware_telemetry():
             pass
     target_url = f"http://{base_host}:11435/"
     try:
-        with httpx.Client(timeout=1.5) as client:
+        with httpx.Client(timeout=5.0) as client:
             resp = client.get(target_url)
             if resp.status_code == 200:
                 data = resp.json()

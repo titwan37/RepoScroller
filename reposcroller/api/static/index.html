@@ -1247,7 +1247,7 @@
         </div>
         <div class="kpi-glass-card">
           <div class="kpi-card-lbl">Universe Topology</div>
-          <div class="kpi-card-val text-emerald"><span id="glsl-stat-nodes">350</span> Entities • <span id="glsl-stat-edges">600</span> Edges</div>
+          <div class="kpi-card-val text-emerald"><span id="glsl-stat-nodes">1,000</span> Entities • <span id="glsl-stat-edges">3,000</span> Edges</div>
         </div>
         <div class="kpi-glass-card">
           <div class="kpi-card-lbl">Rendering Engine</div>
@@ -1344,14 +1344,20 @@
 
           <!-- Clusters Legend Section -->
           <div class="cluster-legend-section">
-            <div class="cluster-legend-title">Topological Clusters (K-Means)</div>
+            <div class="cluster-legend-title-row">
+              <div class="cluster-legend-title">Topical Clusters</div>
+              <span class="cluster-legend-quota-pill" title="Viewport quota is capped at max 250 nodes per entity archetype to guarantee balanced visual macro coverage">Quota: 250 max / type</span>
+            </div>
             <div class="cluster-items-list" id="cluster-legend-items">
               <!-- Dynamically populated -->
+            </div>
+            <div class="cluster-macro-summary" id="cluster-macro-summary">
+              <!-- Dynamically populated overall representativity -->
             </div>
           </div>
 
           <div class="legend-footer-tip">
-            <span>💡 <strong>Tip:</strong> Drag to rotate • Scroll to zoom • Right-click to pan • Click node to inspect</span>
+            <span>💡 <strong>Tip:</strong> Drag to rotate • Scroll to zoom • Right-click to pan • Click to inspect • <strong>Double-click to expand 1-hop LOD</strong></span>
           </div>
         </div>
       </div>
@@ -1389,12 +1395,20 @@
           </div>
 
           <div class="inspector-actions">
+            <button class="btn btn-secondary btn-block btn-insp-action" id="insp-btn-expand" onclick="expand3DSelectedNode()">
+              🔬 Expand Subgraph (+1 Hop LOD)
+            </button>
             <button class="btn btn-primary btn-block btn-insp-action" id="insp-btn-chat" onclick="interrogateEntityInAIStudio()">
               💬 Interrogate in AI Room ➔
             </button>
             <button class="btn btn-outline btn-block btn-insp-action" id="insp-btn-ledger" onclick="locateEntityInDocumentLedger()">
               🗄️ Locate in Document Ledger ➔
             </button>
+          </div>
+
+          <div class="inspector-neighborhood-box" id="insp-neighborhood-box" style="margin-top: 14px; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 10px;">
+            <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; color: #94a3b8; margin-bottom: 6px;">Neighborhood Connections (<span id="insp-neighborhood-count">0</span>)</div>
+            <div id="insp-neighborhood-list" style="max-height: 140px; overflow-y: auto; font-size: 12px; display: flex; flex-direction: column; gap: 4px;"></div>
           </div>
         </div>
       </div>

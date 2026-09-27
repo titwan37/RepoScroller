@@ -2847,7 +2847,7 @@ function init3DKnowledgeUniverse() {
   glsl3D.scene.background = null; // transparent to inherit CSS gradient
 
   glsl3D.camera = new THREE.PerspectiveCamera(50, width / height, 1, 4000);
-  glsl3D.camera.position.set(0, 45, 270);
+  glsl3D.camera.position.set(0, 45, 260);
 
   // WebGL Renderer
   glsl3D.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
@@ -2862,7 +2862,7 @@ function init3DKnowledgeUniverse() {
     glsl3D.controls.enableDamping = true;
     glsl3D.controls.dampingFactor = 0.05;
     glsl3D.controls.minDistance = 25;
-    glsl3D.controls.maxDistance = 1200;
+    glsl3D.controls.maxDistance = 800;
     glsl3D.controls.target.set(0, 0, 0);
 
     glsl3D.controls.addEventListener("start", () => {
@@ -2901,6 +2901,7 @@ function init3DKnowledgeUniverse() {
   const canvasEl = glsl3D.renderer.domElement;
   canvasEl.addEventListener("mousemove", on3DMouseMove);
   canvasEl.addEventListener("click", on3DMouseClick);
+  canvasEl.addEventListener("dblclick", on3DMouseDblClick);
   canvasEl.addEventListener("mouseleave", on3DMouseLeave);
 
   // Window Resize Listener
@@ -3003,7 +3004,7 @@ async function load3DUniverseData(forceReload = false) {
   }
 
   try {
-    const res = await fetch("/api/v1/sidecar/graph-3d?limit=350");
+    const res = await fetch("/api/v1/sidecar/graph-3d?limit=1000");
     if (!res.ok) throw new Error("HTTP " + res.status);
     const data = await res.json();
 
@@ -3012,6 +3013,7 @@ async function load3DUniverseData(forceReload = false) {
     glsl3D.clusters = data.clusters || [];
     glsl3D.axes = data.axes || {};
     glsl3D.stats = data.stats || {};
+    glsl3D.totalNodesInDB = (data.stats && data.stats.total_nodes) || 18607;
 
     // Update Header KPI metrics
     const statNodesEl = document.getElementById("glsl-stat-nodes");
@@ -3040,15 +3042,55 @@ async function load3DUniverseData(forceReload = false) {
         counts[n.cluster] = (counts[n.cluster] || 0) + 1;
       });
 
-      clusterLegendContainer.innerHTML = glsl3D.clusters.map(c => `
-        <div class="cluster-item" onclick="filter3DCluster(${c.id})">
-          <div class="cluster-item-left">
-            <span class="cluster-color-dot" style="background: ${c.color}; color: ${c.color};"></span>
-            <span class="cluster-name" title="${escapeHtml(c.name)}">${escapeHtml(c.icon || "")} ${escapeHtml(c.name)}</span>
+      clusterLegendContainer.innerHTML = glsl3D.clusters.map(c => {
+        const rendered = counts[c.id] || c.rendered_count || 0;
+        const totalInDb = c.total_in_db || rendered;
+        const pct = c.representation_pct !== undefined
+          ? c.representation_pct
+          : (totalInDb > 0 ? parseFloat(((rendered / totalInDb) * 100).toFixed(1)) : 100.0);
+        const isFull = pct >= 99.95 || rendered >= totalInDb;
+        const quota = c.quota || 250;
+        const isCapped = c.is_capped || (totalInDb > quota && rendered >= quota);
+        const archetypeLabel = c.archetype || c.name;
+        const tooltip = `${c.name} (${archetypeLabel})\n• Rendered in 3D: ${rendered} nodes ${isCapped ? '(Viewport Quota: Max ' + quota + ')' : '(Full Coverage: 100%)'}\n• Total in Database: ${totalInDb.toLocaleString()} entities\n• Representation: ${isFull ? '100%' : pct + '%'} of population\n• Scope: ${c.representation_desc || ''}`;
+
+        return `
+          <div class="cluster-item" data-cluster-id="${c.id}" onclick="filter3DCluster(${c.id})" title="${escapeHtml(tooltip)}">
+            <div class="cluster-item-left">
+              <span class="cluster-color-dot" style="background: ${c.color}; color: ${c.color};"></span>
+              <div class="cluster-text-col">
+                <span class="cluster-name">${escapeHtml(c.icon || "")} ${escapeHtml(c.name)}</span>
+                <span class="cluster-desc">${escapeHtml(c.representation_desc || archetypeLabel)}</span>
+              </div>
+            </div>
+            <div class="cluster-metric-right">
+              <div class="cluster-fraction">
+                <span class="cluster-rendered">${rendered}</span>
+                <span class="cluster-db-total">/ ${totalInDb.toLocaleString()}</span>
+              </div>
+              <span class="cluster-pct ${isFull ? 'pct-full' : 'pct-capped'}">${isFull ? '100%' : pct + '%'}</span>
+            </div>
           </div>
-          <span class="cluster-count">${counts[c.id] || 0}</span>
-        </div>
-      `).join("");
+        `;
+      }).join("");
+
+      const macroSummary = document.getElementById("cluster-macro-summary");
+      if (macroSummary) {
+        const totalRendered = glsl3D.nodes.length;
+        const totalDbNodes = (data.stats && data.stats.total_nodes) || totalRendered;
+        const overallPct = (data.stats && data.stats.overall_representativity_pct) !== undefined
+          ? data.stats.overall_representativity_pct
+          : (totalDbNodes > 0 ? ((totalRendered / totalDbNodes) * 100).toFixed(1) : 100);
+
+        macroSummary.innerHTML = `
+          <div class="macro-summary-left">
+            <span class="macro-badge">Macro Universe</span>
+            <span class="macro-text"><strong>${totalRendered.toLocaleString()}</strong> of ${totalDbNodes.toLocaleString()} nodes</span>
+          </div>
+          <span class="macro-pct">${overallPct}% coverage</span>
+        `;
+        macroSummary.title = `Balanced Macro Universe: ${totalRendered} rendered 3D nodes out of ${totalDbNodes.toLocaleString()} total entities in database (${overallPct}% representation). Viewport quota: max 250 per archetype.`;
+      }
     }
 
     // Build Three.js Point Cloud & Edges
@@ -3265,6 +3307,23 @@ function on3DMouseClick(e) {
   }
 }
 
+async function on3DMouseDblClick(e) {
+  if (glsl3D.hoveredNodeIndex >= 0 && glsl3D.hoveredNodeIndex < glsl3D.nodes.length) {
+    const node = glsl3D.nodes[glsl3D.hoveredNodeIndex];
+    await open3DNodeInspector(node);
+    await expand3DSelectedNode();
+  }
+}
+
+function focusOrInspect3DNode(nodeId) {
+  const existingNode = glsl3D.nodes.find(n => n.id === nodeId);
+  if (existingNode) {
+    open3DNodeInspector(existingNode);
+  } else if (glsl3D.selectedNode) {
+    expand3DSelectedNode();
+  }
+}
+
 function show3DHoverTooltip(node, hitPoint) {
   const tooltip = document.getElementById("glsl-hover-tooltip");
   if (!tooltip) return;
@@ -3286,7 +3345,7 @@ function show3DHoverTooltip(node, hitPoint) {
   tooltip.style.display = "block";
 }
 
-function open3DNodeInspector(node) {
+async function open3DNodeInspector(node) {
   glsl3D.selectedNode = node;
   const drawer = document.getElementById("glsl-node-inspector");
   if (!drawer) return;
@@ -3317,6 +3376,207 @@ function open3DNodeInspector(node) {
   // Focus camera smoothly toward the node
   if (glsl3D.controls) {
     glsl3D.controls.target.set(node.x, node.y, node.z);
+  }
+
+  // Progressive Semantic Expansion: Asynchronously fetch 1-hop neighborhood
+  const listEl = document.getElementById("insp-neighborhood-list");
+  const countEl = document.getElementById("insp-neighborhood-count");
+  if (listEl) listEl.innerHTML = `<span style="color: #64748b;">Loading 1-hop connected neighborhood...</span>`;
+  if (countEl) countEl.textContent = "...";
+
+  try {
+    const res = await fetch(`/api/v1/sidecar/graph/node/${encodeURIComponent(node.id)}?hops=1`);
+    if (res.ok) {
+      const nh = await res.json();
+      glsl3D.currentNeighborhood = nh;
+      renderNeighborhoodDetails(nh);
+    }
+  } catch (err) {
+    console.debug("Failed to fetch neighborhood:", err);
+    if (listEl) listEl.innerHTML = `<span style="color: #ef4444;">Failed to load neighborhood</span>`;
+  }
+}
+
+function renderNeighborhoodDetails(nh) {
+  const listEl = document.getElementById("insp-neighborhood-list");
+  const countEl = document.getElementById("insp-neighborhood-count");
+  if (!listEl) return;
+
+  const outR = nh.outgoing_relations || [];
+  const inR = nh.incoming_relations || [];
+  const docs = nh.associated_documents || [];
+  const allRel = [...outR, ...inR];
+  if (countEl) countEl.textContent = allRel.length;
+
+  let html = "";
+  if (allRel.length > 0) {
+    html += allRel.slice(0, 15).map(r => `
+      <div style="display: flex; justify-content: space-between; align-items: center; padding: 3px 6px; border-radius: 4px; cursor: pointer; transition: background 0.15s;" 
+           onmouseover="this.style.background='rgba(255,255,255,0.08)'" 
+           onmouseout="this.style.background='transparent'" 
+           onclick="focusOrInspect3DNode('${escapeHtml(r.node_id)}')"
+           title="Click to focus / expand: ${escapeHtml(r.name || r.node_id)}">
+        <span style="color: #e2e8f0; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; max-width: 170px;">${escapeHtml(r.name || r.node_id)}</span>
+        <span style="font-size: 10px; color: #38bdf8; background: rgba(56, 189, 248, 0.12); padding: 1px 5px; border-radius: 4px;">${escapeHtml(r.relation_type || 'LINK')}</span>
+      </div>
+    `).join("");
+  } else {
+    html += `<span style="color: #64748b; font-size: 11px;">No direct explicit graph links</span>`;
+  }
+
+  if (docs.length > 0) {
+    html += `
+      <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; color: #10b981; margin-top: 8px; margin-bottom: 4px;">Linked Documents (${docs.length})</div>
+    `;
+    html += docs.slice(0, 6).map(d => `
+      <div style="font-size: 11px; color: #94a3b8; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; padding: 1px 0;" title="${escapeHtml(d.canonical_filename)}">
+        📄 ${escapeHtml(d.canonical_filename)}
+      </div>
+    `).join("");
+  }
+
+  listEl.innerHTML = html;
+}
+
+async function expand3DSelectedNode() {
+  const node = glsl3D.selectedNode;
+  if (!node) return;
+
+  const btn = document.getElementById("insp-btn-expand");
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<span class="spinner-inline">⏳</span> Expanding...`;
+  }
+
+  try {
+    let nh = glsl3D.currentNeighborhood;
+    if (!nh || nh.node_id !== node.id) {
+      const res = await fetch(`/api/v1/sidecar/graph/node/${encodeURIComponent(node.id)}?hops=1`);
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      nh = await res.json();
+      glsl3D.currentNeighborhood = nh;
+    }
+
+    const connectedNodesMap = new Map();
+    (nh.outgoing_relations || []).forEach(r => connectedNodesMap.set(r.node_id, r));
+    (nh.incoming_relations || []).forEach(r => connectedNodesMap.set(r.node_id, r));
+
+    const existingIds = new Set(glsl3D.nodes.map(n => n.id));
+    const newNeighborNodes = [];
+
+    connectedNodesMap.forEach((meta, nid) => {
+      if (!existingIds.has(nid)) {
+        newNeighborNodes.push({
+          id: nid,
+          name: meta.name || nid,
+          type: meta.node_type || "organization",
+          degree: 1,
+          doc_count: 1,
+          latest_date: node.latest_date || "2024-01-01"
+        });
+      }
+    });
+
+    if (newNeighborNodes.length === 0) {
+      showToast(`All 1-hop connected neighbors of ${node.name} are already rendered in the 3D scene.`, "info", 3000);
+      return;
+    }
+
+    // Dynamic Canvas Injection: assign local coordinates clustered around (node.x, node.y, node.z)
+    const clusterMap = {
+      organization: 0,
+      contract_type: 1,
+      project_code: 1,
+      document: 1,
+      person: 2,
+      location: 3,
+      statute: 4,
+      monetary_value: 4,
+      milestone_date: 4
+    };
+
+    newNeighborNodes.forEach((newN, idx) => {
+      const cid = clusterMap[newN.type] !== undefined ? clusterMap[newN.type] : (idx % 5);
+      const cmeta = glsl3D.clusters[cid] || { name: "Connected Subgraph", color: "#38bdf8", icon: "🌐" };
+      newN.cluster = cid;
+      newN.cluster_name = cmeta.name;
+      newN.cluster_color = cmeta.color;
+      newN.cluster_icon = cmeta.icon;
+
+      // Spherical distribution around the parent node
+      const phi = (idx / newNeighborNodes.length) * Math.PI * 2;
+      const theta = ((idx % 3) - 1) * 0.45;
+      const radius = 14 + (idx % 4) * 6;
+
+      newN.x = Math.round((node.x + Math.cos(phi) * Math.cos(theta) * radius) * 100) / 100;
+      newN.y = Math.round((node.y + Math.sin(theta) * radius + (Math.sin(phi * 2) * 5)) * 100) / 100;
+      newN.z = Math.round((node.z + Math.sin(phi) * Math.cos(theta) * radius) * 100) / 100;
+      newN.size = 1.3;
+
+      glsl3D.nodes.push(newN);
+      existingIds.add(newN.id);
+    });
+
+    // Add edges
+    (nh.outgoing_relations || []).forEach(r => {
+      glsl3D.edges.push({
+        source: node.id,
+        target: r.node_id,
+        relation: r.relation_type || "RELATED_TO",
+        weight: r.weight || 1.0
+      });
+    });
+    (nh.incoming_relations || []).forEach(r => {
+      glsl3D.edges.push({
+        source: r.node_id,
+        target: node.id,
+        relation: r.relation_type || "RELATED_TO",
+        weight: r.weight || 1.0
+      });
+    });
+
+    // Rebuild Three.js geometries dynamically
+    build3DSceneObjects();
+
+    // Update KPI indicators
+    const statNodesEl = document.getElementById("glsl-stat-nodes");
+    const statEdgesEl = document.getElementById("glsl-stat-edges");
+    if (statNodesEl) statNodesEl.textContent = glsl3D.nodes.length.toLocaleString();
+    if (statEdgesEl) statEdgesEl.textContent = glsl3D.edges.length.toLocaleString();
+
+    // Dynamically update cluster legend counts and representativity percentages
+    const counts = {};
+    glsl3D.nodes.forEach(n => {
+      counts[n.cluster] = (counts[n.cluster] || 0) + 1;
+    });
+    glsl3D.clusters.forEach(c => {
+      const renderedEl = document.querySelector(`.cluster-item[data-cluster-id="${c.id}"] .cluster-rendered`);
+      if (renderedEl) renderedEl.textContent = counts[c.id] || 0;
+      const pctEl = document.querySelector(`.cluster-item[data-cluster-id="${c.id}"] .cluster-pct`);
+      if (pctEl && c.total_in_db) {
+        const newPct = parseFloat((( (counts[c.id] || 0) / c.total_in_db) * 100).toFixed(1));
+        const isFull = newPct >= 99.95 || (counts[c.id] || 0) >= c.total_in_db;
+        pctEl.textContent = isFull ? "100%" : newPct + "%";
+        pctEl.className = `cluster-pct ${isFull ? 'pct-full' : 'pct-capped'}`;
+      }
+    });
+    const macroRenderedEl = document.querySelector("#cluster-macro-summary strong");
+    if (macroRenderedEl) macroRenderedEl.textContent = glsl3D.nodes.length.toLocaleString();
+    const macroPctEl = document.querySelector("#cluster-macro-summary .macro-pct");
+    if (macroPctEl && glsl3D.totalNodesInDB) {
+      const macroPct = parseFloat(((glsl3D.nodes.length / glsl3D.totalNodesInDB) * 100).toFixed(1));
+      macroPctEl.textContent = `${macroPct}% coverage`;
+    }
+
+    showToast(`⚡ Dynamic Subgraph Expanded: Injected +${newNeighborNodes.length} entities around ${node.name}`, "success", 4000);
+    renderNeighborhoodDetails(nh);
+  } catch (err) {
+    showToast("Failed to expand neighborhood: " + err.message, "error");
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = `🔬 Expand Subgraph (+1 Hop LOD)`;
+    }
   }
 }
 
@@ -3369,11 +3629,24 @@ function change3DColorMode(mode) {
 }
 
 function filter3DCluster(clusterId) {
+  // If clicking the already active cluster, toggle back to 'all'
+  if (String(glsl3D.activeClusterFilter) === String(clusterId) && String(clusterId) !== "all") {
+    clusterId = "all";
+  }
   glsl3D.activeClusterFilter = clusterId;
   const select = document.getElementById("select-glsl-cluster");
   if (select && select.value !== String(clusterId)) {
     select.value = String(clusterId);
   }
+
+  // Update active state in cluster legend list
+  document.querySelectorAll(".cluster-item").forEach(el => {
+    if (String(clusterId) !== "all" && el.dataset.clusterId === String(clusterId)) {
+      el.classList.add("active");
+    } else {
+      el.classList.remove("active");
+    }
+  });
 
   if (!glsl3D.pointsMesh) return;
 
@@ -3498,7 +3771,7 @@ async function pollOllamaProcessInspector(force = false) {
     const badgePc1 = document.getElementById("ps-pc1-status-badge");
     const summaryPc1 = document.getElementById("ps-pc1-summary");
 
-    if (pc1Data && Array.isArray(pc1Data.models)) {
+    if (pc1Data && pc1Data.online !== false && Array.isArray(pc1Data.models)) {
       const models = pc1Data.models;
       if (countPc1) countPc1.textContent = `${models.length} model${models.length === 1 ? '' : 's'}`;
       if (badgePc1) {
@@ -3540,11 +3813,13 @@ async function pollOllamaProcessInspector(force = false) {
         }
       }
     } else {
+      if (countPc1) countPc1.textContent = "Standby";
       if (badgePc1) {
         badgePc1.className = "node-status-badge badge-offline";
         badgePc1.innerHTML = `<span class="dot"></span> Standby`;
       }
-      if (tbodyPc1) tbodyPc1.innerHTML = `<tr><td colspan="6" class="text-center text-muted">Node offline or unreachable (127.0.0.1:11434)</td></tr>`;
+      if (tbodyPc1) tbodyPc1.innerHTML = `<tr><td colspan="6" class="text-center text-muted">Host Ollama engine standby / not started (127.0.0.1:11434)</td></tr>`;
+      if (summaryPc1) summaryPc1.textContent = "Local host engine in standby • Workloads offloaded to PC2 CUDA";
     }
   } catch (err) {
     console.debug("PC1 PS inspection error:", err);
@@ -3575,7 +3850,7 @@ async function pollOllamaProcessInspector(force = false) {
     const badgePc2 = document.getElementById("ps-pc2-status-badge");
     const summaryPc2 = document.getElementById("ps-pc2-summary");
 
-    if (pc2Data && Array.isArray(pc2Data.models)) {
+    if (pc2Data && pc2Data.online !== false && Array.isArray(pc2Data.models)) {
       const models = pc2Data.models;
       let totalVram = 0;
       models.forEach(m => totalVram += (m.size_vram || m.size || 0));
