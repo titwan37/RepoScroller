@@ -479,6 +479,12 @@ async function loadWorkloadTelemetry(force = false) {
       flowWriter.textContent = pl.db_writer_stage || (sidecarContinuousRunning ? "idle" : "stopped");
       flowWriter.className = pl.db_writer_stage === "writing_sqlite" ? "text-emerald font-bold" : "";
     }
+    const flowValidator = document.getElementById("flow-validator-val");
+    if (flowValidator) {
+      const vStage = pl.validator_stage || (data.validation && data.validation.stage) || "idle";
+      flowValidator.textContent = vStage;
+      flowValidator.className = (vStage === "certifying_llm" || vStage === "pruning") ? "text-cyan font-bold pulse-text" : "";
+    }
 
     // 5. Update Real-Time Zoo Matrix Observatory Strip
     const zoo = data.zoo || {};
@@ -490,6 +496,8 @@ async function loadWorkloadTelemetry(force = false) {
     const zooWalSub = document.getElementById("zoo-wal-sub");
     const zooChatVal = document.getElementById("zoo-chat-val");
     const zooChatSub = document.getElementById("zoo-chat-sub");
+    const zooValidatorVal = document.getElementById("zoo-validator-val");
+    const zooValidatorSub = document.getElementById("zoo-validator-sub");
 
     if (zooPdfVal && zoo.io_pdf_reading) {
       zooPdfVal.textContent = `${zoo.io_pdf_reading.rate_mb_s} MB/s`;
@@ -515,6 +523,23 @@ async function loadWorkloadTelemetry(force = false) {
       if (zooChatSub) {
         const reqs = isPc2 ? zoo.chat_reasoning.pc2_requests : zoo.chat_reasoning.pc1_requests;
         zooChatSub.textContent = `${reqs || 0} calls (${isPc2 ? zoo.chat_reasoning.pc2_model : zoo.chat_reasoning.pc1_model})`;
+      }
+    }
+    if (zooValidatorVal) {
+      const vStats = data.validation || (data.worker && data.worker.validation) || {};
+      const vStage = vStats.stage || pl.validator_stage || "idle";
+      zooValidatorVal.textContent = vStage === "idle" ? "Idle" : (vStage === "certifying_llm" ? "⚡ Certifying" : "🧹 Pruning");
+      zooValidatorVal.className = vStage !== "idle" ? "text-cyan font-bold" : "text-emerald";
+      if (zooValidatorSub) {
+        const cert = vStats.total_certified || 0;
+        const purged = vStats.total_purged || 0;
+        if (cert > 0 || purged > 0) {
+          zooValidatorSub.textContent = `+${cert} / -${purged}`;
+          zooValidatorSub.className = "zoo-sub text-cyan";
+        } else {
+          zooValidatorSub.textContent = "Certified";
+          zooValidatorSub.className = "zoo-sub text-emerald";
+        }
       }
     }
 
@@ -1939,6 +1964,50 @@ async function triggerSidecarBatch() {
   }
 }
 
+async function triggerEntityValidation() {
+  const btns = [
+    document.getElementById("ws0-btn-validate-entities"),
+    document.getElementById("studio-btn-validate-entities")
+  ].filter(Boolean);
+
+  btns.forEach(b => {
+    b.disabled = true;
+    b.innerHTML = '<span class="btn-icon">⏳</span> Auditing...';
+  });
+
+  showToast("🛡️ Running Knowledge Graph entity certification & pruning audit...", "info", 4000);
+
+  try {
+    const res = await fetch("/api/v1/sidecar/validate-entities", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ limit: 50, dry_run: false, deterministic_only: false, run_llm: true })
+    });
+    const data = await res.json();
+    const result = data.result || {};
+    const det = result.deterministic || {};
+    const llm = result.llm || {};
+    const purged = (det.purged_ocr_noise || 0) + (det.purged_blacklisted || 0) + (llm.purged_count || 0);
+    const recat = (det.recategorized_doc_types || 0) + (det.reclassified_locations || 0) + (llm.recategorized_count || 0);
+    const certified = llm.retained_count || 0;
+
+    showToast(`🛡️ Entity audit complete: ${certified} certified, ${purged} purged, ${recat} recategorized.`, "success", 6000);
+    await loadSidecarStats();
+    if (typeof loadUniverseData === "function") {
+      loadUniverseData();
+    }
+  } catch (err) {
+    showToast(`Entity validation failed: ${err.message}`, "error", 5000);
+  } finally {
+    btns.forEach(b => {
+      b.disabled = false;
+      b.innerHTML = '<span class="btn-icon">🛡️</span> Validate Entities';
+    });
+  }
+}
+window.triggerEntityValidation = triggerEntityValidation;
+
+
 // ==========================================
 // 12.6 Full-Width GraphRAG Sovereign Studio Execution
 // ==========================================
@@ -2712,7 +2781,7 @@ function updateDiagnosticBadges() {
 // =========================================================================
 // 15. 3D KNOWLEDGE UNIVERSE & WEBGL GLSL TOPOLOGICAL SHADER ENGINE
 // =========================================================================
-
+// 1. In glsl3D configuration:
 const glsl3D = {
   initialized: false,
   scene: null,
@@ -2734,6 +2803,7 @@ const glsl3D = {
   uniforms: {
     uTime: { value: 0.0 },
     uPointSize: { value: 1.0 },
+    uBrightness: { value: 0.7 }, // Default brightness (0.1 to 1.5)
   },
   autoSpin: true,
   showEdges: true,
@@ -2788,6 +2858,7 @@ const UNIVERSE_VERTEX_SHADER = `
   }
 `;
 
+// 2. In UNIVERSE_FRAGMENT_SHADER:
 const UNIVERSE_FRAGMENT_SHADER = `
   varying vec3 vColor;
   varying float vCluster;
@@ -2796,28 +2867,56 @@ const UNIVERSE_FRAGMENT_SHADER = `
   varying float vDist;
 
   uniform float uTime;
+  uniform float uBrightness;
 
   void main() {
     vec2 coord = gl_PointCoord - vec2(0.5);
     float r = length(coord);
     if (r > 0.5) discard;
 
-    // Radial falloff: solid core + glowing Gaussian halo
+    // Softened radial core and exponential falloff
     float core = smoothstep(0.24, 0.04, r);
-    float halo = exp(-r * 6.5);
-    float alpha = clamp(core * 0.95 + halo * 0.65, 0.0, 1.0);
+    float halo = exp(-r * 7.0);
+    float alpha = clamp(core * 0.85 + halo * 0.45, 0.0, 1.0);
 
     if (vDimmed > 0.5) {
       alpha *= 0.15;
     }
 
-    // Dynamic luminescence shimmer
+    // Dynamic luminescence shimmer scaled by uBrightness uniform
     float shimmer = 0.88 + 0.16 * sin(uTime * 3.2 + vCluster * 2.0);
-    vec3 finalColor = vColor * shimmer + vec3(0.08, 0.14, 0.22) * halo;
+    vec3 finalColor = (vColor * shimmer + vec3(0.04, 0.08, 0.12) * halo) * uBrightness;
 
-    gl_FragColor = vec4(finalColor, alpha);
+    gl_FragColor = vec4(finalColor, alpha * min(1.0, uBrightness + 0.2));
   }
 `;
+
+
+// 3. Real-Time Uniform Handler (Zero Geometry Rebuilds):
+function change3DBrightness(val) {
+  const brightness = parseFloat(val);
+
+  // Directly mutate the WebGL GPU uniform value
+  if (glsl3D.uniforms && glsl3D.uniforms.uBrightness) {
+    glsl3D.uniforms.uBrightness.value = brightness;
+  }
+
+  // Update both top-bar and viewport badge elements if present
+  const pctStr = `${Math.round(brightness * 100)}%`;
+  const topbarLabel = document.getElementById("topbar-brightness-val");
+  if (topbarLabel) topbarLabel.textContent = pctStr;
+
+  const canvasLabel = document.getElementById("glsl-brightness-val");
+  if (canvasLabel) canvasLabel.textContent = pctStr;
+
+  // Sync slider inputs if multiple exist
+  const topbarSlider = document.getElementById("topbar-brightness-slider");
+  if (topbarSlider && topbarSlider.value !== String(val)) topbarSlider.value = val;
+
+  const canvasSlider = document.getElementById("glsl-brightness-slider");
+  if (canvasSlider && canvasSlider.value !== String(val)) canvasSlider.value = val;
+}
+window.change3DBrightness = change3DBrightness;
 
 function init3DKnowledgeUniverse() {
   const container = document.getElementById("glsl-3d-canvas-container");
@@ -3055,7 +3154,7 @@ async function load3DUniverseData(forceReload = false) {
         const tooltip = `${c.name} (${archetypeLabel})\n• Rendered in 3D: ${rendered} nodes ${isCapped ? '(Viewport Quota: Max ' + quota + ')' : '(Full Coverage: 100%)'}\n• Total in Database: ${totalInDb.toLocaleString()} entities\n• Representation: ${isFull ? '100%' : pct + '%'} of population\n• Scope: ${c.representation_desc || ''}`;
 
         return `
-          <div class="cluster-item" data-cluster-id="${c.id}" onclick="filter3DCluster(${c.id})" title="${escapeHtml(tooltip)}">
+          <div class="cluster-item" data-cluster-id="${c.id}" onclick="openUniverseClusterDrawer(${c.id})" ondblclick="filter3DCluster(${c.id})" title="${escapeHtml(tooltip)}\n💡 Single-click: Filter 3D scene\n💡 Double-click: Open entity list">
             <div class="cluster-item-left">
               <span class="cluster-color-dot" style="background: ${c.color}; color: ${c.color};"></span>
               <div class="cluster-text-col">
@@ -3157,7 +3256,8 @@ function build3DSceneObjects() {
     uniforms: glsl3D.uniforms,
     transparent: true,
     depthWrite: false,
-    blending: THREE.AdditiveBlending,
+    // blending: THREE.AdditiveBlending,
+    blending: THREE.NormalBlending,
   });
 
   glsl3D.pointsMesh = new THREE.Points(geometry, shaderMaterial);
@@ -3217,27 +3317,64 @@ function build3DSceneObjects() {
   glsl3D.worldGroup.add(glsl3D.labelsGroup);
 }
 
-function getNodeColorForMode(node, mode) {
-  if (mode === "centrality") {
-    // Heatmap: Cold dark blue -> Cyan -> Emerald -> Amber -> Red/Hot
-    const deg = node.degree || 0;
-    const t = Math.min(1.0, Math.log(deg + 1) / Math.log(200));
-    const hsl = [ (1.0 - t) * 0.65, 0.9, 0.55 ];
-    return new THREE.Color().setHSL(hsl[0], hsl[1], hsl[2]);
-  } else if (mode === "type") {
-    const typeColors = {
-      organization: "#38bdf8",
-      contract_type: "#10b981",
-      person: "#c084fc",
-      location: "#f59e0b",
-      statute: "#f43f5e",
-    };
-    return new THREE.Color(typeColors[node.type] || "#94a3b8");
-  } else {
-    // Topological Cluster Color
-    return new THREE.Color(node.cluster_color || "#38bdf8");
-  }
+const TYPE_COLORS = {
+  // --- Core Corporate & Human Entities ---
+  organization: "#38bdf8", // Sky Blue: High visibility on dark space, balanced luminance
+  person: "#c084fc", // Lavender / Violet: Highly distinct from blues and greens
+
+  // --- Spatial & Governance Entities ---
+  location: "#2dd4bf", // Bright Teal / Cyan: Distinct geographic beacon
+  statute: "#f43f5e", // Rose / Crimson: Strong legal governance anchor
+
+  // --- Document & Taxonomy Entities ---
+  contract_type: "#3b82f6", // Royal Blue: Clear legal agreement signifier
+  document_category: "#94a3b8", // Slate Gray: Subordinate tech specs & architecture docs
+
+  // --- Financial & Numerical Entities ---
+  currency: "#fbbf24", // Amber Gold: Transactional / monetary amounts
+  financial_pillar: "#f97316", // Warm Orange: Clear separation from currency gold
+
+  // --- Operational & Temporal Entities ---
+  project_code: "#a855f7", // Deep Purple: Distinct operational identifier
+  milestone_date: "#10b981", // Emerald Green: Distinct temporal milestones / deadlines
+  default: "#64748b", // Neutral Muted Slate fallback
+};
+
+/**
+ * Safely resolves an entity node color with fallback support.
+ */
+function getNodeColor(nodeType) {
+  if (!nodeType) return TYPE_COLORS.default;
+  const key = String(nodeType).toLowerCase().trim();
+  return TYPE_COLORS[key] || TYPE_COLORS.default;
 }
+
+/**
+ * Resolves node color dynamically based on viewport display mode.
+ * Supports centrality heatmap, categorical type palette, and K-Means topological clusters.
+ */
+function getNodeColorForMode(node, mode = "type") {
+  if (mode === "centrality") {
+    // Heatmap: Cold dark blue (hue ~0.65) -> Cyan -> Green -> Amber -> Hot Red (hue 0.0)
+    const deg = Number(node.degree) || 0;
+    const t = Math.min(1.0, Math.log(deg + 1) / Math.log(200));
+    const hue = (1.0 - t) * 0.65;
+    return new THREE.Color().setHSL(hue, 0.9, 0.55);
+  }
+
+  if (mode === "type") {
+    // Defensively handle both node_type (backend schema) and type (frontend fallback)
+    const entityType = node.node_type || node.type;
+    return new THREE.Color(getNodeColor(entityType));
+  }
+
+  // Topological Cluster Color (K-Means community detection)
+  return new THREE.Color(node.cluster_color || "#38bdf8");
+}
+
+window.TYPE_COLORS = TYPE_COLORS;
+window.getNodeColor = getNodeColor;
+window.getNodeColorForMode = getNodeColorForMode;
 
 function animate3DUniverse() {
   glsl3D.animId = requestAnimationFrame(animate3DUniverse);
@@ -3344,6 +3481,84 @@ function show3DHoverTooltip(node, hitPoint) {
 
   tooltip.style.display = "block";
 }
+
+let activeUniverseClusterId = null;
+
+/**
+ * Opens and renders the details list for the clicked cluster.
+ */
+function openUniverseClusterDrawer(clusterId) {
+  const drawer = document.getElementById("universe-cluster-drawer");
+  const titleEl = document.getElementById("universe-drawer-title");
+  const countEl = document.getElementById("universe-drawer-count");
+  const searchInput = document.getElementById("universe-cluster-filter-input");
+
+  if (!drawer) return;
+
+  // Toggle off if clicking the already open cluster
+  if (activeUniverseClusterId === clusterId && !drawer.classList.contains("hidden")) {
+    closeUniverseClusterDrawer();
+    return;
+  }
+
+  activeUniverseClusterId = clusterId;
+  drawer.classList.remove("hidden");
+  if (searchInput) searchInput.value = "";
+
+  const clusterMeta = glsl3D.clusters.find(c => c.id === clusterId) || { name: `Cluster ${clusterId}` };
+  if (titleEl) {
+    titleEl.innerHTML = `\({clusterMeta.icon || "•"}\){escapeHtml(clusterMeta.name)}`;
+    titleEl.style.color = clusterMeta.color || "#38bdf8";
+  }
+
+  renderUniverseClusterDrawerItems("");
+}
+
+function closeUniverseClusterDrawer() {
+  activeUniverseClusterId = null;
+  const drawer = document.getElementById("universe-cluster-drawer");
+  if (drawer) drawer.classList.add("hidden");
+}
+
+function filterUniverseClusterDrawer(query) {
+  renderUniverseClusterDrawerItems((query || "").toLowerCase().trim());
+}
+
+function renderUniverseClusterDrawerItems(query) {
+  const container = document.getElementById("universe-cluster-items");
+  const countEl = document.getElementById("universe-drawer-count");
+  if (!container) return;
+
+  // Find all nodes currently loaded in the universe that belong to this cluster
+  const matchingNodes = glsl3D.nodes.filter(n => n.cluster === activeUniverseClusterId);
+  const filtered = query
+    ? matchingNodes.filter(n => (n.name || "").toLowerCase().includes(query))
+    : matchingNodes;
+
+  if (countEl) countEl.textContent = matchingNodes.length;
+
+  if (filtered.length === 0) {
+    container.innerHTML = `No matching entities.`;
+    return;
+  }
+
+  // Render clickable pills: clicking a pill centers and inspects that entity in 3D
+  container.innerHTML = filtered.map(n => {
+    const degBadge = `Deg: ${n.degree || 0}`;
+    return `
+      
+        ●
+        ${escapeHtml(n.name)}
+        ${degBadge}
+      
+    `;
+  }).join("");
+}
+window.openUniverseClusterDrawer = openUniverseClusterDrawer;
+window.closeUniverseClusterDrawer = closeUniverseClusterDrawer;
+window.filterUniverseClusterDrawer = filterUniverseClusterDrawer;
+
+
 
 async function open3DNodeInspector(node) {
   glsl3D.selectedNode = node;

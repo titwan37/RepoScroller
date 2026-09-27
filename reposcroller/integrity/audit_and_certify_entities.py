@@ -4,7 +4,7 @@
 import re
 import json
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import httpx
 
 from reposcroller.config import settings
@@ -24,8 +24,10 @@ LLM_VERIFY_PROMPT = """You are a strict data validation and knowledge-graph cert
     1. "person": Must be a bona fide human name (First Last). Reject roles, titles (e.g. "Software Engineer"), section titles ("Table of Contents"), or phrases.
     2. "organization": Must be a genuine company, firm, institution, or legal entity. Reject technical terms (e.g. "Memory Bank", "Cache Line"), UI labels, generic phrases ("Confidential"), or department titles.
     3. "contract_type": Must be an enforceable legal instrument (e.g. "NDA", "Employment Contract", "Lease"). Reject architecture papers, whitepapers, or manuals.
-    4. "valid": Set to false if it is noise, hallucinated, a document fragment, or boilerplate.
-    5. "certified_type": If valid, classify into: person | organization | contract_type | document_category | statute | location. If invalid, set "rejected".
+    4. "currency": Canonical monetary unit (ISO code or symbol: CHF, EUR, USD, GBP, JPY).
+    5. "financial_pillar": Contractual financial classifications (rent, salary, mortgage, fee, fine, interest, insurance_premium).
+    6. "valid": Set to false if it is noise, hallucinated, a document fragment, or boilerplate.
+    7. "certified_type": If valid, classify into: person | organization | contract_type | document_category | statute | location | currency | financial_pillar. If invalid, set "rejected".
 
     Candidate Entities:
     {candidates_json}
@@ -90,9 +92,10 @@ def verify_batch_with_llm(candidates: List[Dict[str, Any]]) -> List[Dict[str, An
 
     return []
 
-def run_certification_audit(max_candidates: int = 2000, dry_run: bool = False):
+def run_certification_audit(max_candidates: int = 2000, dry_run: bool = False, repo: Optional[DocumentRepository] = None, batch_size: int = BATCH_SIZE) -> Dict[str, Any]:
     """Fetch suspicious low-connectivity entities, verify with LLM, and purge or recategorize."""
-    repo = DocumentRepository()
+    if repo is None:
+        repo = DocumentRepository()
 
     logger.info("Querying candidate entities with degree <= 1 or doc_count <= 1...")
 
@@ -117,16 +120,23 @@ def run_certification_audit(max_candidates: int = 2000, dry_run: bool = False):
     total_candidates = len(candidates)
     logger.info(f"Retrieved {total_candidates} candidates for LLM certification.")
     if not total_candidates:
-        return
+        return {
+            "status": "idle",
+            "total_candidates": 0,
+            "purged_count": 0,
+            "recategorized_count": 0,
+            "retained_count": 0,
+            "dry_run": dry_run
+        }
 
     purged_count = 0
     recertified_count = 0
     retained_count = 0
 
     # 2. Process in batches
-    for i in range(0, total_candidates, BATCH_SIZE):
-        batch = candidates[i:i + BATCH_SIZE]
-        logger.info(f"Verifying batch {i // BATCH_SIZE + 1}/{(total_candidates + BATCH_SIZE - 1) // BATCH_SIZE} ({len(batch)} entities)...")
+    for i in range(0, total_candidates, batch_size):
+        batch = candidates[i:i + batch_size]
+        logger.info(f"Verifying batch {i // batch_size + 1}/{(total_candidates + batch_size - 1) // batch_size} ({len(batch)} entities)...")
         
         verifications = verify_batch_with_llm(batch)
         verif_map = {v.get("name", "").strip().lower(): v for v in verifications if isinstance(v, dict)}
@@ -176,6 +186,15 @@ def run_certification_audit(max_candidates: int = 2000, dry_run: bool = False):
     logger.info(f"Purged False Positives: {purged_count}")
     logger.info(f"Recategorized Entities: {recertified_count}")
     logger.info(f"Retained Certified Entities: {retained_count}")
+
+    return {
+        "status": "completed",
+        "total_candidates": total_candidates,
+        "purged_count": purged_count,
+        "recategorized_count": recertified_count,
+        "retained_count": retained_count,
+        "dry_run": dry_run
+    }
 
 if __name__ == "__main__":
     import argparse

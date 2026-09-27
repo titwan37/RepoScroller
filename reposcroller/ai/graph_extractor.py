@@ -199,26 +199,46 @@ class KnowledgeGraphExtractor:
                     nodes[loc_id] = EntityNode(node_id=loc_id, node_type="location", name=loc_info["name"])
                 links.append(DocumentEntityLink(sha256_hash=sha256_hash, node_id=loc_id, role="mention"))
 
-        # 6. Extract Monetary / Value Entities (e.g. CHF 50,000, EUR 12,000, $15,000)
-        currency_matches = re.findall(r'\b(CHF|EUR|USD|GBP|€|\$)\s*([0-9]{1,3}(?:[.,\'’]\d{3})*(?:\.\d{2})?)\b', text, re.IGNORECASE)
-        for curr, amt in currency_matches[:4]:
-            clean_amt = amt.replace("'", "").replace("’", "").replace(",", "")
-            try:
-                numeric_val = float(clean_amt)
-                if numeric_val >= 50:  # Exclude trivial change
-                    curr_str = curr.upper() if len(curr) == 3 else ("EUR" if curr == "€" else ("USD" if curr == "$" else "CHF"))
-                    amt_label = f"{curr_str} {int(numeric_val):,}"
-                    val_id = canonicalize_node_id("monetary_value", amt_label)
-                    if val_id not in nodes:
-                        nodes[val_id] = EntityNode(
-                            node_id=val_id,
-                            node_type="monetary_value",
-                            name=amt_label,
-                            properties={"currency": curr_str, "amount": numeric_val}
-                        )
-                    links.append(DocumentEntityLink(sha256_hash=sha256_hash, node_id=val_id, role="transaction_value"))
-            except ValueError:
-                pass
+        # 6. Universal Currency Units & Standard Financial Pillars (Federator Hubs)
+        CURRENCY_MAP = {
+            r"\b(?:CHF|sFr\.?|Franken)\b": "CHF",
+            r"\b(?:EUR|€|Euro)\b": "EUR",
+            r"\b(?:USD|\$|US-Dollar)\b": "USD",
+            r"\b(?:GBP|£|Pound)\b": "GBP",
+            r"\b(?:JPY|¥|Yen)\b": "JPY"
+        }
+
+        found_currencies = set()
+        for pat, code in CURRENCY_MAP.items():
+            if re.search(pat, text, re.IGNORECASE):
+                cur_id = canonicalize_node_id("currency", code)
+                if cur_id not in nodes:
+                    nodes[cur_id] = EntityNode(node_id=cur_id, node_type="currency", name=code)
+                links.append(DocumentEntityLink(sha256_hash=sha256_hash, node_id=cur_id, role="currency_unit"))
+                found_currencies.add(cur_id)
+
+        PILLAR_PATTERNS = {
+            "rent": r"\b(?:Miete|Mietzins|Loyer|Rent|Lease payment|Bail)\b",
+            "salary": r"\b(?:Lohn|Gehalt|Salär|Salaire|Salary|Remuneration|Bonus|Vergütung)\b",
+            "mortgage": r"\b(?:Hypothek|Hypothekardarlehen|Mortgage|Prêt hypothécaire)\b",
+            "fee": r"\b(?:Gebühr|Honorar|Frais|Courtage|Commission|Fee|Management fee)\b",
+            "fine": r"\b(?:Busse|Konventionalstrafe|Pénalité|Fine|Penalty|Schadensersatz)\b",
+            "interest": r"\b(?:Zins|Verzugszins|Intérêt|Interest rate|Yield)\b",
+            "insurance_premium": r"\b(?:Prämie|Prime d'assurance|AHV|ALV|Pensionskasse|Insurance premium)\b",
+        }
+
+        found_pillars = set()
+        for pillar, pattern in PILLAR_PATTERNS.items():
+            if re.search(pattern, text, re.IGNORECASE):
+                p_id = canonicalize_node_id("financial_pillar", pillar)
+                if p_id not in nodes:
+                    nodes[p_id] = EntityNode(
+                        node_id=p_id, 
+                        node_type="financial_pillar", 
+                        name=pillar.replace("_", " ").title()
+                    )
+                links.append(DocumentEntityLink(sha256_hash=sha256_hash, node_id=p_id, role="financial_term"))
+                found_pillars.add(p_id)
 
         # 7. Extract Project / Operational Identifiers
         project_matches = re.findall(r'\b(?:Project|Projekt|Ref|Reference|Contract-No|Dossier)[\s:#]+([A-Z0-9]{2,8}(?:[-_][A-Z0-9]+){1,3})\b', text, re.IGNORECASE)
@@ -310,23 +330,56 @@ class KnowledgeGraphExtractor:
                     properties={"context": "Governing statutory framework"}
                 ))
 
-        # 9f. Parties & Contract Type -> Monetary Values (VALUED_AT)
-        for vid in val_node_ids:
-            for pid in party_node_ids:
+        # 9f. Financial Pillars -> Currencies (DENOMINATED_IN)
+        for p_id in found_pillars:
+            for c_id in found_currencies:
                 edges.append(EntityEdge(
-                    source_id=pid,
-                    target_id=vid,
-                    relation_type="VALUED_AT",
+                    source_id=p_id,
+                    target_id=c_id,
+                    relation_type="DENOMINATED_IN",
                     weight=1.0,
-                    properties={"context": "Financial consideration"}
+                    properties={"context": f"Document {filename or sha256_hash[:8]}"}
                 ))
-            if dt_id and dt_id in nodes:
+
+        # 9g. Contract Type -> Financial Pillars & Currencies (INVOLVES_PAYMENT / STIPULATES_CURRENCY)
+        if dt_id and dt_id in nodes:
+            for p_id in found_pillars:
                 edges.append(EntityEdge(
                     source_id=dt_id,
-                    target_id=vid,
-                    relation_type="VALUED_AT",
+                    target_id=p_id,
+                    relation_type="INVOLVES_PAYMENT",
                     weight=1.0,
-                    properties={"context": "Document financial consideration"}
+                    properties={"context": f"Document {filename or sha256_hash[:8]}"}
+                ))
+            for c_id in found_currencies:
+                edges.append(EntityEdge(
+                    source_id=dt_id,
+                    target_id=c_id,
+                    relation_type="STIPULATES_CURRENCY",
+                    weight=1.0,
+                    properties={"context": f"Document {filename or sha256_hash[:8]}"}
+                ))
+
+        # 9h. Parties -> Financial Pillars (PAYS)
+        for pid in party_node_ids:
+            for p_id in found_pillars:
+                edges.append(EntityEdge(
+                    source_id=pid,
+                    target_id=p_id,
+                    relation_type="PAYS",
+                    weight=1.0,
+                    properties={"context": f"Financial flow in {filename or sha256_hash[:8]}"}
+                ))
+
+        # 9i. Financial Pillars -> Statutes (GOVERNED_BY)
+        for p_id in found_pillars:
+            for stat_id in stat_node_ids:
+                edges.append(EntityEdge(
+                    source_id=p_id,
+                    target_id=stat_id,
+                    relation_type="GOVERNED_BY",
+                    weight=1.0,
+                    properties={"context": "Statutory financial governance"}
                 ))
 
         # 9g. Parties & Contract Type -> Project Codes (ASSIGNED_TO)
@@ -373,28 +426,61 @@ class KnowledgeGraphExtractor:
         # Attempt structured LLM extraction (optional / low-volume)
         if self.provider in ["auto", "ollama", "openrouter"]:
             try:
-                prompt = f"""Extract knowledge graph entities and relationships from this document snippet into a strict JSON format.
+                prompt = f"""You are a domain-expert Knowledge Graph ontology engineer and data certifier for a legal, corporate, and document repository.
+
+Extract structured entities and semantic relationships from the provided document text according to our strict entity taxonomy.
+
+### ENTITY ONTOLOGY RULES:
+1. "currency": Canonical monetary unit (ISO code or symbol).
+   - ONLY allowed values: "CHF", "EUR", "USD", "GBP", "JPY".
+   - Do NOT create nodes for raw numeric amounts (e.g., do NOT extract "1,200 CHF" or "$50,000").
+2. "financial_pillar": High-level contractual financial classifications.
+   - Standard categories:
+     * "rent": Lease payments, rental income, tenant rent, storage rent.
+     * "salary": Wages, base compensation, executive pay, director fees, bonuses.
+     * "mortgage": Hypothek, property loans, secured debt instruments.
+     * "fee": Advisory fees, retainer, transaction fees, management fees, notary charges.
+     * "fine": Penalties, contractual damages, late charges, administrative sanctions.
+     * "interest": Loan interest, compounding yield, coupon payments, late interest (Verzugszins).
+     * "insurance_premium": Policy payments, social security contributions (AHV/ALV).
+3. "organization": Bona fide corporate, institutional, or government bodies (e.g., "Swisscom AG", "Kantonales Steueramt Zürich"). Reject UI terms or technical phrases.
+4. "person": Real human beings (First Last). Reject roles ("Landlord"), titles, or section labels.
+5. "contract_type": Legal instrument classification (e.g., "Mietvertrag", "Employment Contract", "Loan Agreement").
+6. "location": Standard cities or cantons (e.g., "Zurich", "Geneva", "Zug").
+7. "statute": Legal code or article (e.g., "Art. 253 OR", "ZGB", "Art. 320 OR").
+
+### RELATIONSHIP SCHEMA:
+- (organization|person) -[:PAYS|RECEIVES]-> (financial_pillar)
+- (financial_pillar) -[:DENOMINATED_IN]-> (currency)
+- (contract_type) -[:INVOLVES_PAYMENT]-> (financial_pillar)
+- (contract_type) -[:STIPULATES_CURRENCY]-> (currency)
+- (financial_pillar) -[:GOVERNED_BY]-> (statute)
 
 Document Metadata:
 - Filename: {filename}
 - Category: {doc_type}
 - Date: {doc_date}
 
-Text:
+Document Text:
 \"\"\"
 {text[:2500]}
 \"\"\"
 
-Output strictly valid JSON adhering to this schema:
+Output strictly valid JSON conforming to this structure:
 {{
   "entities": [
-    {{"type": "person|organization|location|statute", "name": "..."}}
+    {{"type": "currency", "name": "CHF"}},
+    {{"type": "financial_pillar", "name": "rent"}},
+    {{"type": "person", "name": "Jane Doe"}},
+    {{"type": "organization", "name": "Immobilien AG"}}
   ],
   "relationships": [
-    {{"source": "name1", "target": "name2", "relation": "SIGNS|PARTY_TO|GOVERNED_BY|LOCATED_IN"}}
+    {{"source": "Jane Doe", "target": "rent", "relation": "PAYS"}},
+    {{"source": "Immobilien AG", "target": "rent", "relation": "RECEIVES"}},
+    {{"source": "rent", "target": "CHF", "relation": "DENOMINATED_IN"}}
   ]
 }}
-Do NOT include preamble or explanations.
+Do NOT include markdown explanations, markdown fences, or text outside the JSON object.
 """
                 resp_text = None
                 if self.provider in ["auto", "ollama"]:
@@ -461,15 +547,17 @@ Do NOT include preamble or explanations.
                             node_id = canonicalize_node_id(e_type, e_name)
                             if node_id not in nodes:
                                 nodes[node_id] = EntityNode(node_id=node_id, node_type=e_type, name=e_name)
-                            links.append(DocumentEntityLink(sha256_hash=sha256_hash, node_id=node_id, role="mention"))
+                            role = "currency_unit" if e_type == "currency" else ("financial_term" if e_type == "financial_pillar" else "mention")
+                            links.append(DocumentEntityLink(sha256_hash=sha256_hash, node_id=node_id, role=role))
 
+                    name_to_id = {n.name.lower(): n.node_id for n in nodes.values()}
                     for rel in data.get("relationships", []):
                         s_name = rel.get("source", "").strip()
                         t_name = rel.get("target", "").strip()
                         r_type = rel.get("relation", "PARTY_TO").upper()
                         if s_name and t_name:
-                            s_id = canonicalize_node_id("entity", s_name)
-                            t_id = canonicalize_node_id("entity", t_name)
+                            s_id = name_to_id.get(s_name.lower()) or canonicalize_node_id("entity", s_name)
+                            t_id = name_to_id.get(t_name.lower()) or canonicalize_node_id("entity", t_name)
                             edges.append(EntityEdge(source_id=s_id, target_id=t_id, relation_type=r_type))
 
                     if nodes:

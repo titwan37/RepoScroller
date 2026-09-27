@@ -314,12 +314,21 @@ class PropertyGraphStore:
             },
             {
                 "id": 4,
-                "name": "Statutes, Milestones & Values",
+                "name": "Statutory & Regulatory Codes",
                 "archetype": "Statutes",
                 "color": "#f43f5e",
                 "icon": "⚖️",
-                "types": ["statute", "monetary_value", "milestone_date"],
+                "types": ["statute", "milestone_date"],
                 "representation_desc": "Swiss legal codes & governing articles",
+            },
+            {
+                "id": 5,
+                "name": "Financial Pillars & Currencies",
+                "archetype": "Financial",
+                "color": "#eab308",
+                "icon": "💰",
+                "types": ["currency", "financial_pillar", "monetary_value"],
+                "representation_desc": "Universal monetary hubs & contractual flows",
             },
         ]
 
@@ -331,7 +340,7 @@ class PropertyGraphStore:
             type_counts = {r["node_type"]: r["cnt"] for r in cur.fetchall()}
 
             # Stratified Cluster Sampling (Option A): Allocate quota per archetype to avoid hub monopolies
-            quota_per_type = max(100, limit // 4)
+            quota_per_type = max(100, limit // 5)
             cur.execute("""
                 WITH EntityBase AS (
                     SELECT n.node_id, n.node_type, n.name, n.properties_json,
@@ -346,8 +355,8 @@ class PropertyGraphStore:
                 RankedEntities AS (
                     SELECT *,
                            ROW_NUMBER() OVER (
-                               PARTITION BY node_type
-                               ORDER BY (degree * 2 + doc_count * 5) DESC
+                                PARTITION BY node_type
+                                ORDER BY (degree * 2 + doc_count * 5) DESC
                            ) as type_rank
                     FROM EntityBase
                 )
@@ -387,7 +396,8 @@ class PropertyGraphStore:
                 1: (50.0, -10.0, 45.0),    # Contracts & Projects
                 2: (-20.0, 40.0, -25.0),   # Persons
                 3: (-65.0, -35.0, -40.0),  # Locations
-                4: (60.0, 35.0, -15.0),    # Statutes, Milestones & Values
+                4: (60.0, 35.0, -15.0),    # Statutes & Milestones
+                5: (10.0, -45.0, 10.0),    # Financial Pillars & Currencies (Gold cluster)
             }
 
             for idx, r in enumerate(raw_nodes):
@@ -409,10 +419,12 @@ class PropertyGraphStore:
                     cid = 2
                 elif ntype == "location":
                     cid = 3
-                elif ntype in ["statute", "monetary_value", "milestone_date"]:
+                elif ntype in ["statute", "milestone_date"]:
                     cid = 4
+                elif ntype in ["currency", "financial_pillar", "monetary_value"]:
+                    cid = 5
                 else:
-                    cid = idx % 5
+                    cid = idx % len(cluster_definitions)   # cid = idx % 5
 
                 # Compute deterministic pseudo-random offsets from name hash
                 h_val = int(hashlib.md5(nid.encode("utf-8")).hexdigest()[:8], 16)
@@ -493,6 +505,8 @@ class PropertyGraphStore:
                         SELECT DISTINCT l1.node_id AS source_id, l2.node_id AS target_id,
                                CASE WHEN n1.node_type = 'location' OR n2.node_type = 'location' THEN 'LOCATED_IN'
                                     WHEN n1.node_type = 'statute' OR n2.node_type = 'statute' THEN 'SUBJECT_TO'
+                                    WHEN n1.node_type = 'currency' OR n2.node_type = 'currency' THEN 'DENOMINATED_IN'
+                                    WHEN n1.node_type = 'financial_pillar' OR n2.node_type = 'financial_pillar' THEN 'INVOLVES_PAYMENT'
                                     ELSE 'CO_OCCURS' END AS relation_type,
                                1.0 AS weight
                         FROM document_entity_links l1
@@ -552,7 +566,7 @@ class PropertyGraphStore:
                     "overall_representativity_pct": round((len(nodes_data) / tot_nodes * 100.0), 1) if tot_nodes > 0 else 100.0,
                     "db_type_counts": type_counts,
                     "dimensionality": "High-Dim 1024-D -> 3D PCA Space",
-                    "clustering_algorithm": "Stratified Topological Archetypes (k=5)"
+                    "clustering_algorithm": "Stratified Topological Archetypes (k=6)"
                 }
             }
 

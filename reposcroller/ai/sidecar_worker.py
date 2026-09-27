@@ -50,6 +50,18 @@ class KnowledgeBaseSidecarWorker:
         self.db_writer_stage: str = "stopped"
         self._workers_counter_lock = threading.Lock()
 
+        # Entity Validation & KG Certification State
+        self.validator_stage: str = "idle"
+        self.validation_stats: Dict[str, Any] = {
+            "total_certified": 0,
+            "total_purged": 0,
+            "total_recategorized": 0,
+            "last_run": None,
+            "last_result": None,
+        }
+        self._validation_lock = threading.Lock()
+        self._last_validation_doc_count: int = 0
+
     def process_document(self, doc_record: Dict[str, Any]) -> Dict[str, Any]:
         """Process a single document from the queue: extract text, chunk, embed, extract graph, and persist."""
         sha = doc_record["sha256_hash"]
@@ -265,6 +277,50 @@ class KnowledgeBaseSidecarWorker:
                 "duration_formatted": duration_fmt
             }
 
+    def validate_entities(self,
+                          limit: int = 50,
+                          dry_run: bool = False,
+                          run_deterministic: bool = True,
+                          run_llm: bool = True) -> Dict[str, Any]:
+        """Perform Knowledge Graph entity validation: deterministic pruning and LLM batch certification."""
+        with self._validation_lock:
+            self.validator_stage = "pruning"
+            results = {
+                "status": "completed",
+                "deterministic": {},
+                "llm": {},
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
+            }
+
+            if run_deterministic:
+                try:
+                    from reposcroller.ledger.prune_kg_hallucinations import run_deterministic_pruning
+                    det_res = run_deterministic_pruning(self.repo, dry_run=dry_run)
+                    results["deterministic"] = det_res
+                except Exception as e:
+                    logger.error(f"Deterministic pruning failed: {e}")
+                    results["deterministic"] = {"error": str(e)}
+
+            if run_llm:
+                self.validator_stage = "certifying_llm"
+                try:
+                    from reposcroller.integrity.audit_and_certify_entities import run_certification_audit
+                    llm_res = run_certification_audit(max_candidates=limit, dry_run=dry_run, repo=self.repo)
+                    results["llm"] = llm_res
+                    if not dry_run and llm_res.get("status") == "completed":
+                        self.validation_stats["total_certified"] += llm_res.get("retained_count", 0)
+                        self.validation_stats["total_purged"] += llm_res.get("purged_count", 0)
+                        self.validation_stats["total_recategorized"] += llm_res.get("recategorized_count", 0)
+                except Exception as e:
+                    logger.error(f"LLM entity certification failed: {e}")
+                    results["llm"] = {"error": str(e)}
+
+            self.validator_stage = "idle"
+            self.validation_stats["last_run"] = results["timestamp"]
+            self.validation_stats["last_result"] = results
+            logger.info(f"Knowledge Graph Entity Validation finished: {results}")
+            return results
+
     def get_continuous_status(self) -> Dict[str, Any]:
         """Get live status and progress counters of the continuous worker and queue pipeline."""
         with self._lock:
@@ -283,6 +339,14 @@ class KnowledgeBaseSidecarWorker:
                 "uptime_seconds": uptime_seconds,
                 "uptime_formatted": uptime_fmt,
                 "start_time": time.strftime("%H:%M:%S", time.localtime(self.session_start_time)) if self.session_start_time else None,
+                "validation": {
+                    "stage": self.validator_stage,
+                    "last_run": self.validation_stats.get("last_run"),
+                    "total_certified": self.validation_stats.get("total_certified", 0),
+                    "total_purged": self.validation_stats.get("total_purged", 0),
+                    "total_recategorized": self.validation_stats.get("total_recategorized", 0),
+                    "last_result": self.validation_stats.get("last_result")
+                },
                 "pipeline": {
                     "is_running": self.is_running and bool(self._thread and self._thread.is_alive()),
                     "producer_stage": self.producer_stage if self.is_running else "stopped",
@@ -292,7 +356,8 @@ class KnowledgeBaseSidecarWorker:
                     "total_http_workers": self.total_http_workers,
                     "db_queue_depth": db_q_depth,
                     "db_queue_max": 100,
-                    "db_writer_stage": self.db_writer_stage if self.is_running else "stopped"
+                    "db_writer_stage": self.db_writer_stage if self.is_running else "stopped",
+                    "validator_stage": self.validator_stage
                 }
             }
 
@@ -409,6 +474,15 @@ class KnowledgeBaseSidecarWorker:
                     if not is_idle_reported:
                         logger.info("⏳ [IDLE] All queued documents processed. Waiting for new files...")
                         is_idle_reported = True
+                        # Trigger background entity validation when idle and new documents were processed
+                        if self.session_docs_processed > self._last_validation_doc_count:
+                            self._last_validation_doc_count = self.session_docs_processed
+                            threading.Thread(
+                                target=self.validate_entities,
+                                kwargs={"limit": 50, "dry_run": False, "run_deterministic": True, "run_llm": True},
+                                name="SidecarEntityValidator",
+                                daemon=True
+                            ).start()
                     time.sleep(poll_interval)
                     continue
 

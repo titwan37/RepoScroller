@@ -187,3 +187,55 @@ def _extract_eml(file_path: Path) -> Tuple[str, Dict[str, Any]]:
 
     return text.strip(), metadata
 
+LLM_Ontology_Expert = """
+You are a domain-expert Knowledge Graph ontology engineer and data certifier for a legal, corporate, and document repository.
+
+Extract structured entities and semantic relationships from the provided document text according to our strict entity taxonomy.
+
+### ENTITY ONTOLOGY RULES:
+1. "currency": Canonical monetary unit (ISO code or symbol).
+   - ONLY allowed values: "CHF", "EUR", "USD", "GBP", "JPY".
+   - Do NOT create nodes for raw numeric amounts (e.g., do NOT extract "1,200 CHF" or "$50,000").
+2. "financial_pillar": High-level contractual financial classifications.
+   - Standard categories:
+     * "rent": Lease payments, rental income, tenant rent, storage rent.
+     * "salary": Wages, base compensation, executive pay, director fees, bonuses.
+     * "mortgage": Hypothek, property loans, secured debt instruments.
+     * "fee": Advisory fees, retainer, transaction fees, management fees, notary charges.
+     * "fine": Penalties, contractual damages, late charges, administrative sanctions.
+     * "interest": Loan interest, compounding yield, coupon payments, late interest (Verzugszins).
+     * "insurance_premium": Policy payments, social security contributions (AHV/ALV).
+3. "organization": Bona fide corporate, institutional, or government bodies (e.g., "Swisscom AG", "Kantonales Steueramt Zürich"). Reject UI terms or technical phrases.
+4. "person": Real human beings (First Last). Reject roles ("Landlord"), titles, or section labels.
+5. "contract_type": Legal instrument classification (e.g., "Mietvertrag", "Employment Contract", "Loan Agreement").
+6. "location": Standard cities or cantons (e.g., "Zurich", "Geneva", "Zug").
+7. "statute": Legal code or article (e.g., "Art. 253 OR", "ZGB", "Art. 320 OR").
+
+### RELATIONSHIP SCHEMA:
+- (organization|person) -[:PAYS|RECEIVES]-> (financial_pillar)
+- (financial_pillar) -[:DENOMINATED_IN]-> (currency)
+- (contract_type) -[:INVOLVES_PAYMENT]-> (financial_pillar)
+- (contract_type) -[:STIPULATES_CURRENCY]-> (currency)
+- (financial_pillar) -[:GOVERNED_BY]-> (statute)
+
+Document Text:
+\"\"\"
+{text}
+\"\"\"
+
+Output strictly valid JSON conforming to this structure:
+{
+  "entities": [
+    {"type": "currency", "name": "CHF"},
+    {"type": "financial_pillar", "name": "rent"},
+    {"type": "person", "name": "Jane Doe"},
+    {"type": "organization", "name": "Immobilien AG"}
+  ],
+  "relationships": [
+    {"source": "Jane Doe", "target": "rent", "relation": "PAYS"},
+    {"source": "Immobilien AG", "target": "rent", "relation": "RECEIVES"},
+    {"source": "rent", "target": "CHF", "relation": "DENOMINATED_IN"}
+  ]
+}
+Do NOT include markdown explanations, markdown fences, or text outside the JSON object.
+"""

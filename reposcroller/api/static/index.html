@@ -60,28 +60,28 @@
 <nav class="workspace-nav-bar">
   <div class="workspace-tabs-group">
     <button id="ws-btn-process" class="ws-tab-btn active" onclick="switchWorkspace('process')">
-      <span class="ws-tab-icon">📊</span>
-      <span class="ws-tab-title">Process Scroller</span>
+      <!-- <span class="ws-tab-icon">📊</span> -->
+      <span class="ws-tab-title">📊 Process Scroller</span>
       <span class="ws-tab-pill">Digitalization Pipeline</span>
     </button>
     <button id="ws-btn-ledger" class="ws-tab-btn" onclick="switchWorkspace('ledger')">
-      <span class="ws-tab-icon">🗄️</span>
-      <span class="ws-tab-title">Document Ledger</span>
+      <!-- <span class="ws-tab-icon">🗄️</span> -->
+      <span class="ws-tab-title">🗄️ Document Ledger</span>
       <span class="ws-tab-pill">Single Source of Truth</span>
     </button>
     <button id="ws-btn-graphrag" class="ws-tab-btn" onclick="switchWorkspace('graphrag')">
-      <span class="ws-tab-icon">🧠</span>
-      <span class="ws-tab-title">GraphRAG Sovereign Studio</span>
+      <!-- <span class="ws-tab-icon">🧠</span> -->
+      <span class="ws-tab-title">🧠 GraphRAG Sovereign Studio</span>
       <span class="ws-tab-pill pill-ai">CUDA Hybrid Search</span>
     </button>
     <button id="ws-btn-universe" class="ws-tab-btn" onclick="switchWorkspace('universe')">
-      <span class="ws-tab-icon">🌐</span>
-      <span class="ws-tab-title">3D Knowledge Universe</span>
+      <!-- <span class="ws-tab-icon">🌐</span> -->
+      <span class="ws-tab-title">🌐 3D Knowledge Universe</span>
       <span class="ws-tab-pill pill-glsl">WebGL GLSL 3D</span>
     </button>
     <button id="ws-btn-chat" class="ws-tab-btn" onclick="switchWorkspace('chat')">
-      <span class="ws-tab-icon">💬</span>
-      <span class="ws-tab-title">AI Interrogation Assistant</span>
+      <!-- <span class="ws-tab-icon">💬</span> -->
+      <span class="ws-tab-title">💬 AI Interrogation Assistant</span>
       <span class="ws-tab-pill pill-chat">Grounded Reasoning</span>
     </button>
   </div>
@@ -204,6 +204,10 @@
           </button>
           <button id="ws0-btn-trigger-batch" class="btn btn-outline btn-sm" onclick="triggerSidecarBatch()" title="Embed 32 queued documents in one GPU burst">
             <span class="btn-icon">⚡</span> Single Batch (32)
+          </button>
+          <button id="ws0-btn-validate-entities" class="btn btn-outline btn-sm" onclick="triggerEntityValidation()"
+            title="Trigger LLM Knowledge Graph entity validation and pruning">
+            <span class="btn-icon">🛡️</span> Validate Entities
           </button>
           <button class="btn btn-outline btn-sm" onclick="triggerScan()" title="Trigger filesystem multi-root scan">
             <span class="btn-icon">📂</span> Scan Roots
@@ -367,6 +371,11 @@
             <span class="flow-stage-label">DB Writer:</span>
             <strong id="flow-writer-val">Idle</strong>
           </div>
+          <span class="flow-arrow">➔</span>
+          <div class="flow-stage-step" id="stage-entity-validator">
+            <span class="flow-stage-label">KG Validator:</span>
+            <strong id="flow-validator-val">Idle</strong>
+          </div>
         </div>
 
         <!-- Real-Time Subsystems Zoo Matrix Observatory Strip -->
@@ -394,6 +403,12 @@
             <span class="zoo-lbl">Chat LLM:</span>
             <strong id="zoo-chat-val" class="text-indigo">PC1 (3B)</strong>
             <span class="zoo-sub" id="zoo-chat-sub">0 calls</span>
+          </div>
+          <div class="zoo-chip" id="zoo-validator-chip" title="Knowledge Graph Entity Certification & Pruning">
+            <span class="zoo-icon">🛡️</span>
+            <span class="zoo-lbl">KG Auditor:</span>
+            <strong id="zoo-validator-val">Idle</strong>
+            <span class="zoo-sub text-emerald" id="zoo-validator-sub">Certified</span>
           </div>
         </div>
       
@@ -1127,6 +1142,10 @@
               <button id="studio-btn-trigger-batch" class="btn btn-outline btn-xs" onclick="triggerSidecarBatch()" title="Process a single batch immediately">
                 ⚡ Single Batch
               </button>
+              <button id="studio-btn-validate-entities" class="btn btn-outline btn-xs" onclick="triggerEntityValidation()"
+                title="Audit and certify entities with LLM">
+                🛡️ Validate Entities
+              </button>
             </div>
           </div>
 
@@ -1236,24 +1255,27 @@
           Dimensionality Reduction (<strong class="text-cyan">3D PCA</strong>) &amp; Unsupervised Topological Clustering applied to sovereign entity and document relation graphs.
         </p>
       </div>
-      <div class="universe-kpi-grid">
-        <div class="kpi-glass-card">
-          <div class="kpi-card-lbl">Dimensionality</div>
-          <div class="kpi-card-val text-cyan">High-Dim → 3D PCA</div>
+      <div class="universe-hero-left">
+        <div class="universe-kpi-grid">
+          <div class="kpi-glass-card">
+            <div class="kpi-card-lbl">Dimensionality</div>
+            <div class="kpi-card-val text-cyan">High-Dim → 3D PCA</div>
+          </div>
+          <div class="kpi-glass-card">
+            <div class="kpi-card-lbl">Algorithm</div>
+            <div class="kpi-card-val text-purple">Unsupervised K-Means</div>
+          </div>
+          <div class="kpi-glass-card">
+            <div class="kpi-card-lbl">Universe Topology</div>
+            <div class="kpi-card-val text-emerald"><span id="glsl-stat-nodes">1,000</span> Entities • <span
+                id="glsl-stat-edges">3,000</span> Edges</div>
+            </div>
+            <div class="kpi-glass-card">
+              <div class="kpi-card-lbl">Rendering Engine</div>
+              <div class="kpi-card-val text-amber">Three.js WebGL GLSL</div>
+          </div>
         </div>
-        <div class="kpi-glass-card">
-          <div class="kpi-card-lbl">Algorithm</div>
-          <div class="kpi-card-val text-purple">Unsupervised K-Means</div>
         </div>
-        <div class="kpi-glass-card">
-          <div class="kpi-card-lbl">Universe Topology</div>
-          <div class="kpi-card-val text-emerald"><span id="glsl-stat-nodes">1,000</span> Entities • <span id="glsl-stat-edges">3,000</span> Edges</div>
-        </div>
-        <div class="kpi-glass-card">
-          <div class="kpi-card-lbl">Rendering Engine</div>
-          <div class="kpi-card-val text-amber">Three.js WebGL GLSL</div>
-        </div>
-      </div>
     </div>
 
     <!-- HUD Control Toolbar -->
@@ -1268,6 +1290,14 @@
         <button id="btn-glsl-labels" class="hud-glsl-btn active" onclick="toggle3DLabels()" title="Toggle floating billboard entity labels">
           <span>🏷️</span> <span id="glsl-labels-text">Labels: ON</span>
         </button>
+        <div class="toolbar-sep"></div>
+        <!-- write a glsl-brightness-slider -->
+        <div class="brightness-control-group" title="Shader particle brightness multiplier (live GLSL uniform)">
+          <label for="glsl-brightness-slider" class="toolbar-lbl">💡 Brightness:</label>
+          <input type="range" id="glsl-brightness-slider" class="slider-glsl" min="0.1" max="2.0" step="0.05" value="0.8"
+            oninput="change3DBrightness(this.value)">
+          <span id="glsl-brightness-val" class="toolbar-val-pill">80%</span>
+        </div>
 
         <div class="toolbar-sep"></div>
 

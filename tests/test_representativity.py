@@ -9,7 +9,7 @@ for x in cur.fetchall():
 import urllib.request, json
 
 res = json.loads(urllib.request.urlopen("http://localhost:8090/api/v1/sidecar/graph-3d").read())
-cluster_list = res['cluster_definitions']
+cluster_list = res.get('clusters', res.get('cluster_definitions', []))
 print({k: v for k, v in res['stats'].items() if k != 'dimensionality'})
 for c in cluster_list:
     print("{:<35} | {:<10} | {:<10} | {:<10} | {:.1f}%".format(c['name'], c['rendered_count'], c['quota'], c['total_in_db'], c['representation_pct']))

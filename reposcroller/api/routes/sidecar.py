@@ -69,6 +69,7 @@ def get_sidecar_stats():
             "embedding": workload_telemetry.active_tier_model or settings.OLLAMA_EMBEDDING_MODEL,
             "chat": settings.OLLAMA_MODEL_PC2
         },
+        "validation": worker_status.get("validation", {}),
         "embedding_tier": {
             "tier": tier,
             "color": tier_color,
@@ -77,6 +78,34 @@ def get_sidecar_stats():
             "active_model": workload_telemetry.active_tier_model,
             "fallback_reason": workload_telemetry.last_fallback_reason
         }
+    }
+
+
+class ValidateEntitiesRequest(BaseModel):
+    limit: Optional[int] = 50
+    dry_run: Optional[bool] = False
+    deterministic_only: Optional[bool] = False
+    run_llm: Optional[bool] = True
+
+
+@router.post("/validate-entities")
+@router.post("/entities/validate")
+def validate_knowledge_graph_entities(req: Optional[ValidateEntitiesRequest] = None):
+    """Trigger on-demand Knowledge Graph entity validation and hallucination pruning."""
+    limit = (req.limit if req and req.limit is not None else 50)
+    dry_run = (req.dry_run if req and req.dry_run is not None else False)
+    deterministic_only = (req.deterministic_only if req and req.deterministic_only is not None else False)
+    run_llm = not deterministic_only if (req is None or req.run_llm is None) else req.run_llm
+
+    res = _worker.validate_entities(
+        limit=limit,
+        dry_run=dry_run,
+        run_deterministic=True,
+        run_llm=run_llm
+    )
+    return {
+        "status": "success",
+        "result": res
     }
 
 
@@ -185,6 +214,34 @@ def execute_graph_rag_query(
         expand_graph_hops=hops
     )
     return res
+
+
+# Dedicated /rag router alias for standard RAG query and search conventions
+rag_router = APIRouter(prefix="/rag", tags=["GraphRAG"])
+
+
+@rag_router.get("/search")
+@rag_router.get("/query")
+@rag_router.post("/search")
+@rag_router.post("/query")
+def execute_rag_search_alias(
+    req: Optional[GraphRAGRequest] = None,
+    q: Optional[str] = Query(default=None, description="Search query string"),
+    query: Optional[str] = Query(default=None, description="Alternative query parameter"),
+    top_k: Optional[int] = Query(default=8, ge=1, le=50),
+    expand_graph_hops: Optional[int] = Query(default=1, ge=0, le=3)
+):
+    """Execute hybrid GraphRAG retrieval via /api/v1/rag/search (supports GET/POST with ?q= or ?query=)."""
+    query_text = (req.query if req and req.query else (q or query)) or ""
+    k = (req.top_k if req and req.top_k is not None else top_k) or 8
+    hops = (req.expand_graph_hops if req and req.expand_graph_hops is not None else expand_graph_hops) or 1
+
+    return _graph_rag.query(
+        query_text=query_text,
+        top_k=k,
+        expand_graph_hops=hops
+    )
+
 
 
 

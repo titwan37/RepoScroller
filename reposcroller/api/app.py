@@ -11,7 +11,7 @@ from reposcroller.api.routes.crawler import router as crawler_router
 from reposcroller.api.routes.chat import router as chat_router
 from reposcroller.api.routes.taxonomy import router as taxonomy_router
 from reposcroller.api.routes.diagnostics import router as diagnostics_router
-from reposcroller.api.routes.sidecar import router as sidecar_router
+from reposcroller.api.routes.sidecar import router as sidecar_router, rag_router
 from reposcroller.api.diagnostics import setup_diagnostic_logging
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -51,6 +51,7 @@ def create_app() -> FastAPI:
     app.include_router(taxonomy_router, prefix="/api/v1")
     app.include_router(diagnostics_router, prefix="/api/v1")
     app.include_router(sidecar_router, prefix="/api/v1")
+    app.include_router(rag_router, prefix="/api/v1")
 
 
     # Mount static assets
