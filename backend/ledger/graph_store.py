@@ -507,7 +507,7 @@ class PropertyGraphStore:
                     if person_node_ids and not focus_node_id:
                         focus_node_id = next(iter(person_node_ids))
 
-                # Find bridging documents between loc and org if both provided
+                # If multiple focal entities provided (e.g. loc + org), find bridging documents
                 if loc_node_ids and org_node_ids:
                     p_loc = ",".join("?" for _ in loc_node_ids)
                     p_org = ",".join("?" for _ in org_node_ids)
@@ -524,6 +524,33 @@ class PropertyGraphStore:
                         cur.execute(f"SELECT DISTINCT node_id FROM document_entity_links WHERE sha256_hash IN ({p_shas});", shared_shas)
                         shared_entities = {r["node_id"] for r in cur.fetchall()}
                         matching_node_ids.update(shared_entities)
+                else:
+                    # Single focal filter expansion: expand 1-hop graph neighborhood & shared document entities
+                    focal_ids = loc_node_ids or org_node_ids or person_node_ids
+                    if focal_ids:
+                        p_focal = ",".join("?" for _ in focal_ids)
+                        focal_list = list(focal_ids)
+                        
+                        # 1. Direct graph neighbors via edges
+                        cur.execute(f"""
+                            SELECT DISTINCT CASE WHEN source_id IN ({p_focal}) THEN target_id ELSE source_id END AS neighbor_id
+                            FROM knowledge_edges
+                            WHERE source_id IN ({p_focal}) OR target_id IN ({p_focal})
+                            LIMIT ?;
+                        """, focal_list + focal_list + focal_list + [min(250, limit)])
+                        matching_node_ids.update({r["neighbor_id"] for r in cur.fetchall()})
+
+                        # 2. Co-occurring entities via shared document links
+                        cur.execute(f"""
+                            SELECT l2.node_id, COUNT(DISTINCT l1.sha256_hash) AS shared_docs
+                            FROM document_entity_links l1
+                            JOIN document_entity_links l2 ON l1.sha256_hash = l2.sha256_hash
+                            WHERE l1.node_id IN ({p_focal}) AND l2.node_id NOT IN ({p_focal})
+                            GROUP BY l2.node_id
+                            ORDER BY shared_docs DESC
+                            LIMIT ?;
+                        """, focal_list + focal_list + [min(300, limit)])
+                        matching_node_ids.update({r["node_id"] for r in cur.fetchall()})
 
                 # 3. Node Type Filter
                 if ntype_filter:

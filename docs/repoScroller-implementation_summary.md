@@ -2310,3 +2310,62 @@ for n in res_doc["nodes"][:5]:
   backend/tests/test_graph_3d_filtering.py .. [100%]
   ======================== 2 passed in 1.18s =========================
   ```
+
+Searched for "setCameraPosition"
+Searched for "init3DKnowledgeUniverse"
+Searched for "THREE"
+Viewed app.js:3620-3750
+Searched for "on3DMouseClick"
+Searched for "animate3DUniverse"
+Viewed app.js:3730-3950
+Viewed app.js:3950-4250
+Viewed app.js:4250-4550
+Viewed app.js:4550-4650
+Searched for "smoothTransitionTo3DNode"
+Viewed app.js:4425-4495
+Viewed app.js:4425-4492
+Edited app.js
+Searched for "app.js"
+Viewed index.html:1550-1650
+Viewed index.html:1850-1877
+Edited index.html
+Ran command: `pytest backend/tests`
+
+I have launched the backend tests and will review the output once completed.
+
+Ran command: `python -m pytest backend/tests`
+
+Running backend test suite via `python -m pytest backend/tests` to verify our changes.
+
+Ran command: `$env:PYTHONPATH="."; python -m pytest backend/tests/test_taxonomy.py backend/tests/test_career.py`
+
+Running targeted backend tests (`test_taxonomy.py` and `test_career.py`) with `PYTHONPATH=.`.
+
+Ran command: `git status`
+
+### Frustum-Optimized Camera Positioning Implemented
+
+The 3D Knowledge Universe camera transition on node selection has been upgraded to orient the camera's field of view through the main point cloud rather than out into empty space.
+
+---
+
+### Technical Highlights
+
+1. __Universe Centroid & Look-Inward Vector Calculation__:
+   - Added [`get3DUniverseCentroid()`](file:///c:/Dev/RepoScroller/frontend/app.js#L4429-L4441) in [`app.js`](file:///c:/Dev/RepoScroller/frontend/app.js) to compute the center of mass $\vec{C}$ across active universe nodes.
+   - Determined the normalized outward ray from the universe centroid to target node $\vec{N}$:
+     $$\vec{D} = \frac{\vec{N} - \vec{C}}{\|\vec{N} - \vec{C}\|}$$
+
+2. __Frustum-Optimized Outer Positioning with 3/4 Elevation__:
+   - The camera is placed on the outer perimeter along this ray:
+     $$\vec{P}_{\text{cam}} = \vec{N} + \vec{D} \times \text{distancePadding} + \vec{U}_{\text{elevation}}$$
+   - Because the camera sits on the outside looking inward toward $\vec{N}$ and $\vec{C}$, the entire cluster and point cloud fill the background frustum while the empty void stays behind the camera.
+   - Added an elevation offset vector $\vec{U}_{\text{elevation}} = (0, \text{elevationY}, 0)$ to preserve an elevated 3/4 perspective.
+
+3. __Dynamic Distance Buffer & Smooth 900ms Easing__:
+   - Distance padding scales smoothly between __90 and 140 units__ based on neighborhood density ($\log_2(\text{degree} + 1)$).
+   - Applied an `easeInOutCubic` transition curve over __900ms__, synchronizing `camera.position` and `controls.target` with continuous `controls.update()` execution and graceful control release.
+
+4. __Cache & Type Fixes__:
+   - Fixed missing `Optional` import in [`backend/ledger/db.py`](file:///c:/Dev/RepoScroller/backend/ledger/db.py#L6).
+   - Bumped frontend script asset version to `app.js?v=36` in [`frontend/index.html`](file:///c:/Dev/RepoScroller/frontend/index.html#L1874) to invalidate cached client bundles.

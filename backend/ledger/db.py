@@ -3,7 +3,7 @@
 import sqlite3
 from pathlib import Path
 from contextlib import contextmanager
-from typing import Generator
+from typing import Generator, Optional
 import logging
 # pyrefly: ignore [missing-import]
 from backend.config import settings

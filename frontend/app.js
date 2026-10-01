@@ -4426,7 +4426,23 @@ window.openUniverseClusterDrawer = openUniverseClusterDrawer;
 window.closeUniverseClusterDrawer = closeUniverseClusterDrawer;
 window.filterUniverseClusterDrawer = filterUniverseClusterDrawer;
 
-function smoothTransitionTo3DNode(targetNode, duration = 850) {
+function get3DUniverseCentroid() {
+  if (!glsl3D.nodes || glsl3D.nodes.length === 0) {
+    return new THREE.Vector3(0, 0, -100);
+  }
+  let sumX = 0, sumY = 0, sumZ = 0;
+  const len = glsl3D.nodes.length;
+  for (let i = 0; i < len; i++) {
+    const n = glsl3D.nodes[i];
+    sumX += (n.x || 0);
+    sumY += (n.y || 0);
+    sumZ += (n.z || 0);
+  }
+  return new THREE.Vector3(sumX / len, sumY / len, sumZ / len);
+}
+window.get3DUniverseCentroid = get3DUniverseCentroid;
+
+function smoothTransitionTo3DNode(targetNode, duration = 900) {
   if (!glsl3D.camera || !glsl3D.controls || !targetNode) return;
 
   const prevAutoSpin = glsl3D.autoSpin;
@@ -4434,23 +4450,34 @@ function smoothTransitionTo3DNode(targetNode, duration = 850) {
 
   const startTarget = glsl3D.controls.target.clone();
   const endTarget = new THREE.Vector3(targetNode.x, targetNode.y, targetNode.z);
-
   const startCamPos = glsl3D.camera.position.clone();
 
-  // Normalized direction vector preserving the signature elevated 3/4 perspective
-  // (Elevated +Y, lateral +X, and forward +Z relative to the target node)
-  const offsetDir = new THREE.Vector3(240, 220, 260).normalize();
+  // 1. Calculate centroid (center of mass C) of active nodes in the universe
+  const centroid = get3DUniverseCentroid();
 
-  // Comfortable viewing distance padding (~100 to 135 units):
-  // Scales smoothly with node degree/density so dense neighborhoods retain breathing room
+  // 2. Determine outward direction vector D = (N - C) / ||N - C||
+  let dir = new THREE.Vector3().subVectors(endTarget, centroid);
+  if (dir.lengthSq() < 0.0001) {
+    // If node is at the centroid or graph is single-node, default to elevated 3/4 vector
+    dir.set(1.0, 0.75, 1.0).normalize();
+  } else {
+    dir.normalize();
+  }
+
+  // 3. Distance padding (90–140 units) scaled smoothly based on node degree/neighborhood density
   const deg = Number(targetNode.degree) || 1;
-  const viewDistance = Math.min(135, Math.max(95, 105 + Math.log2(deg + 1) * 5));
+  const distancePadding = Math.min(140, Math.max(90, 100 + Math.log2(deg + 1) * 6));
 
-  const endCamPos = new THREE.Vector3(
-    targetNode.x + offsetDir.x * viewDistance,
-    targetNode.y + offsetDir.y * viewDistance,
-    targetNode.z + offsetDir.z * viewDistance
-  );
+  // 4. Subtle elevation offset (+Y) ensuring elevated 3/4 perspective looking through node toward cloud
+  const elevationY = Math.max(25, distancePadding * 0.32);
+  const elevation = new THREE.Vector3(0, elevationY, 0);
+
+  // 5. Frustum-optimized camera position:
+  // Positioned on the "outer" side along the ray from centroid through N,
+  // guaranteeing the point cloud remains fully in the background frustum rather than empty void
+  const endCamPos = endTarget.clone()
+    .add(dir.clone().multiplyScalar(distancePadding))
+    .add(elevation);
 
   const startTime = performance.now();
 
@@ -4463,7 +4490,7 @@ function smoothTransitionTo3DNode(targetNode, duration = 850) {
     const elapsed = now - startTime;
     const progress = Math.min(1.0, elapsed / duration);
 
-    // Smooth easeInOutCubic: soft organic launch and cushioned deceleration
+    // Smooth easeInOutCubic: soft launch and cushioned deceleration without abrupt snapping
     const ease = progress < 0.5
       ? 4 * progress * progress * progress
       : 1 - Math.pow(-2 * progress + 2, 3) / 2;
