@@ -7,7 +7,7 @@ from typing import Dict, Any, List, Optional, Tuple
 from backend.config import settings
 from backend.integrity.simhash import hamming_distance, simhash_similarity
 from backend.integrity.date_extractor import extract_document_date
-from backend.ledger.db import get_db_connection, transaction
+from backend.ledger.db import get_db_connection, transaction, resolve_ledger_db_path
 
 
 class DocumentRepository:
@@ -19,7 +19,7 @@ class DocumentRepository:
         self._lock = threading.RLock()
 
         if db_path:
-            self.db_path = Path(db_path)
+            self.db_path = resolve_ledger_db_path(Path(db_path))
         elif conn:
             try:
                 cur = conn.cursor()
@@ -28,11 +28,11 @@ class DocumentRepository:
                 if row and row[2]:
                     self.db_path = Path(row[2])
                 else:
-                    self.db_path = settings.DB_PATH
+                    self.db_path = resolve_ledger_db_path()
             except Exception:
-                self.db_path = settings.DB_PATH
+                self.db_path = resolve_ledger_db_path()
         else:
-            self.db_path = settings.DB_PATH
+            self.db_path = resolve_ledger_db_path()
 
     @property
     def conn(self) -> sqlite3.Connection:

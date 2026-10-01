@@ -231,7 +231,7 @@ class AuthorReviewRequest(BaseModel):
 
 
 def _connect():
-    conn = get_db_connection(settings.DB_PATH)
+    conn = get_db_connection()
     # Ensure this also works when the router is mounted in a process before lifespan startup.
     cur = conn.cursor()
     cur.execute("""

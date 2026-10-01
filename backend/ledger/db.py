@@ -12,38 +12,73 @@ from .schema import SCHEMA_SQL
 
 logger = logging.getLogger("reposcroller.db")
 
+def _is_valid_ledger_db(path: Optional[Path]) -> bool:
+    """Verify that a path exists, has substantial data (>4KB), and contains the core document_ledger table."""
+    if not path:
+        return False
+    p = Path(path)
+    if not p.exists():
+        return False
+    try:
+        # 4096 bytes is just the empty SQLite file header
+        if p.stat().st_size <= 4096:
+            return False
+        conn = sqlite3.connect(f"file:{p.resolve()}?mode=ro", uri=True)
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='document_ledger';")
+            return cur.fetchone() is not None
+        finally:
+            conn.close()
+    except Exception:
+        return False
+
+
 def resolve_ledger_db_path(configured_path: Path = None) -> Path:
-    """Resolve the active database path."""
-    if configured_path:
-        return configured_path
-        
+    """Resolve the active database path.
+    
+    If an explicit custom path (different from settings.DB_PATH) is provided,
+    it is honored directly (e.g. for unit tests or temporary databases).
+    
+    If no path is provided, or the default settings.DB_PATH is requested:
+    checks if settings.DB_PATH exists and is a valid populated database.
+    If not, it automatically falls back to reposcroller_showcase.db.
+    """
+    if configured_path and configured_path != settings.DB_PATH:
+        return Path(configured_path)
+
     target = settings.DB_PATH
-    if target == Path(":memory:"):
+    if target == Path(":memory:") or str(target) == ":memory:":
         return target
 
-    if target.exists():
+    if _is_valid_ledger_db(target):
         return target
 
     # Fallback 1: Look for showcase db in the same parent folder
     showcase_path = target.parent / "reposcroller_showcase.db"
-    if showcase_path.exists():
-        logger.info("Primary ledger not found at %s. Falling back to showcase slice: %s", target, showcase_path)
+    if _is_valid_ledger_db(showcase_path):
+        logger.info("Primary ledger not found or empty at %s. Falling back to showcase slice: %s", target, showcase_path)
         return showcase_path
 
     # Fallback 2: Look in backend/data/ directory
     data_dir_showcase = target.parent / "data" / "reposcroller_showcase.db"
-    if data_dir_showcase.exists():
-        logger.info("Primary ledger not found. Using showcase database from backend.data directory: %s", data_dir_showcase)
+    if _is_valid_ledger_db(data_dir_showcase):
+        logger.info("Primary ledger not found. Using showcase database from backend/data: %s", data_dir_showcase)
         return data_dir_showcase
 
     # Fallback 3: Look relative to current working directory
-    cwd_showcase = Path("reposcroller_showcase.db")
-    if cwd_showcase.exists():
-        return cwd_showcase.absolute()
+    cwd_showcase = Path("reposcroller_showcase.db").absolute()
+    if _is_valid_ledger_db(cwd_showcase):
+        return cwd_showcase
 
-    cwd_data_showcase = Path("backend/data/reposcroller_showcase.db")
-    if cwd_data_showcase.exists():
-        return cwd_data_showcase.absolute()
+    cwd_data_showcase = Path("backend/data/reposcroller_showcase.db").absolute()
+    if _is_valid_ledger_db(cwd_data_showcase):
+        return cwd_data_showcase
+
+    # Fallback 4: Look relative to project root
+    root_data_showcase = Path(__file__).resolve().parent.parent / "data" / "reposcroller_showcase.db"
+    if _is_valid_ledger_db(root_data_showcase):
+        return root_data_showcase
 
     return target
 
