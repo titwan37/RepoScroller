@@ -152,6 +152,7 @@ def get_3d_knowledge_universe(
     node_type: Optional[str] = Query(default=None, description="Filter by entity node_type"),
     type: Optional[str] = Query(default=None, description="Alias for node_type filter"),
     cluster: Optional[int] = Query(default=None, description="Filter by cluster ID (0-5)"),
+    level: Optional[str] = Query(default=None, description="Geographic hierarchy rollup level: 'canton' or 'municipality'"),
     doc_sha: Optional[str] = Query(default=None, description="Filter by document SHA-256 hash"),
     sha256: Optional[str] = Query(default=None, description="Alias for doc_sha"),
     document: Optional[str] = Query(default=None, description="Alias for doc_sha"),
@@ -163,6 +164,8 @@ def get_3d_knowledge_universe(
     filters = {}
     if location:
         filters["location"] = location.strip()
+    if level:
+        filters["level"] = level.strip().lower()
     if org or organization:
         filters["org"] = (org or organization).strip()
     if person or author:

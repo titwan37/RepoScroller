@@ -477,8 +477,47 @@ class PropertyGraphStore:
                 person_node_ids = set()
 
                 if loc_filter:
+                    level_filter = active_filters.get("level")
+                    from backend.ledger.geo_taxonomy import get_sub_regions
+                    try:
+                        sub_regions = get_sub_regions(self.repo.conn, loc_filter)
+                    except Exception:
+                        sub_regions = []
+
+                    if sub_regions:
+                        target_sub_regions = sub_regions
+                        if level_filter == "municipality":
+                            target_sub_regions = [sr for sr in sub_regions if sr["entity_type"] == "municipality"]
+                        elif level_filter == "canton":
+                            target_sub_regions = sub_regions
+
+                        geo_ids = [sr["geo_id"] for sr in target_sub_regions]
+                        p_geos = ",".join("?" for _ in geo_ids)
+
+                        for sr in target_sub_regions:
+                            loc_node_ids.add(f"location_{sr['geo_id'].lower().replace('-', '_')}")
+                            loc_node_ids.add(f"location_{sr['name'].lower().replace(' ', '_')}")
+
+                        cur.execute(f"""
+                            SELECT DISTINCT del.node_id
+                            FROM document_geo_links dgl
+                            JOIN document_entity_links del ON dgl.sha256_hash = del.sha256_hash
+                            WHERE dgl.geo_id IN ({p_geos})
+                            LIMIT ?;
+                        """, geo_ids + [min(400, limit)])
+                        for r in cur.fetchall():
+                            matching_node_ids.add(r["node_id"])
+
+                        canton_root = next((sr for sr in target_sub_regions if sr["entity_type"] == "canton"), None)
+                        if canton_root:
+                            focus_node_id = f"location_{canton_root['geo_id'].lower().replace('-', '_')}"
+                        else:
+                            focus_node_id = f"location_{target_sub_regions[0]['geo_id'].lower().replace('-', '_')}"
+
                     cur.execute("SELECT node_id FROM knowledge_nodes WHERE node_type = 'location' AND (LOWER(name) LIKE ? OR LOWER(node_id) LIKE ?);", (f"%{loc_filter.lower()}%", f"%{loc_filter.lower()}%"))
-                    loc_node_ids = {r["node_id"] for r in cur.fetchall()}
+                    for r in cur.fetchall():
+                        loc_node_ids.add(r["node_id"])
+
                     matching_node_ids.update(loc_node_ids)
                     if loc_node_ids and not focus_node_id:
                         focus_node_id = next(iter(loc_node_ids))

@@ -199,6 +199,46 @@ CREATE TABLE IF NOT EXISTS author_candidate_evaluations (
 
 CREATE INDEX IF NOT EXISTS idx_author_evaluation_status
     ON author_candidate_evaluations(status, confidence, evidence_verified);
+
+-- Geographical and Administrative Taxonomy Hierarchy (Canton vs Municipalities)
+CREATE TABLE IF NOT EXISTS geo_taxonomy (
+    geo_id TEXT PRIMARY KEY,               -- e.g. 'CH-ZG', 'CH-ZG-6300', 'CH-ZG-6312', 'CH-ZH', 'CH-ZH-8913'
+    name TEXT NOT NULL,                    -- 'Kanton Zug', 'Stadt Zug', 'Steinhausen'
+    entity_type TEXT NOT NULL,             -- 'canton', 'municipality', 'postal_area'
+    postal_code TEXT,                      -- '6300', '6312', '6340', '6330'
+    parent_id TEXT REFERENCES geo_taxonomy(geo_id),
+    bfs_nr INTEGER                         -- Swiss Federal Statistical Office ID
+);
+
+CREATE INDEX IF NOT EXISTS idx_geo_parent ON geo_taxonomy(parent_id);
+CREATE INDEX IF NOT EXISTS idx_geo_postal ON geo_taxonomy(postal_code);
+
+-- Document to Geo-Entity Link Table
+CREATE TABLE IF NOT EXISTS document_geo_links (
+    sha256_hash TEXT NOT NULL REFERENCES document_ledger(sha256_hash) ON DELETE CASCADE,
+    geo_id TEXT NOT NULL REFERENCES geo_taxonomy(geo_id) ON DELETE CASCADE,
+    confidence REAL DEFAULT 1.0,
+    PRIMARY KEY(sha256_hash, geo_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_doc_geo_lookup ON document_geo_links(geo_id, sha256_hash);
+CREATE INDEX IF NOT EXISTS idx_doc_geo_sha ON document_geo_links(sha256_hash);
+
+-- Organization Entities with Hierarchical Geographic Binding
+CREATE TABLE IF NOT EXISTS organization_entities (
+    org_id TEXT PRIMARY KEY,               -- e.g. 'org_zkb'
+    canonical_name TEXT NOT NULL,          -- 'Zuger Kantonalbank'
+    hq_geo_id TEXT REFERENCES geo_taxonomy(geo_id),
+    jurisdiction_geo_id TEXT REFERENCES geo_taxonomy(geo_id),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Organization Aliases for High-Recall Text Extraction
+CREATE TABLE IF NOT EXISTS organization_aliases (
+    alias_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    alias_pattern TEXT NOT NULL UNIQUE,
+    org_id TEXT NOT NULL REFERENCES organization_entities(org_id) ON DELETE CASCADE
+);
 """
 
 

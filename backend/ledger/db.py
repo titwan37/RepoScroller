@@ -113,14 +113,11 @@ def get_db_connection(db_path: Path = None) -> sqlite3.Connection:
 
 
 def init_db(db_path: Path = None) -> None:
-    """Execute DDL statements only if tables do not already exist."""
+    """Execute DDL statements to ensure all schema tables, indices, and structures exist."""
     conn = get_db_connection(db_path)
     try:
-        cur = conn.cursor()
-        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='document_ledger';")
-        if not cur.fetchone():
-            conn.executescript(SCHEMA_SQL)
-            conn.commit()
+        conn.executescript(SCHEMA_SQL)
+        conn.commit()
     finally:
         conn.close()
 
