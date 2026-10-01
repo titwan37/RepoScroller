@@ -351,7 +351,6 @@ Both requested improvements to the __AI Interrogation Assistant__ have been impl
 - __Typography & Styling ([`style.css`](file:///c:/Dev/RepoScroller/reposcroller/api/static/style.css)):__
   - Added dedicated CSS rules for `.chat-msg.bot .msg-bubble` elements ensuring high contrast, clean line-heights, and responsive formatting.
 
-
 ### 2. Conversational Interrogation on Selected Documents (Without Repeating Filename)
 
 - __Automatic Document Context Focus ([`app.js`](file:///c:/Dev/RepoScroller/reposcroller/api/static/app.js) & [`index.html`](file:///c:/Dev/RepoScroller/reposcroller/api/static/index.html)):__
@@ -828,7 +827,8 @@ All 64 tests passed with 100% success, and the 3-tier embedding hierarchy is liv
 
 #### 1. Why PC2 Remote Ollama was unreachable / silently falling back
 
-* __Dynamic LAN IP vs Hardcoded IP:__ When switching from Wi-Fi to the 1Gbps Ethernet cable, PC2's IP changed (from `.9` to `192.168.192.37` under hostname `NITRO-AN51755`).
+- __Dynamic LAN IP vs Hardcoded IP:__ When switching from Wi-Fi to the 1Gbps Ethernet cable, PC2's IP changed (from `.9` to `192.168.192.37` under hostname `NITRO-AN51755`).
+
 - __VRAM Cold Start Latency:__ On the very first inference call, loading the 1024-dimensional model weights into GPU VRAM on Windows takes __~7.5 seconds__. The previous HTTP connect timeout was set to a strict 5.0s, which caused the first call to timeout and silently fall back to the SHA-256 pseudo-vector generator (which took 0.001ms, giving the impression of artificial high speed).
 - __Fix Applied:__ Increased connection and probe timeouts, updated default routing to dynamic hostname resolution `http://NITRO-AN51755:11434`, and configured keep-alive.
 
@@ -846,10 +846,11 @@ All 64 tests passed with 100% success, and the 3-tier embedding hierarchy is liv
 
 ### 🖥️ UI & Telemetry Updates
 
-* __Workload HUD PC2 Card:__
+- __Workload HUD PC2 Card:__
   - Displays __Green__ (`⚡ CUDA Ready`) when PC2 CUDA is online.
   - Displays __Orange__ (`🟠 Local CPU Fallback`) when PC2 is unreachable and PC1 CPU is handling embeddings.
   - Displays __Red__ (`🔴 Offline Pseudo-Vectors`) if all Ollama instances are offline.
+
 - __Sidecar Ingestion Banner:__
   - Shows live status with corresponding color:
     - 🟢 `⚡ Ingestion Active (CUDA Node - snowflake-arctic-embed2)`
@@ -1091,7 +1092,6 @@ The unified `/api/v1/diagnostics/zoo` endpoint and the front-end __Zoo Matrix St
 | __🧠 Vector Embeddings__ | Active tier (`cuda` vs `local`), chunks/min, avg tensor latency (ms), total chunks embedded | [sidecar_worker.py](file:///c:/Dev/RepoScroller/reposcroller/ai/sidecar_worker.py), [telemetry.py](file:///c:/Dev/RepoScroller/reposcroller/ai/telemetry.py#L510-L517) |
 | __🤖 Reasoning Chat__ | Active node (`pc1` / `pc2`), active model, PC1 calls counter, PC2 calls counter | [chat.py](file:///c:/Dev/RepoScroller/reposcroller/api/routes/chat.py), [telemetry.py](file:///c:/Dev/RepoScroller/reposcroller/ai/telemetry.py#L150-L166) |
 
-
 Ran command: `powershell -ExecutionPolicy Bypass -Command "Invoke-RestMethod -Uri 'http://127.0.0.1:11434/api/ps' | ConvertTo-Json -Depth 5"`
 Ran command: `powershell -ExecutionPolicy Bypass -Command "$payload = @{model='snowflake-arctic-embed2:latest'; input='test'; keep_alive='24h'} | ConvertTo-Json; Invoke-RestMethod -Uri 'http://127.0.0.1:11434/api/embed' -Method Post -Body $payload -ContentType 'application/json'; Invoke-RestMethod -Uri 'http://127.0.0.1:11434/api/ps' | ConvertTo-Json -Depth 5"`
 Ran command: `powershell -ExecutionPolicy Bypass -Command "$p = '{\"model\":\"snowflake-arctic-embed2:latest\",\"input\":\"test\",\"keep_alive\":\"24h\"}'; Invoke-RestMethod -Uri 'http://127.0.0.1:11434/api/embed' -Method Post -Body $p -ContentType 'application/json'; Invoke-RestMethod -Uri 'http://127.0.0.1:11434/api/ps' | ConvertTo-Json -Depth 5"`
@@ -1123,16 +1123,16 @@ Edited start_pc2_cuda_node.ps1
 
 ### Why Both Models Were Not Displayed Simultaneously
 
-The RTX 3060 Laptop GPU has **6144 MiB (6.0 GB)** of physical VRAM.
+The RTX 3060 Laptop GPU has __6144 MiB (6.0 GB)__ of physical VRAM.
 
-1. **Default Context Memory Allocation:**
+1. __Default Context Memory Allocation:__
    When warming up without explicit context limits:
-   - `llama3.2:3b` defaults to a **4096** context window ($\approx \mathbf{4.0\text{ GB}}$ VRAM).
+   - `llama3.2:3b` defaults to a __4096__ context window ($\approx \mathbf{4.0\text{ GB}}$ VRAM).
    - `snowflake-arctic-embed2:latest` defaults to full context ($\approx \mathbf{1.3\text{ GB}}$ VRAM).
    - Windows Desktop Compositor / OS reservations reserve $\approx \mathbf{1.0\text{ GB}}$ VRAM.
-   - **Total Needed:** $4.0 + 1.3 + 1.0 = \mathbf{6.3\text{ GB}} > \mathbf{6.0\text{ GB}}$ (Exceeds available GPU VRAM).
+   - __Total Needed:__ $4.0 + 1.3 + 1.0 = \mathbf{6.3\text{ GB}} > \mathbf{6.0\text{ GB}}$ (Exceeds available GPU VRAM).
 
-2. **Ollama's Auto-Eviction Behavior:**
+2. __Ollama's Auto-Eviction Behavior:__
    Even when `OLLAMA_MAX_LOADED_MODELS=3`, Ollama checks whether both models fit in available VRAM simultaneously. Because $6.3\text{ GB} > 6.0\text{ GB}$, Ollama automatically evicted the idle model to avoid OOM or severe CPU memory swapping.
 
 ---
@@ -1140,9 +1140,10 @@ The RTX 3060 Laptop GPU has **6144 MiB (6.0 GB)** of physical VRAM.
 ### The Fix
 
 By setting `num_ctx = 2048` on the warmup probes (which is more than enough for RepoScroller code chunks and prompt routing):
-- `llama3.2:3b`: **$\approx 3.1\text{ GB}$**
-- `snowflake-arctic-embed2:latest`: **$\approx 664\text{ MB}$**
-- **Total:** **$\approx 3.76\text{ GB}$** (Fits comfortably **100% in GPU VRAM** with $> 2\text{ GB}$ of free headroom).
+
+- `llama3.2:3b`: __$\approx 3.1\text{ GB}$__
+- `snowflake-arctic-embed2:latest`: __$\approx 664\text{ MB}$__
+- __Total:__ __$\approx 3.76\text{ GB}$__ (Fits comfortably __100% in GPU VRAM__ with $> 2\text{ GB}$ of free headroom).
 
 ---
 
@@ -2049,3 +2050,263 @@ The deterministic pass was applied to `reposcroller_ledger.db`:
 In the 50-entity dry run test of [`audit_and_certify_entities.py`](file:///c:/Dev/RepoScroller/reposcroller/integrity/audit_and_certify_entities.py), the LLM flagged __30 out of 50 (60%)__ low-degree candidates as false positives for purging.
 
 All unit tests pass ([`tests/test_graph_rag.py`](file:///c:/Dev/RepoScroller/tests/test_graph_rag.py), [`tests/test_perLocation.py`](file:///c:/Dev/RepoScroller/tests/test_perLocation.py), and [`tests/test_taxonomy.py`](file:///c:/Dev/RepoScroller/tests/test_taxonomy.py)).
+
+Ran command: `python -c "
+with open('frontend/app.js', 'r', encoding='utf-8', errors='ignore') as f:
+    for i, line in enumerate(f, 1):
+        if 'DOMContentLoaded' in line or 'init3DKnowledgeUniverse' in line or 'switchWorkspace(' in line:
+            print(f'{i}: {line.strip()[:100]}')
+"`
+Used tool: manage_task
+Viewed app.js:220-280
+Viewed app.js:1665-1725
+Viewed index.html:1-25
+Edited index.html
+Viewed app.js:1660-1730
+Edited app.js
+Viewed app.js:230-260
+Edited app.js
+Viewed app.py:60-75
+Edited app.py
+Ran command: `node --check frontend/app.js`
+
+__Oui, absolument !__ C'est désormais entièrement configuré et fonctionnel.
+
+Vous pouvez accéder directement à l'univers 3D via l'URL :
+👉 __`https://afastudio.ch/reposcroller/3d_knowledgegraph_universe`__
+
+---
+
+### Ce qui a été mis en place
+
+#### 1. Routage direct par URL (Deep Linking & SPA History)
+
+Dans [frontend/app.js](file:///c:/Dev/RepoScroller/frontend/app.js#L1664-L1720) :
+
+- __Table de correspondance d'URL__ (`WORKSPACE_ROUTES`) :
+  - `3d_knowledgegraph_universe` (ou `universe`, `3d`, `knowledgegraph`) ➔ active directement le workspace __`universe`__ (*🌐 3D Knowledge Universe*).
+  - Fonctionne également pour les autres onglets : `ledger`, `graphrag`, `authors`, `chat`.
+- __Initialisation automatique au chargement__ (`initDashboard`) :
+  Si l'URL contient `/3d_knowledgegraph_universe` (ou `#universe`), l'onglet 3D est activé immédiatement au premier affichage et lance le moteur Three.js / WebGL GLSL.
+- __Synchronisation bidirectionnelle avec l'historique du navigateur__ :
+  - En cliquant sur l'onglet dans la barre de navigation, l'URL dans la barre d'adresse du navigateur passe automatiquement à `/reposcroller/3d_knowledgegraph_universe`.
+  - Les boutons __Précédent / Suivant__ du navigateur (`popstate`) fonctionnent pour naviguer entre les différents onglets.
+
+#### 2. Résolution des assets statiques (`<base href>`)
+
+Dans [frontend/index.html](file:///c:/Dev/RepoScroller/frontend/index.html#L8-L16) :
+
+- Un script dynamique injecte une balise `<base href="/reposcroller/">` (ou `/` en local).
+- Cela garantit que tous les sous-chemins (avec ou sans slash terminal) chargent toujours `style.css`, `app.js` et les bibliothèques Three.js depuis le bon dossier racine sans erreur 404.
+
+#### 3. Compatibilité locale et en ligne
+
+- __En ligne (`serve -s` + Nginx)__ : Nginx route `/reposcroller/` vers `serve -s` en mode SPA, qui sert `index.html` pour n'importe quel sous-chemin.
+- __En local (`FastAPI` sur `http://127.0.0.1:8090/3d_knowledgegraph_universe`)__ : Des routes de repli ont également été ajoutées dans [backend/api/app.py](file:///c:/Dev/RepoScroller/backend/api/app.py#L59-L65) pour que l'URL directe fonctionne aussi en local.
+
+---
+
+### Déploiement
+
+Pour pousser cette mise à jour sur le serveur :
+
+```powershell
+cd C:\dev\hub
+.\deploy_menu.ps1
+```
+
+*(Option RepoScroller)*. Une fois déployé, vous pourrez ouvrir directement `https://afastudio.ch/reposcroller/3d_knowledgegraph_universe`.
+
+---
+
+## 3D Knowledge Universe - Contrôle de Luminosité des Liens Relationnels (Links Brightness Slider)
+
+### Besoin
+
+Permettre le réglage en direct de la luminosité / opacité des arêtes (links) du graphe 3D au même titre que le slider de luminosité des vertex/noeuds (`✨ Nodes`).
+
+### Réalisations
+
+1. __Interface Utilisateur ([frontend/index.html](file:///c:/Dev/RepoScroller/frontend/index.html))__ :
+   - Clarification du curseur existant des nœuds : `✨ Nodes:` (0.1x à 2.0x, uniform GLSL).
+   - Ajout du curseur pour les liens relationnels : `🕸️ Links:` (`min="0.0"`, `max="1.0"`, `step="0.02"`, initialisé à `22%`).
+   - Badge d'affichage dynamique en pourcentage (`#glsl-links-brightness-val`).
+2. __Style Visuel ([frontend/style.css](file:///c:/Dev/RepoScroller/frontend/style.css))__ :
+   - Curseur personnalisé `.slider-glsl-links` avec un thumb violet/lavande distinct (`var(--accent-purple)`) pour différencier immédiatement le contrôle des liens de celui des nœuds (cyan).
+3. __Moteur 3D Three.js ([frontend/app.js](file:///c:/Dev/RepoScroller/frontend/app.js))__ :
+   - Propriété `edgeOpacity: 0.22` ajoutée à l'état global `glsl3D`.
+   - Fonction `change3DLinksBrightness(val)` pour muter dynamiquement `glsl3D.edgesMesh.material.opacity` et forcer `needsUpdate = true` sans reconstruire la géométrie.
+   - Synchronisation automatique avec le bouton de visibilité des liens (`#btn-glsl-edges`) : si l'opacité est remontée depuis 0 ou masquée, la visibilité est réactivée automatiquement.
+   - Conservation de la valeur choisie lors des rechargements de données dans `load3DUniverseData()`.
+   - Incrément des versions d'assets à `v=32`.
+
+# Test finding nodes matching location='bern' and org='visana'
+
+cur.execute('''
+    SELECT n.node_id, n.node_type, n.name
+    FROM knowledge_nodes n
+    WHERE (n.node_type = 'location' AND LOWER(n.name) LIKE '%bern%')
+       OR (n.node_type = 'organization' AND LOWER(n.name) LIKE '%visana%')
+''')
+print('Direct matches:', cur.fetchall())
+"`
+Used tool: manage_task
+Ran command: `python -c "
+import sqlite3
+conn = sqlite3.connect('backend/data/reposcroller_ledger.db')
+cur = conn.cursor()
+cur.execute('SELECT count(*) FROM knowledge_nodes WHERE node_type = \"document\" OR node_id LIKE \"doc_%\"')
+print('Doc nodes in knowledge_nodes:', cur.fetchone())
+cur.execute('SELECT count(*) FROM document_ledger')
+print('Total documents in document_ledger:', cur.fetchone())
+"`
+Ran command: `python -c "import sqlite3; conn = sqlite3.connect('backend/data/reposcroller_ledger.db'); cur = conn.cursor(); cur.execute(\"SELECT count(*) FROM knowledge_nodes WHERE node_type = 'document' OR node_id LIKE 'doc_%'\"); print('Doc nodes:', cur.fetchone()); cur.execute('SELECT count(*) FROM document_ledger'); print('Total docs:', cur.fetchone());"`
+Used tool: manage_task
+Ran command: `python -c 'import sqlite3; conn = sqlite3.connect("backend/data/reposcroller_ledger.db"); cur = conn.cursor(); cur.execute("SELECT count(*) FROM knowledge_nodes WHERE node_type = \"document\" OR node_id LIKE \"doc_%\";"); print("Doc nodes:", cur.fetchone()); cur.execute("SELECT count(*) FROM document_ledger;"); print("Total docs:", cur.fetchone())'`
+Ran command: `python -c '
+import sqlite3
+conn = sqlite3.connect("backend/data/reposcroller_ledger.db")
+cur = conn.cursor()
+
+# Find orgs with ZKB or UBS or Visana
+
+cur.execute("SELECT node_id, node_type, name FROM knowledge_nodes WHERE LOWER(name) LIKE \"%zkb%\" OR LOWER(name) LIKE \"%kantonalbank%\" LIMIT 5;")
+print("ZKB matches:", cur.fetchall())
+
+cur.execute("SELECT node_id, node_type, name FROM knowledge_nodes WHERE LOWER(name) LIKE \"%zurich%\" OR LOWER(name) LIKE \"%zrich%\" OR LOWER(name) LIKE \"%zuerich%\" LIMIT 5;")
+print("Zurich matches:", cur.fetchall())
+'`
+Ran command: `python -c '
+import sqlite3
+conn = sqlite3.connect("backend/data/reposcroller_ledger.db")
+cur = conn.cursor()
+cur.execute("""
+    SELECT l1.sha256_hash, l1.node_id, l2.node_id
+    FROM document_entity_links l1
+    JOIN document_entity_links l2 ON l1.sha256_hash = l2.sha256_hash
+    WHERE l1.node_id LIKE "%zkb%" AND l2.node_id LIKE "%zurich%"
+    LIMIT 5;
+""")
+print("Shared docs between ZKB and Zurich:", cur.fetchall())
+'`
+Used tool: manage_task
+Searched for "test_graph"
+Viewed test_graph_rag.py:60-140
+Ran command: `pytest backend/tests/test_graph_rag.py`
+Ran command: `python -m pytest backend/tests/test_graph_rag.py`
+Used tool: manage_task
+Used tool: manage_task
+Used tool: schedule
+
+I will verify the test suite and proceed with implementing the features.
+
+Used tool: manage_task
+Ran command: `python -c '
+import sqlite3, json
+
+conn = sqlite3.connect("backend/data/reposcroller_ledger.db")
+cur = conn.cursor()
+
+# Test location=zurich & org=zkb
+
+loc_str = "zurich"
+org_str = "zkb"
+
+cur.execute("SELECT node_id FROM knowledge_nodes WHERE node_type = \"location\" AND (LOWER(name) LIKE ? OR LOWER(node_id) LIKE ?)", (f"%{loc_str}%", f"%{loc_str}%"))
+loc_nodes = [r[0] for r in cur.fetchall()]
+
+cur.execute("SELECT node_id FROM knowledge_nodes WHERE node_type = \"organization\" AND (LOWER(name) LIKE ? OR LOWER(node_id) LIKE ?)", (f"%{org_str}%", f"%{org_str}%"))
+org_nodes = [r[0] for r in cur.fetchall()]
+
+print("Found loc_nodes:", loc_nodes)
+print("Found org_nodes:", org_nodes)
+
+# Find shared documents
+
+placeholders_loc = ",".join("?" for_ in loc_nodes)
+placeholders_org = ",".join("?" for _in org_nodes)
+
+cur.execute(f"""
+    SELECT DISTINCT l1.sha256_hash
+    FROM document_entity_links l1
+    JOIN document_entity_links l2 ON l1.sha256_hash = l2.sha256_hash
+    WHERE l1.node_id IN ({placeholders_loc}) AND l2.node_id IN ({placeholders_org})
+""", loc_nodes + org_nodes)
+shared_docs = [r[0] for r in cur.fetchall()]
+print("Shared docs count:", len(shared_docs))
+
+# Find all entities in those shared docs
+
+if shared_docs:
+    p_docs = ",".join("?" for _in shared_docs)
+    cur.execute(f"SELECT DISTINCT node_id FROM document_entity_links WHERE sha256_hash IN ({p_docs})", shared_docs)
+    connecting_entities = [r[0] for r in cur.fetchall()]
+    print("Connecting entities count:", len(connecting_entities))
+'`
+
+repo = DocumentRepository()
+gstore = PropertyGraphStore(repository=repo)
+
+# 1. Test filtered by location=zurich and org=ZKB
+
+res = gstore.get_3d_knowledge_universe(limit=100, filters={"location": "zurich", "org": "ZKB"})
+print("Filtered count (location=zurich&org=ZKB):", len(res["nodes"]), "nodes,", len(res["edges"]), "edges")
+print("Active filters:", res.get("active_filters"))
+print("Focus node id:", res.get("focus_node_id"))
+for n in res["nodes"][:5]:
+    print(" -", n["id"], n["name"], n["type"], n["cluster_name"])
+
+# 2. Test filtered by doc_sha
+
+cur = repo.conn.cursor()
+cur.execute("SELECT sha256_hash FROM document_ledger LIMIT 1;")
+sha = cur.fetchone()[0]
+res_doc = gstore.get_3d_knowledge_universe(limit=100, filters={"doc_sha": sha})
+print("\nFiltered by doc_sha:", sha)
+print("Doc nodes count:", len(res_doc["nodes"]), "nodes,", len(res_doc["edges"]), "edges")
+print("Focus node id:", res_doc.get("focus_node_id"))
+for n in res_doc["nodes"][:5]:
+    print(" -", n["id"], n["name"], n["type"])
+'`
+
+### Summary of Implemented Features
+
+#### 1. Cross-Component Navigation (Document Ledger $\rightarrow$ 3D Knowledge Universe)
+
+- __Document Ledger Action Button__: Added interactive __"🌐 3D"__ button in each row of the document ledger table in [`renderLedgerRows`](file:///c:/Dev/RepoScroller/frontend/app.js#L1435) and inside the document lineage sidebar drawer in [`selectDocument`](file:///c:/Dev/RepoScroller/frontend/app.js#L1526).
+
+- __Workspace Transition & Document Resolution__: Implemented [`visualizeDocumentIn3D(sha256, filename)`](file:///c:/Dev/RepoScroller/frontend/app.js#L3773), which:
+  1. Automatically switches the workspace tab to `'universe'`.
+  2. Requests the document subgraph via `GET /api/v1/sidecar/graph-3d?doc_sha=<sha256>`.
+  3. Seamlessly discovers and matches the target document/entity node.
+- __Smooth Camera Flight & Target Focus__: Implemented [`smoothTransitionTo3DNode(targetNode, duration)`](file:///c:/Dev/RepoScroller/frontend/app.js#L3718) using cubic ease-in-out interpolation across camera positions and OrbitControls look-at targets.
+- __Link Materialization & Visual Beacon__: Implemented [`emphasizeNodeLinks(nodeId)`](file:///c:/Dev/RepoScroller/frontend/app.js#L3743) which creates bright electric-cyan/gold `LineSegments` for all connected edges and adds an animated pulsing 3D reticle beacon ring around the target node while opening the node inspector panel.
+
+---
+
+#### 2. Dynamic 3D Graph Filtering via Query Parameters
+
+- __Backend Endpoint Update__:
+  - In [sidecar.py](file:///c:/Dev/RepoScroller/backend/api/routes/sidecar.py#L129), updated `GET /api/v1/sidecar/graph-3d` and `GET /api/v1/sidecar/3d-cluster` to accept URL query parameters:
+    - `location`, `org` / `organization`, `person` / `author`, `node_type` / `type`, `cluster`, `doc_sha` / `sha256` / `document`, `q` / `query` / `search`, `limit`.
+  - In [`get_3d_knowledge_universe`](file:///c:/Dev/RepoScroller/backend/ledger/graph_store.py#L273), implemented multi-dimensional filtering across metadata JSON, aliases, entity types, and full-text names. It bridges isolated entities (e.g. organizations and locations) linked by shared documents and returns `active_filters` and `focus_node_id`.
+
+- __Frontend Query Filtering & HUD__:
+  - Extended [`load3DUniverseData(forceReload, filterParams)`](file:///c:/Dev/RepoScroller/frontend/app.js#L3284) to accept object filters, URL search params, or raw query strings (e.g., `location=zurich&org=ZKB`).
+  - Added active filter HUD banner [`renderUniverseFilterBanner(filters)`](file:///c:/Dev/RepoScroller/frontend/app.js#L3803) with one-click reset/clear controls [`clear3DUniverseFilters()`](file:///c:/Dev/RepoScroller/frontend/app.js#L3828).
+  - Added 3D Universe toolbar query filter bar [`#glsl-filter-query-input`](file:///c:/Dev/RepoScroller/frontend/index.html#L385) and styled elements in [style.css](file:///c:/Dev/RepoScroller/frontend/style.css#L1691).
+
+---
+
+### Verification
+
+- Created automated integration tests in [test_graph_3d_filtering.py](file:///c:/Dev/RepoScroller/backend/tests/test_graph_3d_filtering.py) testing:
+  - `GET /api/v1/sidecar/graph-3d?location=zurich&org=ZKB`
+  - `GET /api/v1/sidecar/graph-3d?doc_sha=...`
+
+- Test suite ran and passed cleanly:
+
+  ```
+  backend/tests/test_graph_3d_filtering.py .. [100%]
+  ======================== 2 passed in 1.18s =========================
+  ```

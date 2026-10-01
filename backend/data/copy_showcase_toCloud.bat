@@ -1,0 +1,1 @@
+wsl rsync -avhP -e "ssh -i /home/titwan/ionos_sec_ed25519" /mnt/c/Dev/RepoScroller/backend/data/reposcroller_showcase.db root@212.227.39.191:/var/www/reposcroller/backend/data/reposcroller_showcase.db
