@@ -58,7 +58,7 @@ class EmbeddingAdapter:
         
         # Persistent client connection pool with generous connect & read timeouts (high patience for CPU/GPU)
         self._client = httpx.Client(
-            timeout=httpx.Timeout(self.timeout, connect=15.0, read=self.timeout, write=30.0),
+            timeout=httpx.Timeout(self.timeout, connect=3.0, read=self.timeout, write=10.0),
             limits=httpx.Limits(max_keepalive_connections=8, max_connections=16)
         )
 
@@ -106,42 +106,46 @@ class EmbeddingAdapter:
                         logger.info(f"Ollama node {url} busy (HTTP 503). Retrying single embedding attempt {attempt + 1}/{max_retries} in {delay:.2f}s...")
                         time.sleep(delay)
                         continue
+                if resp.status_code == 404:
+                    last_err = "404"
+                    break
                 last_err = f"HTTP {resp.status_code}: {resp.text[:120]}"
-                break
+                return None, last_err
             except httpx.TimeoutException:
                 if attempt < max_retries:
                     time.sleep(0.5)
                     continue
                 last_err = f"Request timed out (>{self.timeout}s)"
-                break
+                return None, last_err
             except httpx.ConnectError:
                 last_err = "Connection refused (host offline or port closed)"
-                break
+                return None, last_err
             except Exception as exc:
                 last_err = str(exc)
-                break
+                return None, last_err
 
-        # 2. Try legacy Ollama /api/embeddings fallback if /api/embed not supported
-        try:
-            resp_legacy = self._client.post(
-                f"{url}/api/embeddings",
-                json={
-                    "model": model,
-                    "prompt": text,
-                    "keep_alive": self.keep_alive
-                }
-            )
-            if resp_legacy.status_code == 200:
-                data = resp_legacy.json()
-                emb = data.get("embedding", [])
-                if emb:
-                    return emb, None
-            else:
-                last_err = f"Legacy HTTP {resp_legacy.status_code}: {resp_legacy.text[:120]}"
-        except httpx.TimeoutException:
-            last_err = f"Request timed out (>{self.timeout}s)"
-        except Exception as exc:
-            last_err = str(exc)
+        if last_err == "404":
+            # 2. Try legacy Ollama /api/embeddings fallback if /api/embed not supported
+            try:
+                resp_legacy = self._client.post(
+                    f"{url}/api/embeddings",
+                    json={
+                        "model": model,
+                        "prompt": text,
+                        "keep_alive": self.keep_alive
+                    }
+                )
+                if resp_legacy.status_code == 200:
+                    data = resp_legacy.json()
+                    emb = data.get("embedding", [])
+                    if emb:
+                        return emb, None
+                else:
+                    last_err = f"Legacy HTTP {resp_legacy.status_code}: {resp_legacy.text[:120]}"
+            except httpx.TimeoutException:
+                last_err = f"Request timed out (>{self.timeout}s)"
+            except Exception as exc:
+                last_err = str(exc)
 
         return None, last_err
 
