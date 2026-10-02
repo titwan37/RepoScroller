@@ -59,6 +59,50 @@ def test_graph_rag_hybrid_query(tmp_path):
     assert result["retrieval_signals"]["fused_candidates_count"] >= 1
 
 
+def test_graph_rag_candidate_capacity_and_locations(tmp_path):
+    db_file = tmp_path / "test_capacity.db"
+    init_db(db_file)
+    repo = DocumentRepository(db_path=db_file)
+    embedder = EmbeddingAdapter(provider="mock", dimension=64)
+    vstore = VectorStore(repository=repo, embedding_adapter=embedder)
+    gstore = PropertyGraphStore(repository=repo)
+    engine = GraphRAGQueryEngine(repository=repo, vector_store=vstore, graph_store=gstore, embedding_adapter=embedder)
+
+    # Insert 15 documents
+    for i in range(15):
+        sha = f"sha_capacity_test_{i:03d}"
+        repo.upsert_document(
+            sha256_hash=sha,
+            simhash=f"simhash_{i}",
+            canonical_filename=f"Doc_Agreement_{i}.pdf",
+            doc_type="agreement",
+            lifecycle_status="final",
+            completeness_score=1.0,
+            maturity_score=0.8,
+            page_count=2,
+            text_snippet=f"Legal document number {i} regarding tax compliance and investment.",
+            doc_date="2026-01-01",
+            full_text=f"Legal document number {i} regarding tax compliance and investment in Zurich."
+        )
+        repo.record_location(
+            sha256_hash=sha,
+            storage_root="Local",
+            relative_path=f"Doc_Agreement_{i}.pdf",
+            absolute_path=f"C:\\Files\\Doc_Agreement_{i}.pdf",
+            file_size=1024,
+            mtime=1700000000.0,
+            is_primary=True
+        )
+
+    # Query with top_k=15
+    res = engine.query(query_text="tax compliance investment", top_k=15)
+    assert len(res["ranked_results"]) == 15
+    first_cand = res["ranked_results"][0]
+    assert "absolute_path" in first_cand["document"]
+    assert first_cand["document"]["absolute_path"].startswith("C:\\Files\\")
+    assert len(first_cand["document"]["locations"]) >= 1
+
+
 def test_3d_knowledge_universe_representativity(tmp_path):
     db_file = tmp_path / "test_graph_universe.db"
     init_db(db_file)

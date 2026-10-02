@@ -2698,6 +2698,35 @@ function clearStudioRAGSearch() {
   if (signalsSummary) signalsSummary.textContent = "";
 }
 
+async function handleCandidateOpenFile(event, sha256, filePath = "", reveal = false) {
+  if (event) event.stopPropagation();
+  if (filePath && filePath.trim()) {
+    openFile(filePath.trim(), reveal);
+  } else if (sha256 && sha256.trim()) {
+    const actionName = reveal ? "Revealing in File Explorer" : "Opening file";
+    showToast(`${actionName} for SHA: ${sha256.substring(0, 12)}...`, "info", 4000);
+    try {
+      const res = await fetch("/api/v1/documents/open-file", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sha256_hash: sha256, reveal: reveal })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(`Error: ${data.detail || "Could not open file"}`, "error", 7000);
+      } else {
+        const verb = reveal ? "Revealed in Explorer" : "Launched default application";
+        showToast(`${verb}: ${data.path || sha256}`, "success", 5000);
+      }
+    } catch (err) {
+      showToast(`Network error: ${err.message}`, "error", 7000);
+    }
+  } else {
+    showToast("No registered file path or SHA-256 for this candidate", "error");
+  }
+}
+window.handleCandidateOpenFile = handleCandidateOpenFile;
+
 async function executeStudioGraphRAGSearch(explicitQuery = null) {
   const input = document.getElementById("studio-rag-input");
   const query = (explicitQuery != null ? explicitQuery : (input ? input.value : "")).trim();
@@ -2730,7 +2759,9 @@ async function executeStudioGraphRAGSearch(explicitQuery = null) {
   }
 
   try {
-    const res = await fetch(`/api/v1/sidecar/graph-rag?query=${encodeURIComponent(query)}&top_k=8&expand_graph_hops=1`);
+    const limitSelect = document.getElementById("studio-candidate-limit-select");
+    const topK = limitSelect ? (parseInt(limitSelect.value, 10) || 25) : 25;
+    const res = await fetch(`/api/v1/sidecar/graph-rag?query=${encodeURIComponent(query)}&top_k=${topK}&expand_graph_hops=1`);
     if (!res.ok) {
       const errJson = await res.json().catch(() => ({}));
       throw new Error(errJson.detail || `HTTP ${res.status}`);
@@ -2742,6 +2773,15 @@ async function executeStudioGraphRAGSearch(explicitQuery = null) {
     if (countBadge) countBadge.textContent = `${hits.length} candidate${hits.length !== 1 ? 's' : ''}`;
     if (signalsSummary) {
       signalsSummary.textContent = `Vectors: ${signals.dense_hits_count || 0} • BM25: ${signals.sparse_hits_count || 0} • Entities: ${signals.graph_entities_expanded || 0}`;
+    }
+
+    if (typeof logDiagnosticEntry === "function") {
+      logDiagnosticEntry({
+        source: "frontend",
+        level: "INFO",
+        logger: "client.graphrag",
+        message: `GraphRAG executed for '${query}': ${hits.length} fused candidates (Limit: ${topK}, Vectors: ${signals.dense_hits_count || 0}, BM25: ${signals.sparse_hits_count || 0}, Entity Hops: ${signals.graph_entities_expanded || 0})`
+      });
     }
 
     if (hits.length === 0) {
@@ -2761,6 +2801,7 @@ async function executeStudioGraphRAGSearch(explicitQuery = null) {
       const sigs = hit.signals || {};
       const filename = doc.canonical_filename || chunk.canonical_filename || `Document #${idx + 1}`;
       const sha = doc.sha256_hash || chunk.sha256_hash || "";
+      const primaryPath = doc.absolute_path || chunk.absolute_path || (doc.locations && doc.locations[0] && doc.locations[0].absolute_path) || "";
       const score = (hit.composite_score || 0).toFixed(4);
       const text = chunk.chunk_text || doc.text_snippet || "No text available";
 
@@ -2789,6 +2830,7 @@ async function executeStudioGraphRAGSearch(explicitQuery = null) {
                 <span>Date: ${escapeHtml(doc.doc_date || '--')}</span>
                 <span>•</span>
                 <span>Status: ${escapeHtml(doc.lifecycle_status || 'final')}</span>
+                ${primaryPath ? `<span>•</span><span title="${escapeHtml(primaryPath)}" style="max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">📁 ${escapeHtml(primaryPath)}</span>` : ''}
               </div>
             </div>
             <span class="signal-pill rrf" title="Reciprocal Rank Fusion Score">RRF Rank #${idx + 1} (${score})</span>
@@ -2809,8 +2851,17 @@ async function executeStudioGraphRAGSearch(explicitQuery = null) {
               ${entityBadges ? `<span style="font-size: 0.68rem; color: var(--text-faint);">Entities:</span> ${entityBadges}` : ''}
             </div>
             <div class="candidate-action-buttons">
+              <button class="btn btn-outline btn-xs" onclick="handleCandidateOpenFile(event, '${escapeHtml(sha)}', '${escapeHtml(primaryPath)}', false)" title="Open document in default system application">
+                📄 Open File
+              </button>
+              <button class="btn btn-outline btn-xs" onclick="handleCandidateOpenFile(event, '${escapeHtml(sha)}', '${escapeHtml(primaryPath)}', true)" title="Reveal and highlight file in Windows File Explorer">
+                📂 Reveal
+              </button>
+              <button class="btn btn-outline btn-xs" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.45); background: rgba(56, 189, 248, 0.08);" onclick="visualizeDocumentIn3D('${escapeHtml(sha)}', '${escapeHtml(filename)}')" title="Locate document vertex and visualize connected knowledge graph in 3D Universe">
+                🌐 View in 3D
+              </button>
               <button class="btn btn-outline btn-xs" onclick="selectDocument('${escapeHtml(sha)}'); switchWorkspace('ledger');" title="Inspect full document in ledger">
-                🗄️ View in Ledger
+                🗄️ Ledger
               </button>
               <button class="btn btn-primary btn-xs" onclick="interrogateAboutDocument('${escapeHtml(sha)}', '${escapeHtml(filename)}')" title="Ask AI about this specific document">
                 💬 Ask AI
@@ -2830,6 +2881,15 @@ async function executeStudioGraphRAGSearch(explicitQuery = null) {
           <div class="empty-text">${escapeHtml(err.message)}</div>
         </div>
       `;
+    }
+    
+    if (typeof logDiagnosticEntry === "function") {
+      logDiagnosticEntry({
+        source: "frontend",
+        level: "ERROR",
+        logger: "client.graphrag",
+        message: `GraphRAG retrieval failed: ${err.message}`
+      });
     }
   } finally {
     if (btn) {

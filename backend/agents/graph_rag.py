@@ -66,7 +66,7 @@ class GraphRAGQueryEngine:
 
     def query(self,
               query_text: str,
-              top_k: int = 5,
+              top_k: int = 25,
               expand_graph_hops: int = 1) -> Dict[str, Any]:
         """Run complete GraphRAG query with vector search, FTS5 lexical match, and graph neighborhood expansion."""
         if not query_text or not query_text.strip():
@@ -86,10 +86,11 @@ class GraphRAGQueryEngine:
 
         try:
             # 1. Signal A: Dense Semantic Vector Search
-            dense_hits = self.vector_store.search_similar_chunks(query_text, limit=top_k * 2)
+            fetch_limit = max(top_k * 2, 50)
+            dense_hits = self.vector_store.search_similar_chunks(query_text, limit=fetch_limit)
 
             # 2. Signal B: Lexical Sparse Search (FTS5 BM25)
-            sparse_hits = self.repo.search_keyword_fts(query_text, limit=top_k * 2)
+            sparse_hits = self.repo.search_keyword_fts(query_text, limit=fetch_limit)
 
             # 3. Reciprocal Rank Fusion
             fused_candidates = self.reciprocal_rank_fusion(dense_hits, sparse_hits, k=60)
@@ -97,7 +98,6 @@ class GraphRAGQueryEngine:
         except Exception as exc:
             logger.error(f"GraphRAG retrieval error for query '{query_text}': {exc}")
             raise
-
 
         # 4. Signal C: Knowledge Graph Neighborhood Expansion & Enrichment
         graph_entities = []
@@ -121,6 +121,13 @@ class GraphRAGQueryEngine:
             has_dense = cand.get("dense_rank") is not None
             has_sparse = cand.get("sparse_rank") is not None
 
+            # Retrieve registered physical locations for quick local file opening
+            locations = cand.get("locations") or self.repo.get_document_locations(sha)
+            primary_path = cand.get("absolute_path") or ""
+            if not primary_path and locations:
+                primary_loc = next((loc for loc in locations if loc.get("is_primary_source")), locations[0])
+                primary_path = primary_loc.get("absolute_path", "")
+
             # Formulate structured result
             result_item = {
                 "sha256_hash": sha,
@@ -132,13 +139,16 @@ class GraphRAGQueryEngine:
                     "doc_date": cand.get("doc_date", ""),
                     "maturity_score": cand.get("maturity_score", 0.0),
                     "lifecycle_status": cand.get("lifecycle_status", "draft"),
-                    "text_snippet": cand.get("text_snippet", "")
+                    "text_snippet": cand.get("text_snippet", ""),
+                    "absolute_path": primary_path,
+                    "locations": locations
                 },
                 "chunk": {
                     "chunk_id": cand.get("chunk_id", f"{sha}_0"),
                     "chunk_text": cand.get("chunk_text") or cand.get("text_snippet", ""),
                     "token_count": cand.get("token_count", len((cand.get("chunk_text") or cand.get("text_snippet", "")).split())),
-                    "canonical_filename": cand.get("canonical_filename", "")
+                    "canonical_filename": cand.get("canonical_filename", ""),
+                    "absolute_path": primary_path
                 },
                 "signals": {
                     "dense_vector_match": has_dense,

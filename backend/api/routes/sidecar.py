@@ -31,7 +31,7 @@ class VectorSearchRequest(BaseModel):
 
 class GraphRAGRequest(BaseModel):
     query: str
-    top_k: Optional[int] = 5
+    top_k: Optional[int] = 25
     expand_graph_hops: Optional[int] = 1
 
 
@@ -249,12 +249,12 @@ def get_graph_node_neighborhood(
 def execute_graph_rag_query(
     req: Optional[GraphRAGRequest] = None,
     query: Optional[str] = Query(default=None),
-    top_k: Optional[int] = Query(default=5),
-    expand_graph_hops: Optional[int] = Query(default=1)
+    top_k: Optional[int] = Query(default=25, ge=1, le=100),
+    expand_graph_hops: Optional[int] = Query(default=1, ge=0, le=3)
 ):
     """Execute hybrid GraphRAG retrieval combining dense vectors, FTS5 BM25, and graph expansion (supports GET and POST)."""
     q = (req.query if req and req.query else query) or ""
-    k = (req.top_k if req and req.top_k is not None else top_k) or 5
+    k = (req.top_k if req and req.top_k is not None else top_k) or 25
     hops = (req.expand_graph_hops if req and req.expand_graph_hops is not None else expand_graph_hops) or 1
     
     res = _graph_rag.query(
@@ -277,12 +277,12 @@ def execute_rag_search_alias(
     req: Optional[GraphRAGRequest] = None,
     q: Optional[str] = Query(default=None, description="Search query string"),
     query: Optional[str] = Query(default=None, description="Alternative query parameter"),
-    top_k: Optional[int] = Query(default=8, ge=1, le=50),
+    top_k: Optional[int] = Query(default=25, ge=1, le=100),
     expand_graph_hops: Optional[int] = Query(default=1, ge=0, le=3)
 ):
     """Execute hybrid GraphRAG retrieval via /api/v1/rag/search (supports GET/POST with ?q= or ?query=)."""
     query_text = (req.query if req and req.query else (q or query)) or ""
-    k = (req.top_k if req and req.top_k is not None else top_k) or 8
+    k = (req.top_k if req and req.top_k is not None else top_k) or 25
     hops = (req.expand_graph_hops if req and req.expand_graph_hops is not None else expand_graph_hops) or 1
 
     return _graph_rag.query(

@@ -118,8 +118,9 @@ def make_fuzzy_search_node(repo: DocumentRepository):
 
         # 2. FTS5 Lexical Search with user query string
         query = state.get("query", "").strip()
+        limit = state.get("limit", 25) or 25
         if query:
-            fts_results = repo.search_keyword_fts(query, limit=10)
+            fts_results = repo.search_keyword_fts(query, limit=limit)
             for r in fts_results:
                 sha = r["sha256_hash"]
                 if sha not in seen_shas:

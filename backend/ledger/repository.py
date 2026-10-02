@@ -228,6 +228,13 @@ class DocumentRepository:
 
             return doc
 
+    def get_document_locations(self, sha256_hash: str) -> List[Dict[str, Any]]:
+        """Retrieve registered physical storage locations for a given SHA-256 hash."""
+        with self._lock:
+            cur = self.conn.cursor()
+            cur.execute("SELECT * FROM file_locations WHERE sha256_hash = ? ORDER BY is_primary_source DESC, mtime DESC", (sha256_hash,))
+            return [dict(loc) for loc in cur.fetchall()]
+
     def get_document_full_text(self, sha256_hash: str) -> str:
         """Retrieve full text of document from FTS index, disk file, or ledger snippet."""
         with self._lock:
@@ -306,7 +313,7 @@ class DocumentRepository:
             results.sort(key=lambda x: (x["hamming_distance"], -x["maturity_score"]))
             return results
 
-    def search_keyword_fts(self, query: str, limit: int = 20) -> List[Dict[str, Any]]:
+    def search_keyword_fts(self, query: str, limit: int = 50) -> List[Dict[str, Any]]:
         """Lexical search using SQLite FTS5 BM25 scoring with filename extraction and LIKE fallback."""
         if not query or not query.strip():
             return []

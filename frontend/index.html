@@ -1353,9 +1353,20 @@
       <!-- Right Column: Multi-Signal Ranked Results -->
       <div class="studio-results-column">
         <div class="studio-column-header">
-          <div class="column-title">
-            <span>📊 Retrieved Candidates & Signal Breakdown</span>
-            <span id="studio-results-count" class="badge badge-sm badge-info">0 candidates</span>
+          <div class="column-title" style="display: flex; align-items: center; justify-content: space-between; width: 100%; flex-wrap: wrap; gap: 0.5rem;">
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+              <span>📊 Retrieved Candidates & Signal Breakdown</span>
+              <span id="studio-results-count" class="badge badge-sm badge-info">0 candidates</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 0.35rem; font-size: 0.72rem; color: var(--text-faint);">
+              <span>Limit:</span>
+              <select id="studio-candidate-limit-select" class="btn btn-outline btn-xs" style="padding: 0.15rem 0.4rem; font-size: 0.72rem; background: var(--bg-surface-2); border-color: var(--border-color); color: var(--text-main);" onchange="executeStudioGraphRAGSearch()">
+                <option value="10">10</option>
+                <option value="25" selected>25</option>
+                <option value="50">50</option>
+                <option value="100">100</option>
+              </select>
+            </div>
           </div>
           <div id="studio-signals-summary" class="studio-signals-summary">
             <!-- Dynamic signals stats -->

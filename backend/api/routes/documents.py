@@ -4,6 +4,7 @@ import tempfile
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, Query, UploadFile, File, Form, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from backend.ledger.repository import DocumentRepository
 from backend.integrity.hasher import compute_bytes_sha256
@@ -30,6 +31,8 @@ class DuplicateCheckRequest(BaseModel):
 class OpenFileRequest(BaseModel):
     file_path: Optional[str] = None
     path: Optional[str] = None
+    sha256_hash: Optional[str] = None
+    sha256: Optional[str] = None
     reveal: bool = False
 
 
@@ -67,11 +70,21 @@ def list_documents(
 
 
 @router.post("/open-file")
+@router.post("/open-local")
 def open_file_endpoint(req: OpenFileRequest) -> Dict[str, Any]:
-    """Open a file or reveal it in File Explorer on the local machine (supports UNC paths)."""
+    """Open a file or reveal it in File Explorer on the local machine (supports UNC paths, file_path, and sha256 lookup)."""
     target_path = (req.file_path or req.path or "").strip()
+    sha = (req.sha256_hash or req.sha256 or "").strip()
+
+    if not target_path and sha:
+        repo = DocumentRepository()
+        locations = repo.get_document_locations(sha)
+        if locations:
+            primary_loc = next((loc for loc in locations if loc.get("is_primary_source")), locations[0])
+            target_path = (primary_loc.get("absolute_path") or "").strip()
+
     if not target_path:
-        raise HTTPException(status_code=400, detail="Missing file path to open")
+        raise HTTPException(status_code=400, detail="Missing file path or SHA-256 with registered locations to open")
 
     try:
         if sys.platform == "win32":
@@ -119,6 +132,25 @@ def open_file_endpoint(req: OpenFileRequest) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Failed to open '{target_path}': {e}")
         raise HTTPException(status_code=500, detail=f"Could not open file: {str(e)}")
+
+
+@router.get("/{sha256_hash}/download")
+def download_document_file(sha256_hash: str):
+    """Download the physical document file associated with this SHA-256."""
+    repo = DocumentRepository()
+    doc = repo.get_document_by_sha256(sha256_hash)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document hash not found in ledger")
+    locations = doc.get("locations", [])
+    if not locations:
+        raise HTTPException(status_code=404, detail="No registered physical file locations for this document")
+    primary_loc = next((loc for loc in locations if loc.get("is_primary_source")), locations[0])
+    target_path = primary_loc.get("absolute_path", "")
+    p = Path(target_path)
+    if not p.exists() or not p.is_file():
+        raise HTTPException(status_code=404, detail=f"File not found on local disk: {target_path}")
+    filename = doc.get("canonical_filename") or p.name
+    return FileResponse(path=str(p), filename=filename)
 
 
 @router.get("/stats")
