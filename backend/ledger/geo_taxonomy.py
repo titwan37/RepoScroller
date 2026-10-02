@@ -455,18 +455,15 @@ def backfill_document_geo_links(conn: sqlite3.Connection) -> Dict[str, int]:
 
     # 1. Geographic Nodes
     cur.execute("""
-        INSERT INTO knowledge_nodes (node_id, node_type, name, properties_json)
+        INSERT OR REPLACE INTO knowledge_nodes (node_id, node_type, name, properties_json)
         SELECT 'location_' || LOWER(REPLACE(geo_id, '-', '_')), 'location', name,
                json_object('geo_id', geo_id, 'entity_type', entity_type, 'postal_code', postal_code, 'bfs_nr', bfs_nr)
-        FROM geo_taxonomy
-        ON CONFLICT(node_id) DO UPDATE SET
-            name = excluded.name,
-            properties_json = excluded.properties_json;
+        FROM geo_taxonomy;
     """)
 
     # 2. Administrative Subdivision Edges (Municipalities -> Canton)
     cur.execute("""
-        INSERT INTO knowledge_edges (source_id, target_id, relation_type, weight, properties_json)
+        INSERT OR REPLACE INTO knowledge_edges (source_id, target_id, relation_type, weight, properties_json)
         SELECT 
             'location_' || LOWER(REPLACE(g_child.geo_id, '-', '_')) AS source_id,
             'location_' || LOWER(REPLACE(g_parent.geo_id, '-', '_')) AS target_id,
@@ -474,61 +471,50 @@ def backfill_document_geo_links(conn: sqlite3.Connection) -> Dict[str, int]:
             2.0 AS weight,
             json_object('hierarchy', 'Administrative Subdivision') AS properties_json
         FROM geo_taxonomy g_child
-        JOIN geo_taxonomy g_parent ON g_child.parent_id = g_parent.geo_id
-        ON CONFLICT(source_id, target_id, relation_type) DO UPDATE SET
-            weight = 2.0;
+        JOIN geo_taxonomy g_parent ON g_child.parent_id = g_parent.geo_id;
     """)
 
     # 3. Organization Nodes
     for org in CANONICAL_ORGS_SEED:
         cur.execute("""
-            INSERT INTO knowledge_nodes (node_id, node_type, name, properties_json)
-            VALUES (?, 'organization', ?, json_object('org_id', ?, 'hq', ?, 'jurisdiction', ?))
-            ON CONFLICT(node_id) DO UPDATE SET
-                name = excluded.name,
-                properties_json = excluded.properties_json;
+            INSERT OR REPLACE INTO knowledge_nodes (node_id, node_type, name, properties_json)
+            VALUES (?, 'organization', ?, json_object('org_id', ?, 'hq', ?, 'jurisdiction', ?));
         """, (f"organization_{org['org_id']}", org["canonical_name"], org["org_id"], org["hq_geo_id"], org["jurisdiction_geo_id"]))
 
         # Link Org -> HQ Location
         cur.execute("""
-            INSERT INTO knowledge_edges (source_id, target_id, relation_type, weight, properties_json)
-            VALUES (?, ?, 'HEADQUARTERED_IN', 2.0, json_object('context', 'Headquarters'))
-            ON CONFLICT(source_id, target_id, relation_type) DO UPDATE SET weight = 2.0;
+            INSERT OR REPLACE INTO knowledge_edges (source_id, target_id, relation_type, weight, properties_json)
+            VALUES (?, ?, 'HEADQUARTERED_IN', 2.0, json_object('context', 'Headquarters'));
         """, (f"organization_{org['org_id']}", f"location_{org['hq_geo_id'].lower().replace('-', '_')}"))
 
         # Link Org -> Canton Jurisdiction
         cur.execute("""
-            INSERT INTO knowledge_edges (source_id, target_id, relation_type, weight, properties_json)
-            VALUES (?, ?, 'LOCATED_IN', 1.8, json_object('context', 'Jurisdiction'))
-            ON CONFLICT(source_id, target_id, relation_type) DO UPDATE SET weight = 1.8;
+            INSERT OR REPLACE INTO knowledge_edges (source_id, target_id, relation_type, weight, properties_json)
+            VALUES (?, ?, 'LOCATED_IN', 1.8, json_object('context', 'Jurisdiction'));
         """, (f"organization_{org['org_id']}", f"location_{org['jurisdiction_geo_id'].lower().replace('-', '_')}"))
 
     # 4. Document -> Location Edges
     cur.execute("""
-        INSERT INTO knowledge_edges (source_id, target_id, relation_type, weight, properties_json)
+        INSERT OR REPLACE INTO knowledge_edges (source_id, target_id, relation_type, weight, properties_json)
         SELECT 
             'doc_' || sha256_hash AS source_id,
             'location_' || LOWER(REPLACE(geo_id, '-', '_')) AS target_id,
             'LOCATED_IN' AS relation_type,
             confidence AS weight,
             json_object('geo_id', geo_id) AS properties_json
-        FROM document_geo_links
-        ON CONFLICT(source_id, target_id, relation_type) DO UPDATE SET
-            weight = excluded.weight;
+        FROM document_geo_links;
     """)
 
     # 5. Document -> Organization Edges (Binds 845 ZKB docs to org_zkb in 3D graph)
     cur.execute("""
-        INSERT INTO knowledge_edges (source_id, target_id, relation_type, weight, properties_json)
+        INSERT OR REPLACE INTO knowledge_edges (source_id, target_id, relation_type, weight, properties_json)
         SELECT 
             'doc_' || sha256_hash AS source_id,
             'organization_' || org_id AS target_id,
             'MENTIONS_ORG' AS relation_type,
             confidence AS weight,
             json_object('org_id', org_id) AS properties_json
-        FROM document_org_links
-        ON CONFLICT(source_id, target_id, relation_type) DO UPDATE SET
-            weight = excluded.weight;
+        FROM document_org_links;
     """)
 
     conn.commit()
