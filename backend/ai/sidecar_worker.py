@@ -10,7 +10,7 @@ from backend.ledger.vector_store import VectorStore
 from backend.ledger.graph_store import PropertyGraphStore
 from backend.ai.chunker import DocumentChunker
 from backend.ai.embeddings import EmbeddingAdapter
-from backend.ai.graph_extractor import KnowledgeGraphExtractor
+from backend.ai.graph_extractor import KnowledgeGraphExtractor, ThemeResolver, make_db_taxonomy_loader
 
 logger = logging.getLogger("kb_sidecar")
 
@@ -30,7 +30,9 @@ class KnowledgeBaseSidecarWorker:
         self.vector_store = vector_store or VectorStore(repository=self.repo, embedding_adapter=self.embedder)
         self.graph_store = graph_store or PropertyGraphStore(repository=self.repo)
         self.chunker = chunker or DocumentChunker()
-        self.graph_extractor = graph_extractor or KnowledgeGraphExtractor()
+        self.graph_extractor = graph_extractor or KnowledgeGraphExtractor(
+            theme_resolver=ThemeResolver(loader=make_db_taxonomy_loader(self.repo.conn, self.repo._lock))
+        )
 
         # Continuous Worker State
         self._lock = threading.RLock()

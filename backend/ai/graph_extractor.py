@@ -2,11 +2,15 @@
 
 import re
 import json
+import time
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple, Callable
 import httpx
 from backend.config import settings
-from backend.ai.graph_schemas import EntityNode, EntityEdge, DocumentEntityLink, DocumentKnowledgeGraph
+from backend.ai.graph_schemas import (
+    EntityNode, EntityEdge, DocumentEntityLink, DocumentKnowledgeGraph,
+    THEME_NODE_TYPE, THEME_RELATION,
+)
 
 logger = logging.getLogger("graph_extractor")
 
@@ -16,6 +20,85 @@ def canonicalize_node_id(node_type: str, name: str) -> str:
     clean_name = re.sub(r'[^\w\s-]', '', name.strip().lower())
     clean_name = re.sub(r'[-\s]+', '_', clean_name)
     return f"{node_type}_{clean_name}"
+
+
+# --- Thematic Mindmap: taxonomy root domains as graph hubs -------------------
+
+# category_id -> (parent_id, display_name)
+TaxonomyHierarchy = Dict[str, Tuple[Optional[str], str]]
+
+UNCLASSIFIED_THEME_ID = "unclassified"
+NON_THEMATIC_DOC_TYPES = {"", "none", "null", "other", "unknown", "unclassified"}
+
+
+def default_taxonomy_hierarchy() -> TaxonomyHierarchy:
+    """Static hierarchy from the seeded DEFAULT_TAXONOMY (used when no DB loader is supplied)."""
+    from backend.ai.taxonomy import DEFAULT_TAXONOMY  # lazy: avoid import cycles / DB side effects
+    return {c["category_id"]: (c.get("parent_id"), c["name_en"]) for c in DEFAULT_TAXONOMY}
+
+
+def make_db_taxonomy_loader(conn: Any, lock: Optional[Any] = None) -> Callable[[], TaxonomyHierarchy]:
+    """Build a loader reading the live global_taxonomy table (includes LLM-evolved categories)."""
+    def _load() -> TaxonomyHierarchy:
+        def _query():
+            cur = conn.cursor()
+            cur.execute("SELECT category_id, parent_id, name_en FROM global_taxonomy;")
+            return {r[0]: (r[1], r[2]) for r in cur.fetchall()}
+        if lock is not None:
+            with lock:
+                return _query()
+        return _query()
+    return _load
+
+
+class ThemeResolver:
+    """Resolves a (leaf) taxonomy doc_type to its root life-domain theme.
+
+    The root of the global_taxonomy parent chain is the theme, e.g.
+    lease_contract -> legal_contract -> theme 'theme_legal_contract'.
+    """
+
+    def __init__(self,
+                 loader: Optional[Callable[[], TaxonomyHierarchy]] = None,
+                 ttl_seconds: float = 60.0):
+        self._loader = loader
+        self._ttl = ttl_seconds
+        self._hierarchy: Optional[TaxonomyHierarchy] = None
+        self._loaded_at = 0.0
+
+    def _get_hierarchy(self) -> TaxonomyHierarchy:
+        now = time.monotonic()
+        stale = self._loader is not None and (now - self._loaded_at) > self._ttl
+        if self._hierarchy is None or stale:
+            loaded: Optional[TaxonomyHierarchy] = None
+            if self._loader is not None:
+                try:
+                    loaded = self._loader()
+                except Exception as e:
+                    logger.debug(f"Theme taxonomy loader failed, keeping previous hierarchy: {e}")
+            if not loaded:
+                loaded = self._hierarchy or default_taxonomy_hierarchy()
+            self._hierarchy = loaded
+            self._loaded_at = now
+        return self._hierarchy
+
+    def resolve(self, doc_type: Optional[str]) -> Optional[Tuple[str, str]]:
+        """Return (root_category_id, display_name), or None if the doc_type is non-thematic."""
+        key = (doc_type or "").strip().lower().replace(" ", "_")
+        if key in NON_THEMATIC_DOC_TYPES:
+            return None
+
+        hierarchy = self._get_hierarchy()
+        if key not in hierarchy:
+            return UNCLASSIFIED_THEME_ID, "Unclassified"
+
+        seen = {key}
+        while True:
+            parent_id, name = hierarchy[key]
+            if not parent_id or parent_id not in hierarchy or parent_id in seen:
+                return key, name  # root reached (or broken/cyclic chain: stop safely)
+            seen.add(parent_id)
+            key = parent_id
 
 
 KNOWN_BANKING_ORGANIZATIONS: Dict[str, Dict[str, Any]] = {
@@ -127,8 +210,60 @@ KNOWN_BANKING_ORGANIZATIONS: Dict[str, Dict[str, Any]] = {
 class KnowledgeGraphExtractor:
     """Extracts structured entities, relationships, and document links from document text."""
 
-    def __init__(self, provider: Optional[str] = None):
+    def __init__(self,
+                 provider: Optional[str] = None,
+                 theme_resolver: Optional[ThemeResolver] = None):
         self.provider = provider or settings.LLM_PROVIDER
+        self.theme_resolver = theme_resolver or ThemeResolver()
+
+    def attach_theme(self, doc_graph: DocumentKnowledgeGraph, doc_type: str) -> DocumentKnowledgeGraph:
+        """Add the document's taxonomy theme hub (node + CATEGORIZED_AS link/edge). Idempotent."""
+        resolved = self.theme_resolver.resolve(doc_type)
+        if not resolved:
+            return doc_graph
+
+        root_id, root_name = resolved
+        theme_id = canonicalize_node_id(THEME_NODE_TYPE, root_id)
+        existing_ids = {n.node_id for n in doc_graph.nodes}
+
+        if theme_id not in existing_ids:
+            doc_graph.nodes.append(EntityNode(
+                node_id=theme_id,
+                node_type=THEME_NODE_TYPE,
+                name=root_name,
+                properties={
+                    "taxonomy_root": root_id,
+                    "is_fallback": root_id == UNCLASSIFIED_THEME_ID,
+                },
+            ))
+
+        # Document -> theme (documents are not knowledge_nodes, so this lives in document_entity_links)
+        if not any(l.node_id == theme_id and l.role == THEME_RELATION for l in doc_graph.links):
+            doc_graph.links.append(DocumentEntityLink(
+                sha256_hash=doc_graph.sha256_hash,
+                node_id=theme_id,
+                role=THEME_RELATION,
+                confidence=1.0,
+            ))
+
+        # Category node -> theme, only for the node derived from this doc_type and only if it is
+        # present in this graph (knowledge_edges enforces FKs on both endpoints).
+        category_ids = {
+            canonicalize_node_id("contract_type", doc_type),
+            canonicalize_node_id("document_category", doc_type),
+        }
+        existing_edges = {(e.source_id, e.target_id, e.relation_type) for e in doc_graph.edges}
+        for cat_id in category_ids & existing_ids:
+            if (cat_id, theme_id, THEME_RELATION) not in existing_edges:
+                doc_graph.edges.append(EntityEdge(
+                    source_id=cat_id,
+                    target_id=theme_id,
+                    relation_type=THEME_RELATION,
+                    weight=1.0,
+                    properties={"context": f"Taxonomy domain of {doc_type}"},
+                ))
+
+        return doc_graph
 
     def _extract_heuristic_fallback(self,
                                     text: str,
@@ -604,6 +739,27 @@ class KnowledgeGraphExtractor:
                                 filename: str = "",
                                 doc_type: str = "",
                                 doc_date: str = "") -> DocumentKnowledgeGraph:
+        """Extract entities/relationships, then attach the document's taxonomy theme hub."""
+        doc_graph = self._extract_entity_graph(
+            text=text,
+            sha256_hash=sha256_hash,
+            filename=filename,
+            doc_type=doc_type,
+            doc_date=doc_date,
+        )
+        try:
+            return self.attach_theme(doc_graph, doc_type)
+        except Exception as e:
+            # Theme hubs are additive; never let them break entity extraction.
+            logger.warning(f"Theme attachment failed for {sha256_hash[:12]}: {e}")
+            return doc_graph
+
+    def _extract_entity_graph(self,
+                              text: str,
+                              sha256_hash: str,
+                              filename: str = "",
+                              doc_type: str = "",
+                              doc_date: str = "") -> DocumentKnowledgeGraph:
         """Extract structured Knowledge Graph entities and relationships from document text."""
         if not text or not text.strip():
             return self._extract_heuristic_fallback(text="", sha256_hash=sha256_hash, filename=filename, doc_type=doc_type)

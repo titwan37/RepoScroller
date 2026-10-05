@@ -4,7 +4,7 @@ from typing import List, Dict, Any, Optional
 from backend.config import settings
 from backend.ledger.db import transaction
 from backend.ledger.repository import DocumentRepository
-from backend.ai.graph_schemas import EntityNode, EntityEdge, DocumentEntityLink, DocumentKnowledgeGraph
+from backend.ai.graph_schemas import EntityNode, EntityEdge, DocumentEntityLink, DocumentKnowledgeGraph, THEME_RELATION
 
 class PropertyGraphStore:
     """Manages storage and traversal of knowledge nodes, relationships, and document associations."""
@@ -123,6 +123,16 @@ class PropertyGraphStore:
                                 properties_json = excluded.properties_json;
                         """, (edge.source_id, edge.target_id, edge.relation_type, edge.weight, json.dumps(edge.properties, ensure_ascii=False)))
 
+                    # A document belongs to exactly one taxonomy theme: drop stale CATEGORIZED_AS links
+                    # (e.g. after taxonomy evolution reclassified it) before writing the current one.
+                    theme_ids = [l.node_id for l in doc_graph.links if l.role == THEME_RELATION]
+                    if theme_ids:
+                        placeholders = ",".join("?" for _ in theme_ids)
+                        cur.execute(f"""
+                            DELETE FROM document_entity_links
+                            WHERE sha256_hash = ? AND role = ? AND node_id NOT IN ({placeholders});
+                        """, (doc_graph.sha256_hash, THEME_RELATION, *theme_ids))
+
                     for link in doc_graph.links:
                         cur.execute("""
                             INSERT INTO document_entity_links (sha256_hash, node_id, role, confidence)
@@ -130,6 +140,42 @@ class PropertyGraphStore:
                             ON CONFLICT(sha256_hash, node_id, role) DO UPDATE SET
                                 confidence = excluded.confidence;
                         """, (link.sha256_hash, link.node_id, link.role, link.confidence))
+
+    def backfill_theme_links(self, extractor: Optional[Any] = None, batch_size: int = 500) -> Dict[str, Any]:
+        """Attach taxonomy theme hubs to already-ingested documents without re-chunking/re-embedding.
+
+        Only theme nodes and document->theme links are written; category->theme edges are
+        created on the next normal sidecar pass for each document.
+        """
+        from backend.ai.graph_extractor import (  # lazy: keep graph_store import-light
+            KnowledgeGraphExtractor, ThemeResolver, make_db_taxonomy_loader,
+        )
+        extractor = extractor or KnowledgeGraphExtractor(
+            theme_resolver=ThemeResolver(loader=make_db_taxonomy_loader(self.repo.conn, self.repo._lock))
+        )
+
+        with self.repo._lock:
+            cur = self.repo.conn.cursor()
+            cur.execute("SELECT sha256_hash, doc_type FROM document_ledger;")
+            rows = [(r[0], r[1]) for r in cur.fetchall()]
+
+        graphs: List[DocumentKnowledgeGraph] = []
+        themes: Dict[str, int] = {}
+        for sha, doc_type in rows:
+            g = extractor.attach_theme(DocumentKnowledgeGraph(sha256_hash=sha), doc_type or "")
+            if g.links:
+                graphs.append(g)
+                themes[g.links[0].node_id] = themes.get(g.links[0].node_id, 0) + 1
+
+        for i in range(0, len(graphs), batch_size):
+            self.save_graphs_batch(graphs[i:i + batch_size])
+
+        return {
+            "documents_examined": len(rows),
+            "documents_themed": len(graphs),
+            "documents_skipped": len(rows) - len(graphs),
+            "theme_distribution": dict(sorted(themes.items(), key=lambda kv: -kv[1])),
+        }
 
     def get_document_entities(self, sha256_hash: str) -> List[Dict[str, Any]]:
         """Retrieve all entities associated with a specific document."""
@@ -351,8 +397,12 @@ class PropertyGraphStore:
             self._graph_stats_cache_time = now
             return stats
 
-    def get_3d_knowledge_universe(self, limit: int = 1000, filters: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Generate 3D Euclidean coordinates along axes of importance with stratified archetype sampling or dynamic query filtering."""
+    def get_3d_knowledge_universe(self,
+                                   limit: int = 1000,
+                                   filters: Optional[Dict[str, Any]] = None,
+                                   layout: str = "spatial") -> Dict[str, Any]:
+        """Generate 3D Euclidean coordinates along axes of importance with stratified archetype sampling,
+        dynamic query filtering, or thematic mindmap solar-planetary topology."""
         import hashlib
         import math
         import json
@@ -412,9 +462,36 @@ class PropertyGraphStore:
                 "types": ["currency", "financial_pillar", "monetary_value"],
                 "representation_desc": "Universal monetary hubs & contractual flows",
             },
+            {
+                "id": 6,
+                "name": "Life-Style Domains & Thematic Hubs",
+                "archetype": "Themes",
+                "color": "#ec4899",
+                "icon": "🪐",
+                "types": ["theme"],
+                "representation_desc": "Taxonomy life domains & central gravitational hubs",
+            },
         ]
 
+        THEME_PALETTE = {
+            "theme_legal_contract": {"color": "#f59e0b", "icon": "⚖️"},
+            "theme_financial_banking": {"color": "#10b981", "icon": "🏦"},
+            "theme_financial_invoice": {"color": "#34d399", "icon": "🧾"},
+            "theme_career_research": {"color": "#06b6d4", "icon": "💼"},
+            "theme_court_order": {"color": "#f43f5e", "icon": "🏛️"},
+            "theme_tax_assessment": {"color": "#8b5cf6", "icon": "📊"},
+            "theme_corporate_governance": {"color": "#6366f1", "icon": "🏢"},
+            "theme_technical_architecture": {"color": "#14b8a6", "icon": "📐"},
+            "theme_formal_correspondence": {"color": "#38bdf8", "icon": "✉️"},
+            "theme_identity_credentials": {"color": "#fb923c", "icon": "🪪"},
+            "theme_unclassified": {"color": "#94a3b8", "icon": "📁"},
+        }
+
         active_filters = {k: v for k, v in (filters or {}).items() if v is not None and str(v).strip() != ""}
+        layout_mode = str(active_filters.pop("layout", layout or "spatial")).lower().strip()
+        if layout_mode not in ["thematic", "spatial"]:
+            layout_mode = "spatial"
+
         focus_node_id = None
         extra_document_node = None
         extra_edges = []
@@ -426,7 +503,7 @@ class PropertyGraphStore:
             cur.execute("SELECT node_type, COUNT(*) as cnt FROM knowledge_nodes GROUP BY node_type;")
             type_counts = {r["node_type"]: r["cnt"] for r in cur.fetchall()}
 
-            quota_per_type = max(100, limit // 5)
+            quota_per_type = max(100, limit // len(cluster_definitions))
 
             if active_filters:
                 loc_filter = active_filters.get("location")
@@ -435,6 +512,7 @@ class PropertyGraphStore:
                 ntype_filter = active_filters.get("node_type") or active_filters.get("type")
                 cluster_filter = active_filters.get("cluster")
                 doc_sha_filter = active_filters.get("doc_sha") or active_filters.get("sha256") or active_filters.get("document")
+                theme_filter = active_filters.get("theme")
                 q_filter = active_filters.get("q") or active_filters.get("query") or active_filters.get("search")
 
                 matching_node_ids = set()
@@ -456,18 +534,16 @@ class PropertyGraphStore:
                             "node_id": doc_node_id,
                             "node_type": "document",
                             "name": doc_meta["canonical_filename"],
-                            "properties_json": json.dumps({"sha256": clean_sha, "doc_type": doc_meta["doc_type"], "status": doc_meta["lifecycle_status"]}),
+                            "properties_json": json.dumps({
+                                "sha256": clean_sha,
+                                "doc_type": doc_meta["doc_type"],
+                                "status": doc_meta["lifecycle_status"]
+                            }),
                             "doc_count": 1,
                             "degree": len(doc_linked_nodes),
                             "latest_doc_date": doc_meta["doc_date"] or "2024-01-01",
+                            "raw_sha": clean_sha,
                         }
-                        for linked_nid in doc_linked_nodes:
-                            extra_edges.append({
-                                "source": doc_node_id,
-                                "target": linked_nid,
-                                "relation": "CONTAINS_ENTITY",
-                                "weight": 2.5
-                            })
                     elif doc_linked_nodes:
                         focus_node_id = next(iter(doc_linked_nodes))
 
@@ -533,7 +609,6 @@ class PropertyGraphStore:
                     org_node_ids = {r["node_id"] for r in cur.fetchall()}
                     matching_node_ids.update(org_node_ids)
                     if org_node_ids and not focus_node_id:
-                        # Prioritize canonical node if present
                         if "organization_zuger_kantonalbank" in org_node_ids:
                             focus_node_id = "organization_zuger_kantonalbank"
                         else:
@@ -545,6 +620,15 @@ class PropertyGraphStore:
                     matching_node_ids.update(person_node_ids)
                     if person_node_ids and not focus_node_id:
                         focus_node_id = next(iter(person_node_ids))
+
+                # Theme filter
+                if theme_filter:
+                    clean_th = theme_filter.lower().strip()
+                    cur.execute("SELECT node_id FROM knowledge_nodes WHERE node_type = 'theme' AND (LOWER(node_id) LIKE ? OR LOWER(name) LIKE ?);", (f"%{clean_th}%", f"%{clean_th}%"))
+                    th_matched = {r["node_id"] for r in cur.fetchall()}
+                    matching_node_ids.update(th_matched)
+                    if th_matched and not focus_node_id:
+                        focus_node_id = next(iter(th_matched))
 
                 # If multiple focal entities provided (e.g. loc + org), find bridging documents
                 if loc_node_ids and org_node_ids:
@@ -564,13 +648,10 @@ class PropertyGraphStore:
                         shared_entities = {r["node_id"] for r in cur.fetchall()}
                         matching_node_ids.update(shared_entities)
                 else:
-                    # Single focal filter expansion: expand 1-hop graph neighborhood & shared document entities
                     focal_ids = loc_node_ids or org_node_ids or person_node_ids
                     if focal_ids:
                         p_focal = ",".join("?" for _ in focal_ids)
                         focal_list = list(focal_ids)
-                        
-                        # 1. Direct graph neighbors via edges
                         cur.execute(f"""
                             SELECT DISTINCT CASE WHEN source_id IN ({p_focal}) THEN target_id ELSE source_id END AS neighbor_id
                             FROM knowledge_edges
@@ -579,7 +660,6 @@ class PropertyGraphStore:
                         """, focal_list + focal_list + focal_list + [min(250, limit)])
                         matching_node_ids.update({r["neighbor_id"] for r in cur.fetchall()})
 
-                        # 2. Co-occurring entities via shared document links
                         cur.execute(f"""
                             SELECT l2.node_id, COUNT(DISTINCT l1.sha256_hash) AS shared_docs
                             FROM document_entity_links l1
@@ -616,7 +696,6 @@ class PropertyGraphStore:
                     if q_matched and not focus_node_id:
                         focus_node_id = next(iter(q_matched))
 
-                # Fetch full node metrics for the matched IDs
                 raw_nodes = []
                 if matching_node_ids:
                     p_matched = ",".join("?" for _ in matching_node_ids)
@@ -624,7 +703,8 @@ class PropertyGraphStore:
                         SELECT n.node_id, n.node_type, n.name, n.properties_json,
                                COUNT(DISTINCT l.sha256_hash) AS doc_count,
                                (SELECT COUNT(*) FROM knowledge_edges e WHERE e.source_id = n.node_id OR e.target_id = n.node_id) AS degree,
-                               MAX(dl.doc_date) AS latest_doc_date
+                               MAX(dl.doc_date) AS latest_doc_date,
+                               NULL AS raw_sha
                         FROM knowledge_nodes n
                         LEFT JOIN document_entity_links l ON n.node_id = l.node_id
                         LEFT JOIN document_ledger dl ON l.sha256_hash = dl.sha256_hash
@@ -638,6 +718,77 @@ class PropertyGraphStore:
                 if extra_document_node:
                     raw_nodes.insert(0, extra_document_node)
 
+            elif layout_mode == "thematic":
+                # Thematic Mindmap Mode:
+                # 1. Pull all theme hubs (Suns)
+                # 2. Pull categorized documents linked via CATEGORIZED_AS (Planets)
+                # 3. Pull key entities linked to these categorized documents to show cross-pollination
+                doc_limit = max(100, int(limit * 0.65))
+                ent_limit = max(50, int(limit * 0.30))
+                cur.execute("""
+                    WITH ThematicHubs AS (
+                        SELECT n.node_id, n.node_type, n.name, n.properties_json,
+                               COUNT(DISTINCT l.sha256_hash) AS doc_count,
+                               (SELECT COUNT(*) FROM knowledge_edges e WHERE e.source_id = n.node_id OR e.target_id = n.node_id) AS degree,
+                               MAX(dl.doc_date) AS latest_doc_date,
+                               NULL AS raw_sha,
+                               1 AS priority
+                        FROM knowledge_nodes n
+                        LEFT JOIN document_entity_links l ON n.node_id = l.node_id
+                        LEFT JOIN document_ledger dl ON l.sha256_hash = dl.sha256_hash
+                        WHERE n.node_type = 'theme'
+                        GROUP BY n.node_id, n.node_type, n.name
+                    ),
+                    ThematicDocs AS (
+                        SELECT 'doc_' || SUBSTR(dl.sha256_hash, 1, 16) AS node_id,
+                               'document' AS node_type,
+                               dl.canonical_filename AS name,
+                               json_object(
+                                   'sha256', dl.sha256_hash,
+                                   'doc_type', dl.doc_type,
+                                   'status', dl.lifecycle_status,
+                                   'theme_id', l.node_id
+                               ) AS properties_json,
+                               1 AS doc_count,
+                               (SELECT COUNT(*) FROM document_entity_links del WHERE del.sha256_hash = dl.sha256_hash) AS degree,
+                               dl.doc_date AS latest_doc_date,
+                               dl.sha256_hash AS raw_sha,
+                               2 AS priority
+                        FROM document_ledger dl
+                        JOIN document_entity_links l ON dl.sha256_hash = l.sha256_hash AND l.role = 'CATEGORIZED_AS'
+                        WHERE l.node_id LIKE 'theme_%'
+                        ORDER BY dl.doc_date DESC, degree DESC
+                        LIMIT ?
+                    ),
+                    ConnectedEntities AS (
+                        SELECT n.node_id, n.node_type, n.name, n.properties_json,
+                               COUNT(DISTINCT l.sha256_hash) AS doc_count,
+                               (SELECT COUNT(*) FROM knowledge_edges e WHERE e.source_id = n.node_id OR e.target_id = n.node_id) AS degree,
+                               MAX(dl.doc_date) AS latest_doc_date,
+                               NULL AS raw_sha,
+                               3 AS priority
+                        FROM knowledge_nodes n
+                        JOIN document_entity_links l ON n.node_id = l.node_id
+                        JOIN document_ledger dl ON l.sha256_hash = dl.sha256_hash
+                        WHERE n.node_type != 'theme'
+                          AND l.sha256_hash IN (SELECT raw_sha FROM ThematicDocs)
+                        GROUP BY n.node_id, n.node_type, n.name
+                        ORDER BY (degree * 2 + doc_count * 3) DESC
+                        LIMIT ?
+                    )
+                    SELECT node_id, node_type, name, properties_json, doc_count, degree, latest_doc_date, raw_sha
+                    FROM (
+                        SELECT * FROM ThematicHubs
+                        UNION ALL
+                        SELECT * FROM ThematicDocs
+                        UNION ALL
+                        SELECT * FROM ConnectedEntities
+                    )
+                    ORDER BY priority ASC, (degree * 2 + doc_count * 3) DESC
+                    LIMIT ?;
+                """, (doc_limit, ent_limit, limit))
+                raw_nodes = [dict(r) for r in cur.fetchall()]
+
             else:
                 # Standard Stratified Cluster Sampling
                 cur.execute("""
@@ -645,7 +796,8 @@ class PropertyGraphStore:
                         SELECT n.node_id, n.node_type, n.name, n.properties_json,
                                COUNT(DISTINCT l.sha256_hash) AS doc_count,
                                (SELECT COUNT(*) FROM knowledge_edges e WHERE e.source_id = n.node_id OR e.target_id = n.node_id) AS degree,
-                               MAX(dl.doc_date) AS latest_doc_date
+                               MAX(dl.doc_date) AS latest_doc_date,
+                               NULL AS raw_sha
                         FROM knowledge_nodes n
                         LEFT JOIN document_entity_links l ON n.node_id = l.node_id
                         LEFT JOIN document_ledger dl ON l.sha256_hash = dl.sha256_hash
@@ -659,7 +811,8 @@ class PropertyGraphStore:
                                ) as type_rank
                         FROM EntityBase
                     )
-                    SELECT * FROM RankedEntities
+                    SELECT node_id, node_type, name, properties_json, doc_count, degree, latest_doc_date, raw_sha
+                    FROM RankedEntities
                     WHERE type_rank <= ?
                     ORDER BY (degree * 2 + doc_count * 3 + (CAST(SUBSTR(COALESCE(latest_doc_date, '2005-01-01'), 1, 4) AS INT) - 2005) * 10) DESC
                     LIMIT ?;
@@ -678,20 +831,28 @@ class PropertyGraphStore:
                     "edges": [],
                     "clusters": cluster_definitions,
                     "axes": {
-                        "x": "Domain Specificity & Category Dispersion (PCA-1)",
-                        "y": "Temporal Recency & Lifecycle Maturity (PCA-2)",
-                        "z": "Graph Centrality & Hub Authority (PCA-3)"
+                        "x": "Thematic Gravitational Plane (Cosmic X)" if layout_mode == "thematic" else "Domain Specificity & Category Dispersion (PCA-1)",
+                        "y": "Cross-Pollination & Inter-Domain Tension (Cosmic Y)" if layout_mode == "thematic" else "Temporal Recency & Lifecycle Maturity (PCA-2)",
+                        "z": "Solar Elevation & Centrality Mass (Cosmic Z)" if layout_mode == "thematic" else "Graph Centrality & Hub Authority (PCA-3)"
                     },
-                    "stats": {"total_nodes": 0, "rendered_nodes": 0, "rendered_edges": 0, "quota_per_type": quota_per_type},
+                    "stats": {
+                        "total_nodes": 0,
+                        "rendered_nodes": 0,
+                        "total_edges": 0,
+                        "rendered_edges": 0,
+                        "quota_per_type": quota_per_type,
+                        "layout": layout_mode
+                    },
                     "active_filters": active_filters,
-                    "focus_node_id": focus_node_id
+                    "focus_node_id": focus_node_id,
+                    "layout": layout_mode
                 }
 
             max_degree = max((r.get("degree", 0) for r in raw_nodes), default=1) or 1
             node_id_set = set()
             nodes_data = []
 
-            # Cluster centers in 3D space (PCA centroids)
+            # 3D Cluster anchors for Spatial Layout
             cluster_centers = {
                 0: (-55.0, 15.0, 30.0),    # Organizations
                 1: (50.0, -10.0, 45.0),    # Contracts & Projects
@@ -699,7 +860,20 @@ class PropertyGraphStore:
                 3: (-65.0, -35.0, -40.0),  # Locations
                 4: (60.0, 35.0, -15.0),    # Statutes & Milestones
                 5: (10.0, -45.0, 10.0),    # Financial Pillars & Currencies (Gold cluster)
+                6: (0.0, 0.0, 40.0),       # Thematic Hubs in Spatial View
             }
+
+            # Pre-calculate Sun anchors for Thematic Mindmap Layout
+            theme_nodes_list = [r["node_id"] for r in raw_nodes if r.get("node_type") == "theme"]
+            num_themes = max(1, len(theme_nodes_list))
+            theme_anchors = {}
+            for i, t_nid in enumerate(theme_nodes_list):
+                angle = (2.0 * math.pi * i) / num_themes
+                r_sun = 135.0
+                x_sun = math.cos(angle) * r_sun
+                y_sun = math.sin(angle) * r_sun
+                z_sun = math.sin(i * 1.5) * 35.0
+                theme_anchors[t_nid] = (round(x_sun, 2), round(y_sun, 2), round(z_sun, 2))
 
             for idx, r in enumerate(raw_nodes):
                 nid = r["node_id"]
@@ -724,40 +898,87 @@ class PropertyGraphStore:
                     cid = 4
                 elif ntype in ["currency", "financial_pillar", "monetary_value"]:
                     cid = 5
+                elif ntype == "theme":
+                    cid = 6
                 else:
                     cid = idx % len(cluster_definitions)
 
-                # Compute deterministic pseudo-random offsets from name hash
-                h_val = int(hashlib.md5(nid.encode("utf-8")).hexdigest()[:8], 16)
-                angle = (h_val % 360) * (math.pi / 180.0)
-                radius = 12.0 + (h_val % 45)
-
-                cx, cy, cz = cluster_centers.get(cid, (0.0, 0.0, 0.0))
-
-                # Axis X: Specificity (PCA-1) -> Cluster center + angular displacement
-                x = cx + math.cos(angle) * radius
-
-                # Axis Y: Temporal Recency & Maturity (PCA-2)
-                year = 2024
-                try:
-                    if latest_date and len(latest_date) >= 4:
-                        year = int(latest_date[:4])
-                except Exception:
-                    year = 2024
-                year_clamped = max(2010, min(2027, year))
-                y = cy + ((year_clamped - 2018) * 9.0) + (math.sin(angle * 2.0) * 10.0)
-
-                # Axis Z: Centrality & Authority Degree (PCA-3)
-                deg_ratio = math.log(degree + 1) / math.log(max_degree + 2)
-                z = cz + (deg_ratio * 120.0 - 50.0) + (math.sin(angle) * 8.0)
-
-                # Node display size & scale based on degree
-                if ntype == "document":
-                    size_scale = 3.2
-                else:
-                    size_scale = max(0.8, min(4.5, 0.8 + (math.sqrt(degree + 1) * 0.25)))
-
                 cluster_meta = cluster_definitions[cid]
+                node_color = cluster_meta["color"]
+                node_icon = cluster_meta["icon"]
+
+                # Extract document-level theme association if present
+                theme_id_for_node = None
+                parsed_props = {}
+                if r.get("properties_json"):
+                    try:
+                        parsed_props = json.loads(r["properties_json"])
+                        theme_id_for_node = parsed_props.get("theme_id")
+                    except Exception:
+                        pass
+
+                if ntype == "theme":
+                    theme_id_for_node = nid
+                    if nid in THEME_PALETTE:
+                        node_color = THEME_PALETTE[nid]["color"]
+                        node_icon = THEME_PALETTE[nid]["icon"]
+
+                # Layout coordinate calculation
+                if layout_mode == "thematic":
+                    if ntype == "theme":
+                        x, y, z = theme_anchors.get(nid, (0.0, 0.0, 0.0))
+                        size_scale = max(6.5, min(10.5, 6.5 + (math.sqrt(degree + 1) * 0.4)))
+                    elif ntype == "document":
+                        th_anchor = theme_anchors.get(theme_id_for_node) if theme_id_for_node else None
+                        if not th_anchor and theme_anchors:
+                            th_anchor = next(iter(theme_anchors.values()))
+                        if th_anchor:
+                            th_x, th_y, th_z = th_anchor
+                            h_val = int(hashlib.md5(nid.encode("utf-8")).hexdigest()[:8], 16)
+                            doc_angle = (h_val % 360) * (math.pi / 180.0)
+                            r_orbit = 22.0 + (h_val % 35)
+                            x = th_x + math.cos(doc_angle) * r_orbit
+                            y = th_y + math.sin(doc_angle) * r_orbit
+                            z = th_z + ((h_val % 30) - 15.0)
+                        else:
+                            x, y, z = (0.0, 0.0, 0.0)
+                        size_scale = 3.2
+                    else:
+                        # Connected entity in interstitial cross-pollination space
+                        h_val = int(hashlib.md5(nid.encode("utf-8")).hexdigest()[:8], 16)
+                        angle = (h_val % 360) * (math.pi / 180.0)
+                        r_ent = 45.0 + (h_val % 45)
+                        x = math.cos(angle) * r_ent
+                        y = math.sin(angle) * r_ent
+                        z = ((h_val % 60) - 30.0)
+                        size_scale = max(0.9, min(4.5, 0.9 + (math.sqrt(degree + 1) * 0.25)))
+                else:
+                    # Spatial PCA layout
+                    h_val = int(hashlib.md5(nid.encode("utf-8")).hexdigest()[:8], 16)
+                    angle = (h_val % 360) * (math.pi / 180.0)
+                    radius = 12.0 + (h_val % 45)
+
+                    cx, cy, cz = cluster_centers.get(cid, (0.0, 0.0, 0.0))
+                    x = cx + math.cos(angle) * radius
+
+                    year = 2024
+                    try:
+                        if latest_date and len(latest_date) >= 4:
+                            year = int(latest_date[:4])
+                    except Exception:
+                        year = 2024
+                    year_clamped = max(2010, min(2027, year))
+                    y = cy + ((year_clamped - 2018) * 9.0) + (math.sin(angle * 2.0) * 10.0)
+
+                    deg_ratio = math.log(degree + 1) / math.log(max_degree + 2)
+                    z = cz + (deg_ratio * 120.0 - 50.0) + (math.sin(angle) * 8.0)
+
+                    if ntype == "theme":
+                        size_scale = max(6.0, min(9.5, 6.0 + (math.sqrt(degree + 1) * 0.35)))
+                    elif ntype == "document":
+                        size_scale = 3.2
+                    else:
+                        size_scale = max(0.8, min(4.5, 0.8 + (math.sqrt(degree + 1) * 0.25)))
 
                 nodes_data.append({
                     "id": nid,
@@ -765,8 +986,8 @@ class PropertyGraphStore:
                     "type": ntype,
                     "cluster": cid,
                     "cluster_name": cluster_meta["name"],
-                    "cluster_color": cluster_meta["color"],
-                    "cluster_icon": cluster_meta["icon"],
+                    "cluster_color": node_color,
+                    "cluster_icon": node_icon,
                     "x": round(x, 2),
                     "y": round(y, 2),
                     "z": round(z, 2),
@@ -774,6 +995,8 @@ class PropertyGraphStore:
                     "doc_count": doc_count,
                     "latest_date": latest_date,
                     "size": round(size_scale, 2),
+                    "theme_id": theme_id_for_node,
+                    "is_hub": ntype == "theme",
                 })
 
             # 2. Fetch edges linking the selected top nodes
@@ -796,6 +1019,45 @@ class PropertyGraphStore:
                         "relation": e["relation_type"] or "RELATED_TO",
                         "weight": round(e["weight"] or 1.0, 2)
                     })
+
+                # Bridge document nodes to their linked entities and themes
+                doc_shas_to_nid = {}
+                for r in raw_nodes:
+                    if r.get("node_type") == "document" or r["node_id"].startswith("doc_"):
+                        r_sha = r.get("raw_sha")
+                        if not r_sha and r.get("properties_json"):
+                            try:
+                                p_json = json.loads(r["properties_json"])
+                                r_sha = p_json.get("sha256")
+                            except Exception:
+                                pass
+                        if not r_sha and r["node_id"].startswith("doc_"):
+                            r_sha = r["node_id"][4:]
+                        if r_sha:
+                            doc_shas_to_nid[r_sha] = r["node_id"]
+
+                if doc_shas_to_nid:
+                    p_dshas = ",".join("?" for _ in doc_shas_to_nid)
+                    p_nids = ",".join("?" for _ in node_id_set)
+                    cur.execute(f"""
+                        SELECT sha256_hash, node_id, role, confidence
+                        FROM document_entity_links
+                        WHERE sha256_hash IN ({p_dshas})
+                          AND node_id IN ({p_nids});
+                    """, list(doc_shas_to_nid.keys()) + list(node_id_set))
+                    for l_row in cur.fetchall():
+                        d_sha = l_row["sha256_hash"]
+                        doc_nid = doc_shas_to_nid.get(d_sha)
+                        target_nid = l_row["node_id"]
+                        role = l_row["role"]
+                        rel = "CATEGORIZED_AS" if role == THEME_RELATION else (role.upper() if role else "CONTAINS_ENTITY")
+                        w = 3.0 if role == THEME_RELATION else 1.8
+                        edges_data.append({
+                            "source": doc_nid,
+                            "target": target_nid,
+                            "relation": rel,
+                            "weight": w
+                        })
 
                 # Bridge isolated locations, statutes, and contracts via shared document co-occurrence
                 connected_nodes = {e["source"] for e in edges_data} | {e["target"] for e in edges_data}
@@ -828,6 +1090,16 @@ class PropertyGraphStore:
                             "weight": 1.0
                         })
 
+            # Deduplicate edges by (source, target, relation)
+            deduped_edges = []
+            seen_edges = set()
+            for edge in edges_data:
+                ekey = (edge["source"], edge["target"], edge["relation"])
+                if ekey not in seen_edges:
+                    seen_edges.add(ekey)
+                    deduped_edges.append(edge)
+            edges_data = deduped_edges
+
             # Compute cluster rendered counts and representativity percentages
             cluster_rendered_counts = {c["id"]: 0 for c in cluster_definitions}
             for n in nodes_data:
@@ -855,9 +1127,9 @@ class PropertyGraphStore:
                 "edges": edges_data,
                 "clusters": cluster_definitions,
                 "axes": {
-                    "x": "Domain Specificity & Category Dispersion (PCA-1)",
-                    "y": "Temporal Recency & Lifecycle Maturity (PCA-2)",
-                    "z": "Graph Centrality & Hub Authority (PCA-3)"
+                    "x": "Thematic Gravitational Plane (Cosmic X)" if layout_mode == "thematic" else "Domain Specificity & Category Dispersion (PCA-1)",
+                    "y": "Cross-Pollination & Inter-Domain Tension (Cosmic Y)" if layout_mode == "thematic" else "Temporal Recency & Lifecycle Maturity (PCA-2)",
+                    "z": "Solar Elevation & Centrality Mass (Cosmic Z)" if layout_mode == "thematic" else "Graph Centrality & Hub Authority (PCA-3)"
                 },
                 "stats": {
                     "total_nodes": tot_nodes,
@@ -867,11 +1139,13 @@ class PropertyGraphStore:
                     "quota_per_type": quota_per_type,
                     "overall_representativity_pct": round((len(nodes_data) / tot_nodes * 100.0), 1) if tot_nodes > 0 else 100.0,
                     "db_type_counts": type_counts,
-                    "dimensionality": "High-Dim 1024-D -> 3D PCA Space",
-                    "clustering_algorithm": "Stratified Topological Archetypes (k=6)"
+                    "dimensionality": "3D Thematic Gravitational Space" if layout_mode == "thematic" else "High-Dim 1024-D -> 3D PCA Space",
+                    "clustering_algorithm": "Thematic Gravitational Mindmap (k=7)" if layout_mode == "thematic" else "Stratified Topological Archetypes (k=7)",
+                    "layout": layout_mode
                 },
                 "active_filters": active_filters,
-                "focus_node_id": focus_node_id
+                "focus_node_id": focus_node_id,
+                "layout": layout_mode
             }
 
 

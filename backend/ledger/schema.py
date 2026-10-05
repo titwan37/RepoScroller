@@ -132,7 +132,7 @@ CREATE INDEX IF NOT EXISTS idx_chunks_sha256 ON document_chunks(sha256_hash);
 -- Knowledge Graph Entity Nodes (e.g. Person, Organization, Location, Statute, ContractType)
 CREATE TABLE IF NOT EXISTS knowledge_nodes (
     node_id TEXT PRIMARY KEY,               -- canonical slug e.g. "org_ubs_ag", "person_alice_smith"
-    node_type TEXT NOT NULL,                -- person, organization, location, statute, contract_type, date_event
+    node_type TEXT NOT NULL,                -- person, organization, location, statute, contract_type, date_event, theme (taxonomy root domain hub, e.g. theme_legal_contract)
     name TEXT NOT NULL,                     -- canonical display name
     properties_json TEXT,                   -- JSON object with aliases, descriptions, metadata
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -144,7 +144,7 @@ CREATE TABLE IF NOT EXISTS knowledge_edges (
     edge_id INTEGER PRIMARY KEY AUTOINCREMENT,
     source_id TEXT NOT NULL REFERENCES knowledge_nodes(node_id) ON DELETE CASCADE,
     target_id TEXT NOT NULL REFERENCES knowledge_nodes(node_id) ON DELETE CASCADE,
-    relation_type TEXT NOT NULL,            -- SIGNS, PARTY_TO, GOVERNED_BY, SUPERSEDES, AMENDS, REFERENCES
+    relation_type TEXT NOT NULL,            -- SIGNS, PARTY_TO, GOVERNED_BY, SUPERSEDES, AMENDS, REFERENCES, CATEGORIZED_AS (category node -> theme)
     weight REAL DEFAULT 1.0,
     properties_json TEXT,                   -- JSON metadata (e.g. signed_date, context_snippet)
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -156,7 +156,7 @@ CREATE TABLE IF NOT EXISTS document_entity_links (
     link_id INTEGER PRIMARY KEY AUTOINCREMENT,
     sha256_hash TEXT NOT NULL REFERENCES document_ledger(sha256_hash) ON DELETE CASCADE,
     node_id TEXT NOT NULL REFERENCES knowledge_nodes(node_id) ON DELETE CASCADE,
-    role TEXT NOT NULL,                     -- signatory, counterparty, subject_matter, governing_law, mention
+    role TEXT NOT NULL,                     -- signatory, counterparty, subject_matter, governing_law, mention, CATEGORIZED_AS (document -> theme)
     confidence REAL DEFAULT 1.0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(sha256_hash, node_id, role)
@@ -167,6 +167,7 @@ CREATE INDEX IF NOT EXISTS idx_kg_edges_source ON knowledge_edges(source_id);
 CREATE INDEX IF NOT EXISTS idx_kg_edges_target ON knowledge_edges(target_id);
 CREATE INDEX IF NOT EXISTS idx_doc_entity_sha ON document_entity_links(sha256_hash);
 CREATE INDEX IF NOT EXISTS idx_doc_entity_node ON document_entity_links(node_id);
+CREATE INDEX IF NOT EXISTS idx_doc_entity_role ON document_entity_links(role, node_id);
 
 -- Human-in-the-loop decisions for person-to-document author candidates.
 -- Candidate discovery is provisional; only approved decisions add an 'author' document link.

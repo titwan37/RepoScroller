@@ -1,10 +1,10 @@
 """Unit tests for PropertyGraphStore and neighborhood expansion."""
 
 import pytest
-from reposcroller.ledger.db import init_db
-from reposcroller.ledger.repository import DocumentRepository
-from reposcroller.ledger.graph_store import PropertyGraphStore
-from reposcroller.ai.graph_schemas import EntityNode, EntityEdge, DocumentEntityLink
+from backend.ledger.db import init_db
+from backend.ledger.repository import DocumentRepository
+from backend.ledger.graph_store import PropertyGraphStore
+from backend.ai.graph_schemas import EntityNode, EntityEdge, DocumentEntityLink
 
 
 def test_property_graph_store_operations(tmp_path):

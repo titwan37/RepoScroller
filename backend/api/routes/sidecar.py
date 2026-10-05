@@ -144,6 +144,7 @@ def get_grouped_entities(limit_per_type: int = Query(default=200, ge=1, le=1000)
 @router.get("/3d-cluster")
 def get_3d_knowledge_universe(
     limit: int = Query(default=1000, ge=10, le=5000),
+    layout: Optional[str] = Query(default="spatial", description="Graph layout topology: 'spatial' or 'thematic'"),
     location: Optional[str] = Query(default=None, description="Filter nodes matching or linked to location"),
     org: Optional[str] = Query(default=None, description="Filter nodes matching or linked to organization"),
     organization: Optional[str] = Query(default=None, description="Alias for org filter"),
@@ -151,11 +152,12 @@ def get_3d_knowledge_universe(
     author: Optional[str] = Query(default=None, description="Alias for person filter"),
     node_type: Optional[str] = Query(default=None, description="Filter by entity node_type"),
     type: Optional[str] = Query(default=None, description="Alias for node_type filter"),
-    cluster: Optional[int] = Query(default=None, description="Filter by cluster ID (0-5)"),
+    cluster: Optional[int] = Query(default=None, description="Filter by cluster ID (0-6)"),
     level: Optional[str] = Query(default=None, description="Geographic hierarchy rollup level: 'canton' or 'municipality'"),
     doc_sha: Optional[str] = Query(default=None, description="Filter by document SHA-256 hash"),
     sha256: Optional[str] = Query(default=None, description="Alias for doc_sha"),
     document: Optional[str] = Query(default=None, description="Alias for doc_sha"),
+    theme: Optional[str] = Query(default=None, description="Filter by taxonomy theme ID or slug"),
     q: Optional[str] = Query(default=None, description="General search query filter"),
     query: Optional[str] = Query(default=None, description="Alias for search query"),
     search: Optional[str] = Query(default=None, description="Alias for search query"),
@@ -176,10 +178,16 @@ def get_3d_knowledge_universe(
         filters["cluster"] = cluster
     if doc_sha or sha256 or document:
         filters["doc_sha"] = (doc_sha or sha256 or document).strip()
+    if theme:
+        filters["theme"] = theme.strip()
     if q or query or search:
         filters["q"] = (q or query or search).strip()
 
-    data = _graph_store.get_3d_knowledge_universe(limit=limit, filters=filters if filters else None)
+    data = _graph_store.get_3d_knowledge_universe(
+        limit=limit,
+        filters=filters if filters else None,
+        layout=layout or "spatial"
+    )
     return {
         "status": "success",
         **data

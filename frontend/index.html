@@ -354,7 +354,6 @@
             <button class="stage-action-btn" onclick="scrollToLineageExplorer()">🔍 Inspect Lineage</button>
           </div>
         </div>
-
       </div>
     </section>
 
@@ -1425,6 +1424,19 @@
     <!-- HUD Control Toolbar -->
     <div class="universe-toolbar">
       <div class="universe-toolbar-left">
+        <!-- View Topology Mode: Spatial PCA vs Thematic Mindmap -->
+        <div class="universe-view-segmented" role="group" aria-label="3D View Topology">
+          <button id="btn-view-spatial" class="hud-glsl-btn active" onclick="set3DUniverseLayout('spatial')"
+            title="Spatial PCA View: Multivariate Latent Semantic Variance">
+            <span>🌐</span> Spatial View
+          </button>
+          <button id="btn-view-thematic" class="hud-glsl-btn" onclick="set3DUniverseLayout('thematic')"
+            title="Thematic Mindmap: Taxonomy Gravitational Suns & Planetary Orbits">
+            <span>🪐</span> Thematic Mindmap
+          </button>
+        </div>
+        <div class="toolbar-sep"></div>
+
         <button id="btn-glsl-spin" class="hud-glsl-btn active" onclick="toggle3DAutoSpin()"
           title="Toggle orbital auto-spin">
           <span id="glsl-spin-icon">🔄</span> <span id="glsl-spin-text">Auto-Spin: ON</span>
@@ -1614,7 +1626,7 @@
               style="font-size: 11px; font-weight: 600; text-transform: uppercase; color: #94a3b8; margin-bottom: 6px;">
               Neighborhood Connections (<span id="insp-neighborhood-count">0</span>)</div>
             <div id="insp-neighborhood-list"
-              style="max-height: 140px; overflow-y: auto; font-size: 12px; display: flex; flex-direction: column; gap: 4px;">
+              style="max-height: calc(100vh - 400px); overflow-y: auto; font-size: 12px; display: flex; flex-direction: column; gap: 4px;">
             </div>
           </div>
         </div>
@@ -1823,17 +1835,14 @@
       <div class="diag-header-actions">
         <button class="btn-diag-action" onclick="triggerTestDiagnosticIssue('WARNING')"
           title="Emit synthetic test warning">⚠️ Warn</button>
-        <button class="btn-diag-action" onclick="triggerTestDiagnosticIssue('ERROR')"
-          title="Emit synthetic test error">❌
+        <button class="btn-diag-action" onclick="triggerTestDiagnosticIssue('ERROR')" title="Emit synthetic test error">❌
           Err</button>
-        <button class="btn-diag-action" onclick="copyDiagnosticLogs()" title="Copy all logs to clipboard">📋
-          Copy</button>
+        <button class="btn-diag-action" onclick="copyDiagnosticLogs()" title="Copy all logs to clipboard">📋 Copy</button>
         <button class="btn-diag-action" onclick="clearDiagnosticLogs()" title="Clear console and backend buffer">🗑️
           Clear</button>
         <button class="btn-diag-action" id="btn-diag-maximize" onclick="toggleDiagnosticMaximize()"
           title="Maximize / Restore">🗖</button>
-        <button class="btn-diag-action close" onclick="toggleDiagnosticConsole(false)"
-          title="Minimize console">✕</button>
+        <button class="btn-diag-action close" onclick="toggleDiagnosticConsole(false)" title="Minimize console">✕</button>
       </div>
     </div>
 

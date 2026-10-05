@@ -187,7 +187,13 @@ window.fetch = async function (...args) {
         } catch (_) {
           try {
             const clone = response.clone();
-            errSnippet = await clone.text();
+            const text = await clone.text();
+            if (text.includes("<title>") && text.includes("</title>")) {
+              const match = text.match(/<title>(.*?)<\/title>/i);
+              errSnippet = match ? `[Gateway Page: ${match[1]}]` : text.slice(0, 150);
+            } else {
+              errSnippet = text.slice(0, 500);
+            }
           } catch (_) { }
         }
 
@@ -3537,6 +3543,8 @@ const glsl3D = {
   showLabels: true,
   colorMode: "cluster",
   activeClusterFilter: "all",
+  layoutMode: "spatial", // "spatial" vs "thematic"
+  thematicHubsGroup: null, // Three.js Group for solar halos and orbital visual rings
   selectedNode: null,
   hoveredNodeIndex: -1,
   raycaster: null,
@@ -3544,6 +3552,7 @@ const glsl3D = {
   animId: null,
   isUserInteracting: false,
   cameraTransitionAnim: null,
+  layoutTransitionAnim: null,
 };
 
 const UNIVERSE_VERTEX_SHADER = `
@@ -3889,7 +3898,7 @@ function onWindowResize3D() {
   glsl3D.renderer.setSize(width, height);
 }
 
-async function load3DUniverseData(forceReload = false, filterParams = null) {
+async function load3DUniverseData(forceReload = false, filterParams = null, transitionFromOldPositions = null) {
   // If filterParams is null, check URL search params if any
   let effectiveFilters = filterParams;
   if (!effectiveFilters && typeof window !== "undefined" && window.location.search) {
@@ -3910,7 +3919,7 @@ async function load3DUniverseData(forceReload = false, filterParams = null) {
   }
 
   try {
-    const params = new URLSearchParams({ limit: "1000" });
+    const params = new URLSearchParams({ limit: "1000", layout: glsl3D.layoutMode || "spatial" });
     if (effectiveFilters) {
       if (typeof effectiveFilters === "string") {
         const parsed = new URLSearchParams(effectiveFilters.startsWith("?") ? effectiveFilters.slice(1) : effectiveFilters);
@@ -3926,6 +3935,10 @@ async function load3DUniverseData(forceReload = false, filterParams = null) {
       }
     }
 
+    if (params.get("layout")) {
+      glsl3D.layoutMode = params.get("layout");
+    }
+
     const res = await fetch(`/api/v1/sidecar/graph-3d?${params.toString()}`);
     if (!res.ok) throw new Error("HTTP " + res.status);
     const data = await res.json();
@@ -3938,6 +3951,11 @@ async function load3DUniverseData(forceReload = false, filterParams = null) {
     glsl3D.activeFilters = data.active_filters || {};
     glsl3D.focusNodeId = data.focus_node_id || null;
     glsl3D.totalNodesInDB = (data.stats && data.stats.total_nodes) || 18607;
+
+    // Apply client-side force-directed / grouped radial physics in Thematic Mindmap mode
+    if (glsl3D.layoutMode === "thematic") {
+      applyThematicMindmapPhysics(glsl3D.nodes, glsl3D.edges);
+    }
 
     // Render Filter HUD Banner in Universe View
     renderUniverseFilterBanner(glsl3D.activeFilters);
@@ -4020,7 +4038,12 @@ async function load3DUniverseData(forceReload = false, filterParams = null) {
     }
 
     // Build Three.js Point Cloud & Edges
-    build3DSceneObjects();
+    build3DSceneObjects(transitionFromOldPositions);
+
+    // If animating transition from old positions, kick off easeInOutCubic interpolator
+    if (transitionFromOldPositions && transitionFromOldPositions.size > 0) {
+      animateLayoutTransition(1000);
+    }
 
     // If a focus node was requested / identified, focus on it
     if (glsl3D.focusNodeId) {
@@ -4106,13 +4129,17 @@ function handle3DFilterQuery(queryStr) {
 }
 window.handle3DFilterQuery = handle3DFilterQuery;
 
-function build3DSceneObjects() {
+function build3DSceneObjects(transitionFromOldPositions = null) {
   if (!glsl3D.scene || !glsl3D.worldGroup) return;
 
   // Remove old objects
   if (glsl3D.pointsMesh) glsl3D.worldGroup.remove(glsl3D.pointsMesh);
   if (glsl3D.edgesMesh) glsl3D.worldGroup.remove(glsl3D.edgesMesh);
   if (glsl3D.labelsGroup) glsl3D.worldGroup.remove(glsl3D.labelsGroup);
+  if (glsl3D.thematicHubsGroup) {
+    glsl3D.worldGroup.remove(glsl3D.thematicHubsGroup);
+    glsl3D.thematicHubsGroup = null;
+  }
   if (glsl3D.highlightedEdgesMesh) {
     glsl3D.worldGroup.remove(glsl3D.highlightedEdgesMesh);
     glsl3D.highlightedEdgesMesh = null;
@@ -4139,9 +4166,19 @@ function build3DSceneObjects() {
   glsl3D.nodes.forEach((n, i) => {
     nodeIndexMap.set(n.id, i);
 
-    positions[i * 3 + 0] = n.x;
-    positions[i * 3 + 1] = n.y;
-    positions[i * 3 + 2] = n.z;
+    if (transitionFromOldPositions && transitionFromOldPositions.has(n.id)) {
+      const old = transitionFromOldPositions.get(n.id);
+      n._startPos = { x: old.x, y: old.y, z: old.z };
+    } else if (transitionFromOldPositions) {
+      n._startPos = { x: n.x * 0.25, y: n.y * 0.25, z: n.z * 0.25 };
+    } else {
+      n._startPos = { x: n.x, y: n.y, z: n.z };
+    }
+    n._targetPos = { x: n.x, y: n.y, z: n.z };
+
+    positions[i * 3 + 0] = n._startPos.x;
+    positions[i * 3 + 1] = n._startPos.y;
+    positions[i * 3 + 2] = n._startPos.z;
 
     sizes[i] = n.size || 1.0;
     degrees[i] = n.degree || 0;
@@ -4186,12 +4223,18 @@ function build3DSceneObjects() {
       const sNode = glsl3D.nodes[sIdx];
       const tNode = glsl3D.nodes[tIdx];
 
-      edgePositions.push(sNode.x, sNode.y, sNode.z);
-      edgePositions.push(tNode.x, tNode.y, tNode.z);
+      edgePositions.push(sNode._startPos.x, sNode._startPos.y, sNode._startPos.z);
+      edgePositions.push(tNode._startPos.x, tNode._startPos.y, tNode._startPos.z);
 
-      const sColor = new THREE.Color(sNode.cluster_color || "#38bdf8");
-      edgeColors.push(sColor.r, sColor.g, sColor.b);
-      edgeColors.push(sColor.r, sColor.g, sColor.b);
+      let edgeColor = new THREE.Color(sNode.cluster_color || "#38bdf8");
+      if (e.relation === "CATEGORIZED_AS") {
+        const themeNode = sNode.type === "theme" ? sNode : (tNode.type === "theme" ? tNode : null);
+        if (themeNode) {
+          edgeColor = new THREE.Color(themeNode.cluster_color || "#ec4899");
+        }
+      }
+      edgeColors.push(edgeColor.r, edgeColor.g, edgeColor.b);
+      edgeColors.push(edgeColor.r, edgeColor.g, edgeColor.b);
     }
   });
 
@@ -4213,19 +4256,87 @@ function build3DSceneObjects() {
     glsl3D.worldGroup.add(glsl3D.edgesMesh);
   }
 
-  // 3. Billboard Text Labels for High-Degree Nodes (Top 25)
+  // 3. Billboard Text Labels: All theme hubs + Top high-degree entities
   glsl3D.labelsGroup = new THREE.Group();
-  const topNodes = [...glsl3D.nodes].sort((a, b) => b.degree - a.degree).slice(0, 25);
+  const themeNodes = glsl3D.nodes.filter(n => n.type === "theme");
+  const otherTop = glsl3D.nodes.filter(n => n.type !== "theme").sort((a, b) => b.degree - a.degree).slice(0, 20);
+  const labeledNodes = [...themeNodes, ...otherTop];
 
-  topNodes.forEach(n => {
-    const sprite = create3DTextSprite(`${n.name}`, n.cluster_color, 20);
-    sprite.position.set(n.x, n.y + 4.5, n.z);
-    sprite.scale.set(22, 5.5, 1);
+  labeledNodes.forEach(n => {
+    const isTheme = n.type === "theme";
+    const prefix = isTheme ? "🪐 " : (n.type === "document" ? "📄 " : "");
+    const sprite = create3DTextSprite(`${prefix}${n.name}`, n.cluster_color, isTheme ? 22 : 18);
+    const startX = n._startPos ? n._startPos.x : n.x;
+    const startY = n._startPos ? n._startPos.y : n.y;
+    const startZ = n._startPos ? n._startPos.z : n.z;
+    sprite.position.set(startX, startY + (isTheme ? 6.5 : 4.5), startZ);
+    sprite.scale.set(isTheme ? 28 : 22, isTheme ? 6.5 : 5.5, 1);
+    sprite._boundNode = n;
     glsl3D.labelsGroup.add(sprite);
   });
 
   glsl3D.labelsGroup.visible = glsl3D.showLabels;
   glsl3D.worldGroup.add(glsl3D.labelsGroup);
+
+  // 4. Thematic Sun Halos & Orbital Visual Rings (when in Thematic mode)
+  if (glsl3D.layoutMode === "thematic") {
+    glsl3D.thematicHubsGroup = new THREE.Group();
+    const hubs = glsl3D.nodes.filter(n => n.type === "theme");
+
+    hubs.forEach(th => {
+      // Celestial Orbit Guidance Ring
+      const orbitR = 38;
+      const ringPts = [];
+      for (let s = 0; s <= 64; s++) {
+        const rad = (s / 64) * Math.PI * 2;
+        ringPts.push(new THREE.Vector3(Math.cos(rad) * orbitR, Math.sin(rad) * orbitR, 0));
+      }
+      const ringGeo = new THREE.BufferGeometry().setFromPoints(ringPts);
+      const ringMat = new THREE.LineBasicMaterial({
+        color: new THREE.Color(th.cluster_color || "#ec4899"),
+        transparent: true,
+        opacity: 0.16,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      });
+      const ring = new THREE.LineLoop(ringGeo, ringMat);
+      const startX = th._startPos ? th._startPos.x : th.x;
+      const startY = th._startPos ? th._startPos.y : th.y;
+      const startZ = th._startPos ? th._startPos.z : th.z;
+      ring.position.set(startX, startY, startZ);
+      ring._boundNode = th;
+      glsl3D.thematicHubsGroup.add(ring);
+
+      // Radiant Solar Halo Sprite
+      const haloCanvas = document.createElement("canvas");
+      haloCanvas.width = 128;
+      haloCanvas.height = 128;
+      const hCtx = haloCanvas.getContext("2d");
+      const grad = hCtx.createRadialGradient(64, 64, 0, 64, 64, 64);
+      grad.addColorStop(0, th.cluster_color || "#ec4899");
+      grad.addColorStop(0.35, th.cluster_color || "#ec4899");
+      grad.addColorStop(0.7, "rgba(0,0,0,0.12)");
+      grad.addColorStop(1, "rgba(0,0,0,0)");
+      hCtx.fillStyle = grad;
+      hCtx.fillRect(0, 0, 128, 128);
+
+      const haloTex = new THREE.CanvasTexture(haloCanvas);
+      const haloMat = new THREE.SpriteMaterial({
+        map: haloTex,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        opacity: 0.55,
+      });
+      const haloSprite = new THREE.Sprite(haloMat);
+      haloSprite.position.set(startX, startY, startZ);
+      haloSprite.scale.set(40, 40, 1);
+      haloSprite._boundNode = th;
+      glsl3D.thematicHubsGroup.add(haloSprite);
+    });
+
+    glsl3D.worldGroup.add(glsl3D.thematicHubsGroup);
+  }
 
   // If a node is currently selected, re-emphasize its links and beacon
   if (glsl3D.selectedNode) {
@@ -4246,6 +4357,7 @@ const TYPE_COLORS = {
   contract_type: "#3b82f6", // Royal Blue: Clear legal agreement signifier
   document_category: "#94a3b8", // Slate Gray: Subordinate tech specs & architecture docs
   document: "#10b981", // Emerald: Document node
+  theme: "#ec4899", // Fuchsia / Vibrant Sun Archetype (Life-Style Domains)
 
   // --- Financial & Numerical Entities ---
   currency: "#fbbf24", // Amber Gold: Transactional / monetary amounts
@@ -4404,10 +4516,22 @@ function show3DHoverTooltip(node, hitPoint) {
 
   if (dot) dot.style.background = node.cluster_color || "#38bdf8";
   if (name) name.textContent = node.name;
-  if (type) type.textContent = node.type;
-  if (cluster) cluster.textContent = node.cluster_name || "Cluster " + node.cluster;
-  if (degree) degree.textContent = node.degree;
-  if (docs) docs.textContent = node.doc_count || 1;
+  if (degree) degree.textContent = node.degree || 0;
+
+  if (node.type === "theme") {
+    if (type) type.textContent = "🪐 Thematic Sun (Taxonomy Hub)";
+    if (cluster) cluster.textContent = "Life-Style Domains";
+    if (docs) docs.textContent = `${node.doc_count || node.degree || 0} Categorized Docs`;
+  } else if (node.type === "document") {
+    if (type) type.textContent = "📄 Document Planet";
+    const themeLabel = node.theme_id ? node.theme_id.replace("theme_", "").replace(/_/g, " ") : "Thematic Orbit";
+    if (cluster) cluster.textContent = `Orbiting: ${themeLabel}`;
+    if (docs) docs.textContent = "Document Entity";
+  } else {
+    if (type) type.textContent = node.type;
+    if (cluster) cluster.textContent = node.cluster_name || "Cluster " + node.cluster;
+    if (docs) docs.textContent = node.doc_count || 1;
+  }
 
   tooltip.style.display = "block";
 }
@@ -4573,6 +4697,416 @@ function smoothTransitionTo3DNode(targetNode, duration = 900) {
   glsl3D.cameraTransitionAnim = requestAnimationFrame(step);
 }
 window.smoothTransitionTo3DNode = smoothTransitionTo3DNode;
+
+// =========================================================================
+// THEMATIC MINDMAP PHYSICS & INTERPOLATION ENGINE
+// =========================================================================
+
+function hashStr(str) {
+  let hash = 0;
+  if (!str) return 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) - hash) + str.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash);
+}
+
+/**
+ * Applies force-directed / grouped radial physics for the Thematic Mindmap:
+ * - Theme nodes act as massive gravitational Suns on a perimeter orbit (R ~ 140).
+ * - Categorized documents orbit their respective theme hub(s).
+ * - Documents linked to multiple themes/entities are visually suspended at the centroid.
+ * - Connected entities sit in the interstitial cross-pollination space.
+ * - A 10-iteration force relaxation pass eliminates overlapping collisions.
+ */
+function applyThematicMindmapPhysics(nodes, edges) {
+  if (!nodes || nodes.length === 0) return;
+
+  const themeNodes = nodes.filter(n => n.type === "theme");
+  const docNodes = nodes.filter(n => n.type === "document");
+  const entNodes = nodes.filter(n => n.type !== "theme" && n.type !== "document");
+
+  // 1. Arrange Theme Suns on a major celestial perimeter circle (R ~ 140)
+  const numThemes = Math.max(1, themeNodes.length);
+  const R_SUN = 140;
+  const themeAnchors = new Map();
+
+  themeNodes.forEach((th, idx) => {
+    const angle = (idx / numThemes) * Math.PI * 2;
+    const h = hashStr(th.id);
+    const tiltY = (h % 24) - 12;
+    const x = Math.cos(angle) * R_SUN;
+    const z = Math.sin(angle) * R_SUN;
+    const y = tiltY;
+
+    th.x = x;
+    th.y = y;
+    th.z = z;
+    th.is_hub = true;
+    th.size = Math.max(7.5, Math.min(12.5, 7.5 + Math.sqrt((th.degree || 0) + 1) * 0.4));
+    themeAnchors.set(th.id, { x, y, z });
+  });
+
+  // Map edges for fast lookup
+  const nodeConnections = new Map();
+  edges.forEach(e => {
+    if (!nodeConnections.has(e.source)) nodeConnections.set(e.source, []);
+    if (!nodeConnections.has(e.target)) nodeConnections.set(e.target, []);
+    nodeConnections.get(e.source).push(e);
+    nodeConnections.get(e.target).push(e);
+  });
+
+  // 2. Position Document Planets (with cross-pollination suspension)
+  docNodes.forEach(doc => {
+    const conns = nodeConnections.get(doc.id) || [];
+    const linkedThemes = new Set();
+    conns.forEach(e => {
+      if (e.relation === "CATEGORIZED_AS") {
+        if (e.target.startsWith("theme_")) linkedThemes.add(e.target);
+        if (e.source.startsWith("theme_")) linkedThemes.add(e.source);
+      }
+    });
+    if (doc.theme_id && themeAnchors.has(doc.theme_id)) {
+      linkedThemes.add(doc.theme_id);
+    }
+
+    const h = hashStr(doc.id);
+    const themeList = Array.from(linkedThemes);
+
+    if (themeList.length === 1 && themeAnchors.has(themeList[0])) {
+      // Single-theme Keplerian orbit: orbiting planet around its gravitational Sun
+      const sun = themeAnchors.get(themeList[0]);
+      const orbitRadius = 24.0 + (h % 34); // r in [24, 58]
+      const orbitAngle = ((h % 360) / 180.0) * Math.PI;
+      const zOffset = (h % 20) - 10;
+
+      doc.x = sun.x + Math.cos(orbitAngle) * orbitRadius;
+      doc.y = sun.y + Math.sin(orbitAngle) * orbitRadius;
+      doc.z = sun.z + zOffset;
+      doc.size = 3.2;
+    } else if (themeList.length > 1) {
+      // Cross-pollinated document linked to multiple themes:
+      // Suspended between its respective hubs (centroid of linked hubs with slight deflection)
+      let sumX = 0, sumY = 0, sumZ = 0;
+      themeList.forEach(tid => {
+        const p = themeAnchors.get(tid) || { x: 0, y: 0, z: 0 };
+        sumX += p.x; sumY += p.y; sumZ += p.z;
+      });
+      const cx = sumX / themeList.length;
+      const cy = sumY / themeList.length;
+      const cz = sumZ / themeList.length;
+      const jitter = (h % 16) - 8;
+
+      doc.x = cx * 0.9 + jitter;
+      doc.y = cy * 0.9 + jitter;
+      doc.z = cz * 0.9 + ((h % 24) - 12);
+      doc.size = 3.6; // slightly prominent for cross-pollinated hubs
+    } else {
+      // Fallback: orbit first theme hub or celestial center
+      const firstSun = themeAnchors.values().next().value || { x: 0, y: 0, z: 0 };
+      const orbitRadius = 28.0 + (h % 28);
+      const orbitAngle = ((h % 360) / 180.0) * Math.PI;
+      doc.x = firstSun.x + Math.cos(orbitAngle) * orbitRadius;
+      doc.y = firstSun.y + Math.sin(orbitAngle) * orbitRadius;
+      doc.z = firstSun.z + ((h % 20) - 10);
+      doc.size = 3.0;
+    }
+  });
+
+  // 3. Position Connected Entities in Interstitial Cross-Pollination Space
+  const docPosMap = new Map(docNodes.map(d => [d.id, { x: d.x, y: d.y, z: d.z }]));
+  entNodes.forEach(ent => {
+    const conns = nodeConnections.get(ent.id) || [];
+    const linkedDocs = [];
+    conns.forEach(e => {
+      const neighbor = e.source === ent.id ? e.target : e.source;
+      if (docPosMap.has(neighbor)) {
+        linkedDocs.push(docPosMap.get(neighbor));
+      }
+    });
+
+    const h = hashStr(ent.id);
+    if (linkedDocs.length > 0) {
+      let sumX = 0, sumY = 0, sumZ = 0;
+      linkedDocs.forEach(dp => {
+        sumX += dp.x; sumY += dp.y; sumZ += dp.z;
+      });
+      const cx = sumX / linkedDocs.length;
+      const cy = sumY / linkedDocs.length;
+      const cz = sumZ / linkedDocs.length;
+      ent.x = cx * 0.82 + (h % 14 - 7);
+      ent.y = cy * 0.82 + (h % 14 - 7);
+      ent.z = cz * 0.82 + (h % 20 - 10);
+    } else {
+      // Inner ambient constellation
+      const angle = ((h % 360) / 180.0) * Math.PI;
+      const r = 35.0 + (h % 40);
+      ent.x = Math.cos(angle) * r;
+      ent.y = Math.sin(angle) * r;
+      ent.z = (h % 40) - 20;
+    }
+    ent.size = Math.max(1.2, Math.min(4.5, 1.2 + Math.sqrt((ent.degree || 0) + 1) * 0.28));
+  });
+
+  // 4. Force-Directed Relaxation Pass (10 iterations)
+  const allNodes = nodes;
+  const numNodes = allNodes.length;
+  for (let iter = 0; iter < 10; iter++) {
+    // Repulsion between non-theme nodes
+    for (let i = 0; i < numNodes; i += 2) {
+      const n1 = allNodes[i];
+      if (n1.type === "theme") continue;
+      for (let j = i + 1; j < numNodes; j += 3) {
+        const n2 = allNodes[j];
+        if (n2.type === "theme") continue;
+        const dx = n1.x - n2.x;
+        const dy = n1.y - n2.y;
+        const dz = n1.z - n2.z;
+        const distSq = dx * dx + dy * dy + dz * dz;
+        if (distSq > 0.1 && distSq < 360) {
+          const dist = Math.sqrt(distSq);
+          const force = (18.0 - dist) / (dist * 16.0);
+          n1.x += dx * force;
+          n1.y += dy * force;
+          n1.z += dz * force;
+          n2.x -= dx * force;
+          n2.y -= dy * force;
+          n2.z -= dz * force;
+        }
+      }
+    }
+    // Spring attraction along edges
+    edges.forEach(e => {
+      const s = allNodes.find(n => n.id === e.source);
+      const t = allNodes.find(n => n.id === e.target);
+      if (s && t) {
+        const dx = t.x - s.x;
+        const dy = t.y - s.y;
+        const dz = t.z - s.z;
+        const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        const desiredDist = e.relation === "CATEGORIZED_AS" ? 36.0 : 45.0;
+        if (dist > desiredDist) {
+          const delta = (dist - desiredDist) * 0.035;
+          const fx = (dx / dist) * delta;
+          const fy = (dy / dist) * delta;
+          const fz = (dz / dist) * delta;
+          if (s.type !== "theme") { s.x += fx; s.y += fy; s.z += fz; }
+          if (t.type !== "theme") { t.x -= fx; t.y -= fy; t.z -= fz; }
+        }
+      }
+    });
+  }
+}
+window.applyThematicMindmapPhysics = applyThematicMindmapPhysics;
+
+/**
+ * Smoothly interpolates node, edge, and label coordinates between layouts using easeInOutCubic.
+ */
+function animateLayoutTransition(duration = 1000) {
+  if (!glsl3D.pointsMesh || !glsl3D.pointsMesh.geometry) return;
+
+  if (glsl3D.layoutTransitionAnim) {
+    cancelAnimationFrame(glsl3D.layoutTransitionAnim);
+    glsl3D.layoutTransitionAnim = null;
+  }
+
+  const startTime = performance.now();
+  const nodeCount = glsl3D.nodes.length;
+  const nodeIndexMap = new Map();
+  glsl3D.nodes.forEach((n, idx) => nodeIndexMap.set(n.id, idx));
+
+  function step(now) {
+    const elapsed = now - startTime;
+    const progress = Math.min(1.0, elapsed / duration);
+    // Smooth easeInOutCubic: soft launch and cushioned deceleration without abrupt snapping
+    const ease = progress < 0.5
+      ? 4 * progress * progress * progress
+      : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+
+    const posAttr = glsl3D.pointsMesh.geometry.attributes.position;
+    for (let i = 0; i < nodeCount; i++) {
+      const n = glsl3D.nodes[i];
+      if (n._startPos && n._targetPos) {
+        posAttr.array[i * 3 + 0] = n._startPos.x + (n._targetPos.x - n._startPos.x) * ease;
+        posAttr.array[i * 3 + 1] = n._startPos.y + (n._targetPos.y - n._startPos.y) * ease;
+        posAttr.array[i * 3 + 2] = n._startPos.z + (n._targetPos.z - n._startPos.z) * ease;
+      }
+    }
+    posAttr.needsUpdate = true;
+
+    // Interpolate edge lines
+    if (glsl3D.edgesMesh && glsl3D.edgesMesh.geometry) {
+      const edgePosAttr = glsl3D.edgesMesh.geometry.attributes.position;
+      let eIdx = 0;
+      glsl3D.edges.forEach(e => {
+        const sIdx = nodeIndexMap.get(e.source);
+        const tIdx = nodeIndexMap.get(e.target);
+        if (sIdx !== undefined && tIdx !== undefined) {
+          edgePosAttr.array[eIdx * 6 + 0] = posAttr.array[sIdx * 3 + 0];
+          edgePosAttr.array[eIdx * 6 + 1] = posAttr.array[sIdx * 3 + 1];
+          edgePosAttr.array[eIdx * 6 + 2] = posAttr.array[sIdx * 3 + 2];
+          edgePosAttr.array[eIdx * 6 + 3] = posAttr.array[tIdx * 3 + 0];
+          edgePosAttr.array[eIdx * 6 + 4] = posAttr.array[tIdx * 3 + 1];
+          edgePosAttr.array[eIdx * 6 + 5] = posAttr.array[tIdx * 3 + 2];
+          eIdx++;
+        }
+      });
+      edgePosAttr.needsUpdate = true;
+    }
+
+    // Interpolate billboard labels
+    if (glsl3D.labelsGroup) {
+      glsl3D.labelsGroup.children.forEach(sprite => {
+        if (sprite._boundNode) {
+          const idx = nodeIndexMap.get(sprite._boundNode.id);
+          if (idx !== undefined) {
+            const offsetY = sprite._boundNode.type === "theme" ? 6.5 : 4.5;
+            sprite.position.set(posAttr.array[idx * 3 + 0], posAttr.array[idx * 3 + 1] + offsetY, posAttr.array[idx * 3 + 2]);
+          }
+        }
+      });
+    }
+
+    // Interpolate thematic halos and orbital rings
+    if (glsl3D.thematicHubsGroup) {
+      glsl3D.thematicHubsGroup.children.forEach(obj => {
+        if (obj._boundNode) {
+          const idx = nodeIndexMap.get(obj._boundNode.id);
+          if (idx !== undefined) {
+            obj.position.set(posAttr.array[idx * 3 + 0], posAttr.array[idx * 3 + 1], posAttr.array[idx * 3 + 2]);
+          }
+        }
+      });
+    }
+
+    if (progress < 1.0) {
+      glsl3D.layoutTransitionAnim = requestAnimationFrame(step);
+    } else {
+      glsl3D.layoutTransitionAnim = null;
+      for (let i = 0; i < nodeCount; i++) {
+        const n = glsl3D.nodes[i];
+        if (n._targetPos) {
+          n.x = n._targetPos.x;
+          n.y = n._targetPos.y;
+          n.z = n._targetPos.z;
+        }
+      }
+    }
+  }
+
+  glsl3D.layoutTransitionAnim = requestAnimationFrame(step);
+}
+window.animateLayoutTransition = animateLayoutTransition;
+
+/**
+ * Updates the Axes of Importance Legend HUD descriptions based on active layout mode.
+ */
+function update3DAxesLegendForMode(mode) {
+  const titleEl = document.querySelector("#axes-legend-overlay .legend-title");
+  const axesGroupEl = document.querySelector("#axes-legend-overlay .axes-group");
+  if (!axesGroupEl) return;
+
+  if (mode === "thematic") {
+    if (titleEl) titleEl.textContent = "Thematic Mindmap Topology";
+    axesGroupEl.innerHTML = `
+      <div class="axis-item">
+        <span class="axis-badge" style="background: rgba(236, 72, 153, 0.2); color: #ec4899; border: 1px solid rgba(236, 72, 153, 0.4);">Hubs</span>
+        <div class="axis-info">
+          <span class="axis-name">Gravitational Taxonomy Suns (Perimeter R ≈ 140)</span>
+          <span class="axis-pca">Solar Mass ∝ Document Population</span>
+        </div>
+      </div>
+      <div class="axis-item">
+        <span class="axis-badge" style="background: rgba(16, 185, 129, 0.2); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.4);">Planets</span>
+        <div class="axis-info">
+          <span class="axis-name">Categorized Documents in Orbital Flight</span>
+          <span class="axis-pca">Radius r ∈ [24, 58] around Primary Theme Hub</span>
+        </div>
+      </div>
+      <div class="axis-item">
+        <span class="axis-badge" style="background: rgba(56, 189, 248, 0.2); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4);">Bridges</span>
+        <div class="axis-info">
+          <span class="axis-name">Cross-Pollination Corridors & Shared Entities</span>
+          <span class="axis-pca">Suspended Midpoints between Multiple Hubs</span>
+        </div>
+      </div>
+    `;
+    if (glsl3D.axesGroup) glsl3D.axesGroup.visible = false;
+  } else {
+    if (titleEl) titleEl.textContent = "Axes of Importance & Clusters";
+    axesGroupEl.innerHTML = `
+      <div class="axis-item">
+        <span class="axis-badge axis-x">X-Axis</span>
+        <div class="axis-info">
+          <span class="axis-name">Domain Specificity &amp; Category Divergence</span>
+          <span class="axis-pca">PCA-1 • Latent Semantic Variance</span>
+        </div>
+      </div>
+      <div class="axis-item">
+        <span class="axis-badge axis-y">Y-Axis</span>
+        <div class="axis-info">
+          <span class="axis-name">Temporal Recency &amp; Lifecycle Maturity</span>
+          <span class="axis-pca">PCA-2 • Historical Lineage &amp; Validation</span>
+        </div>
+      </div>
+      <div class="axis-item">
+        <span class="axis-badge axis-z">Z-Axis</span>
+        <div class="axis-info">
+          <span class="axis-name">Graph Centrality &amp; Hub Authority Degree</span>
+          <span class="axis-pca">PCA-3 • Network Eigenvector Density</span>
+        </div>
+      </div>
+    `;
+    if (glsl3D.axesGroup) glsl3D.axesGroup.visible = true;
+  }
+}
+window.update3DAxesLegendForMode = update3DAxesLegendForMode;
+
+/**
+ * Toggles or sets the 3D Universe layout mode ("spatial" vs "thematic").
+ */
+async function set3DUniverseLayout(mode) {
+  if (mode === glsl3D.layoutMode) return;
+  glsl3D.layoutMode = mode;
+
+  // 1. Update Segmented Button UI
+  const btnSpatial = document.getElementById("btn-view-spatial");
+  const btnThematic = document.getElementById("btn-view-thematic");
+  if (btnSpatial && btnThematic) {
+    if (mode === "thematic") {
+      btnSpatial.classList.remove("active");
+      btnThematic.classList.add("active");
+    } else {
+      btnSpatial.classList.add("active");
+      btnThematic.classList.remove("active");
+    }
+  }
+
+  // 2. Update HUD Legend text
+  update3DAxesLegendForMode(mode);
+
+  // 3. Smooth Camera Refocus
+  if (glsl3D.controls && glsl3D.controls.target) {
+    glsl3D.controls.target.set(0, 0, mode === "thematic" ? 0 : -100);
+  }
+
+  // 4. Capture current node positions for animated ease transition
+  const oldPositions = new Map();
+  glsl3D.nodes.forEach(n => {
+    oldPositions.set(n.id, { x: n.x, y: n.y, z: n.z });
+  });
+
+  // 5. Reload universe with the chosen layout mode and animate
+  await load3DUniverseData(true, { layout: mode }, oldPositions);
+}
+window.set3DUniverseLayout = set3DUniverseLayout;
+
+function toggle3DUniverseLayout() {
+  const nextMode = glsl3D.layoutMode === "thematic" ? "spatial" : "thematic";
+  set3DUniverseLayout(nextMode);
+}
+window.toggle3DUniverseLayout = toggle3DUniverseLayout;
 
 function emphasizeNodeLinks(nodeId) {
   if (!glsl3D.scene || !glsl3D.worldGroup) return;
@@ -4744,7 +5278,7 @@ async function open3DNodeInspector(node) {
   try {
     const encodedId = encodeURIComponent(node.id);
     let res = await fetch(`/api/v1/sidecar/graph/node/${encodedId}?hops=1`);
-    if (!res.ok) {
+    if (!res.ok && (res.status === 404 || res.status === 422)) {
       res = await fetch(`/api/v1/sidecar/graph/node?id=${encodedId}&hops=1`);
     }
     if (res.ok) {
@@ -4846,7 +5380,7 @@ async function expand3DSelectedNode() {
     if (!nh || nh.node_id !== node.id) {
       const encodedId = encodeURIComponent(node.id);
       let res = await fetch(`/api/v1/sidecar/graph/node/${encodedId}?hops=1`);
-      if (!res.ok) {
+      if (!res.ok && (res.status === 404 || res.status === 422)) {
         res = await fetch(`/api/v1/sidecar/graph/node?id=${encodedId}&hops=1`);
       }
       if (!res.ok) throw new Error("HTTP " + res.status);

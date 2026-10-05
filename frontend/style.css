@@ -3726,11 +3726,13 @@ body.resizing-table-col .th-resizer {
 }
 
 .glsl-universe-layout {
-  display: inline flex;
-  flex-direction: column;
-  gap: 1.25rem;
-  animation: fadeIn 0.25s ease-out;
-  padding-bottom: 2.5rem;
+    display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+      animation: fadeIn 0.25s ease-out;
+      padding-bottom: 2.5rem;
+      height: 100%;
+        flex-grow: 1;
 }
 
 /* Hero & KPI Banner */
@@ -3846,6 +3848,36 @@ body.resizing-table-col .th-resizer {
   height: 22px;
   background: rgba(255, 255, 255, 0.12);
   margin: 0 0.25rem;
+}
+
+.universe-view-segmented {
+  display: inline-flex;
+  align-items: center;
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-sm);
+  padding: 2px;
+  gap: 2px;
+}
+
+.universe-view-segmented .hud-glsl-btn {
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 0.36rem 0.75rem;
+  border-radius: calc(var(--radius-sm) - 2px);
+  color: var(--text-muted);
+}
+
+.universe-view-segmented .hud-glsl-btn:hover {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.universe-view-segmented .hud-glsl-btn.active {
+  background: linear-gradient(135deg, rgba(56, 189, 248, 0.22) 0%, rgba(236, 72, 153, 0.25) 100%);
+  color: #ffffff;
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  box-shadow: 0 0 12px rgba(56, 189, 248, 0.25);
 }
 
 .hud-glsl-btn {
