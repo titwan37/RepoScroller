@@ -102,8 +102,10 @@ def build_showcase():
             """)
         elif "sha256_hash" in col_names:
             src_cur.execute(f"SELECT * FROM {tbl} WHERE sha256_hash IN (SELECT sha256_hash FROM temp.target_doc_shas)")
-        elif tbl in ("knowledge_nodes", "knowledge_edges"):
-            src_cur.execute(f"SELECT * FROM {tbl} LIMIT 3000;")
+        elif tbl == "knowledge_nodes":
+            src_cur.execute("SELECT * FROM knowledge_nodes WHERE node_type = 'theme' UNION SELECT * FROM knowledge_nodes WHERE node_type != 'theme' LIMIT 3000;")
+        elif tbl == "knowledge_edges":
+            src_cur.execute("SELECT * FROM knowledge_edges LIMIT 3000;")
         else:
             src_cur.execute(f"SELECT * FROM {tbl} LIMIT 1000;")
 
