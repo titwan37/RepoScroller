@@ -194,6 +194,15 @@ def get_3d_knowledge_universe(
     }
 
 
+@router.post("/theme-backfill")
+def trigger_theme_backfill():
+    """Backfill taxonomy theme hubs and CATEGORIZED_AS links for already-ingested documents."""
+    result = _graph_store.backfill_theme_links()
+    return {
+        "status": "success",
+        **result
+    }
+
 
 @router.post("/process")
 def process_pending_sidecar(req: ProcessRequest):

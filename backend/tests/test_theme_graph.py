@@ -202,3 +202,18 @@ def test_sidecar_api_graph_3d_thematic_layout():
     res_default = client.get("/api/v1/sidecar/graph-3d?limit=50")
     assert res_default.status_code == 200
     assert res_default.json()["layout"] == "spatial"
+
+
+def test_sidecar_api_theme_backfill():
+    from fastapi.testclient import TestClient
+    from backend.api.app import create_app
+    app = create_app()
+    client = TestClient(app)
+
+    res = client.post("/api/v1/sidecar/theme-backfill")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "success"
+    assert "documents_examined" in data
+    assert "documents_themed" in data
+
