@@ -1352,14 +1352,18 @@
       <!-- Right Column: Multi-Signal Ranked Results -->
       <div class="studio-results-column">
         <div class="studio-column-header">
-          <div class="column-title" style="display: flex; align-items: center; justify-content: space-between; width: 100%; flex-wrap: wrap; gap: 0.5rem;">
+          <div class="column-title"
+            style="display: flex; align-items: center; justify-content: space-between; width: 100%; flex-wrap: wrap; gap: 0.5rem;">
             <div style="display: flex; align-items: center; gap: 0.5rem;">
               <span>📊 Retrieved Candidates & Signal Breakdown</span>
               <span id="studio-results-count" class="badge badge-sm badge-info">0 candidates</span>
             </div>
-            <div style="display: flex; align-items: center; gap: 0.35rem; font-size: 0.72rem; color: var(--text-faint);">
+            <div
+              style="display: flex; align-items: center; gap: 0.35rem; font-size: 0.72rem; color: var(--text-faint);">
               <span>Limit:</span>
-              <select id="studio-candidate-limit-select" class="btn btn-outline btn-xs" style="padding: 0.15rem 0.4rem; font-size: 0.72rem; background: var(--bg-surface-2); border-color: var(--border-color); color: var(--text-main);" onchange="executeStudioGraphRAGSearch()">
+              <select id="studio-candidate-limit-select" class="btn btn-outline btn-xs"
+                style="padding: 0.15rem 0.4rem; font-size: 0.72rem; background: var(--bg-surface-2); border-color: var(--border-color); color: var(--text-main);"
+                onchange="executeStudioGraphRAGSearch()">
                 <option value="10">10</option>
                 <option value="25" selected>25</option>
                 <option value="50">50</option>
@@ -1388,35 +1392,28 @@
        WORKSPACE: 3D KNOWLEDGE UNIVERSE & GLSL TOPOLOGICAL CLUSTERING
        ========================================================================= -->
   <main id="ws-pane-universe" class="workspace-pane hidden glsl-universe-layout">
-    <!-- Universe Hero & Metrics Banner -->
-    <div class="universe-hero-bar">
+    <!-- Universe Hero & Metrics Banner (Single-Row Compact Hero with Inline Badges) -->
+    <div class="universe-hero-bar compact-hero">
       <div class="universe-hero-left">
-        <span class="universe-hero-pre">Data Science • Unsupervised Topological Graph Theory</span>
-        <h2 class="universe-hero-title">3D Semantic Cluster Universe</h2>
-        <p class="universe-hero-desc">
-          Dimensionality Reduction (<strong class="text-cyan">3D PCA</strong>) &amp; Unsupervised Topological Clustering
-          applied to sovereign entity and document relation graphs.
-        </p>
-      </div>
-      <div class="universe-hero-left">
-        <div class="universe-kpi-grid">
-          <div class="kpi-glass-card">
-            <div class="kpi-card-lbl">Dimensionality</div>
-            <div class="kpi-card-val text-cyan">High-Dim → 3D PCA</div>
-          </div>
-          <div class="kpi-glass-card">
-            <div class="kpi-card-lbl">Algorithm</div>
-            <div class="kpi-card-val text-purple">Unsupervised K-Means</div>
-          </div>
-          <div class="kpi-glass-card">
-            <div class="kpi-card-lbl">Universe Topology</div>
-            <div class="kpi-card-val text-emerald"><span id="glsl-stat-nodes">1,000</span> Entities • <span
-                id="glsl-stat-edges">3,000</span> Edges</div>
-          </div>
-          <div class="kpi-glass-card">
-            <div class="kpi-card-lbl">Rendering Engine</div>
-            <div class="kpi-card-val text-amber">Three.js WebGL GLSL</div>
-          </div>
+        <div class="universe-hero-title-row">
+          <span class="universe-hero-pre">Data Science</span>
+          <h2 class="universe-hero-title">3D Knowledge Graph Universe</h2>
+          <span class="universe-hero-desc">Topological Clustering &amp; Visual Analytics</span>
+        </div>
+        <div class="universe-badges-strip">
+          <span class="universe-badge-pill" id="badge-dim" title="Dimensionality Transformation"><span
+              class="badge-dot dot-cyan"></span><span class="badge-label">Dim:</span> <strong class="text-cyan"
+              id="badge-dim-val">High-Dim → 3D PCA</strong></span>
+          <span class="universe-badge-pill" id="badge-algo" title="Clustering Algorithm"><span
+              class="badge-dot dot-purple"></span><span class="badge-label">Algo:</span> <strong class="text-purple"
+              id="badge-algo-val">Unsupervised K-Means</strong></span>
+          <span class="universe-badge-pill" id="badge-topo" title="Active Topology Elements"><span
+              class="badge-dot dot-emerald"></span><span class="badge-label">Topology:</span> <strong
+              class="text-emerald"><span id="glsl-stat-nodes">1,000</span> Nodes • <span
+                id="glsl-stat-edges">3,000</span> Links</strong></span>
+          <span class="universe-badge-pill" id="badge-render" title="Hardware Acceleration Engine"><span
+              class="badge-dot dot-amber"></span><span class="badge-label">Renderer:</span> <strong
+              class="text-amber">Three.js WebGL GLSL</strong></span>
         </div>
       </div>
     </div>
@@ -1504,7 +1501,17 @@
           title="Reload Graph Universe from Database">
           <span>⟳</span> Refresh
         </button>
-        <button class="hud-glsl-btn btn-reset" onclick="reset3DCamera()" title="Reset Camera Perspective">
+        <!-- Camera Control Suite -->
+        <button id="btn-glsl-zenith" class="hud-glsl-btn" onclick="set3DZenithView()"
+          title="Top Orthogonal Projection: Planar view of orbital satellites and solar hubs">
+          <span>🔭</span> Zenith View
+        </button>
+        <button id="btn-glsl-orbital" class="hud-glsl-btn" onclick="toggle3DOrbitalTour()"
+          title="3/4 Isometric Sequential Tour: Fly through orbital hubs sequentially">
+          <span id="orbital-tour-icon">🪐</span> <span id="orbital-tour-text">Orbital Tour</span>
+        </button>
+        <button id="btn-reset" class="hud-glsl-btn btn-reset" onclick="reset3DCamera()"
+          title="Reset Camera Perspective">
           <span>↺</span> Reset View
         </button>
       </div>
@@ -1835,14 +1842,17 @@
       <div class="diag-header-actions">
         <button class="btn-diag-action" onclick="triggerTestDiagnosticIssue('WARNING')"
           title="Emit synthetic test warning">⚠️ Warn</button>
-        <button class="btn-diag-action" onclick="triggerTestDiagnosticIssue('ERROR')" title="Emit synthetic test error">❌
+        <button class="btn-diag-action" onclick="triggerTestDiagnosticIssue('ERROR')"
+          title="Emit synthetic test error">❌
           Err</button>
-        <button class="btn-diag-action" onclick="copyDiagnosticLogs()" title="Copy all logs to clipboard">📋 Copy</button>
+        <button class="btn-diag-action" onclick="copyDiagnosticLogs()" title="Copy all logs to clipboard">📋
+          Copy</button>
         <button class="btn-diag-action" onclick="clearDiagnosticLogs()" title="Clear console and backend buffer">🗑️
           Clear</button>
         <button class="btn-diag-action" id="btn-diag-maximize" onclick="toggleDiagnosticMaximize()"
           title="Maximize / Restore">🗖</button>
-        <button class="btn-diag-action close" onclick="toggleDiagnosticConsole(false)" title="Minimize console">✕</button>
+        <button class="btn-diag-action close" onclick="toggleDiagnosticConsole(false)"
+          title="Minimize console">✕</button>
       </div>
     </div>
 

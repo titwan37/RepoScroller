@@ -77,6 +77,18 @@ def build_showcase():
 
     src_cur.execute("CREATE TEMP TABLE target_doc_shas (sha256_hash TEXT PRIMARY KEY);")
     src_cur.executemany("INSERT INTO temp.target_doc_shas (sha256_hash) VALUES (?);", [(s,) for s in selected_shas])
+
+    # Pre-select vital archetype hubs (Themes, Financial Pillars, Currencies, Contract Types)
+    # plus all entity nodes actively linked to the chosen showcase documents
+    src_cur.execute("CREATE TEMP TABLE target_nodes (node_id TEXT PRIMARY KEY);")
+    src_cur.execute("""
+        INSERT OR IGNORE INTO temp.target_nodes (node_id)
+        SELECT node_id FROM knowledge_nodes 
+        WHERE node_type IN ('theme', 'financial_pillar', 'currency', 'contract_type', 'location')
+        UNION
+        SELECT DISTINCT node_id FROM document_entity_links 
+        WHERE sha256_hash IN (SELECT sha256_hash FROM temp.target_doc_shas);
+    """)
     src.commit()
 
     # 3. Copy Filtered Tables
@@ -100,12 +112,18 @@ def build_showcase():
                 WHERE parent_sha256 IN (SELECT sha256_hash FROM temp.target_doc_shas)
                    OR child_sha256 IN (SELECT sha256_hash FROM temp.target_doc_shas)
             """)
+        elif tbl == "knowledge_nodes":
+            src_cur.execute("SELECT * FROM knowledge_nodes WHERE node_id IN (SELECT node_id FROM temp.target_nodes)")
+        elif tbl == "knowledge_edges":
+            src_cur.execute("""
+                SELECT * FROM knowledge_edges 
+                WHERE source_id IN (SELECT node_id FROM temp.target_nodes)
+                  AND target_id IN (SELECT node_id FROM temp.target_nodes)
+                ORDER BY weight DESC
+                LIMIT 5000;
+            """)
         elif "sha256_hash" in col_names:
             src_cur.execute(f"SELECT * FROM {tbl} WHERE sha256_hash IN (SELECT sha256_hash FROM temp.target_doc_shas)")
-        elif tbl == "knowledge_nodes":
-            src_cur.execute("SELECT * FROM knowledge_nodes WHERE node_type = 'theme' UNION SELECT * FROM knowledge_nodes WHERE node_type != 'theme' LIMIT 3000;")
-        elif tbl == "knowledge_edges":
-            src_cur.execute("SELECT * FROM knowledge_edges LIMIT 3000;")
         else:
             src_cur.execute(f"SELECT * FROM {tbl} LIMIT 1000;")
 
@@ -114,6 +132,7 @@ def build_showcase():
             dst_cur.executemany(f"INSERT OR IGNORE INTO {tbl} VALUES ({placeholders})", rows)
             dst.commit()
 
+    src_cur.execute("DROP TABLE IF EXISTS temp.target_nodes;")
     src_cur.execute("DROP TABLE IF EXISTS temp.target_doc_shas;")
     src.close()
 

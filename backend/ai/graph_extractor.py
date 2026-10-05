@@ -537,6 +537,7 @@ class KnowledgeGraphExtractor:
             "rent": r"\b(?:Miete|Mietzins|Loyer|Rent|Lease payment|Bail)\b",
             "salary": r"\b(?:Lohn|Gehalt|Salär|Salaire|Salary|Remuneration|Bonus|Vergütung)\b",
             "mortgage": r"\b(?:Hypothek|Hypothekardarlehen|Mortgage|Prêt hypothécaire)\b",
+            "cost": r"\b(?:Kosten|Kostenaufstellung|Kostenübersicht|Rechnung|Rechnungsbetrag|Summe|Totalbetrag|Total amount|Amount|Cost|Costs|Cost breakdown|Cost overview|Co|Facture|Montant|Total)\b",
             "fee": r"\b(?:Gebühr|Honorar|Frais|Courtage|Commission|Fee|Management fee)\b",
             "fine": r"\b(?:Busse|Konventionalstrafe|Pénalité|Fine|Penalty|Schadensersatz)\b",
             "interest": r"\b(?:Zins|Verzugszins|Intérêt|Interest rate|Yield)\b",

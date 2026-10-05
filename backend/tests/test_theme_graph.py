@@ -217,3 +217,18 @@ def test_sidecar_api_theme_backfill():
     assert "documents_examined" in data
     assert "documents_themed" in data
 
+
+def test_sidecar_api_financial_pillars_backfill():
+    from fastapi.testclient import TestClient
+    from backend.api.app import create_app
+    app = create_app()
+    client = TestClient(app)
+
+    res = client.post("/api/v1/sidecar/financial-pillars-backfill")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "success"
+    assert "pillars_populated" in data
+    assert "total_links_created" in data
+    assert data["pillars_populated"] == 7
+

@@ -204,6 +204,26 @@ def trigger_theme_backfill():
     }
 
 
+@router.post("/financial-pillars-backfill")
+def trigger_financial_pillars_backfill():
+    """Backfill contractual financial pillars (rent, salary, mortgage, fees, fines, interest, insurance)."""
+    result = _graph_store.backfill_financial_pillars()
+    return {
+        "status": "success",
+        **result
+    }
+
+
+@router.post("/geo-links-backfill")
+def trigger_geo_links_backfill():
+    """Synchronize geographic and edge document links into document_entity_links."""
+    result = _graph_store.backfill_geo_entity_links()
+    return {
+        "status": "success",
+        **result
+    }
+
+
 @router.post("/process")
 def process_pending_sidecar(req: ProcessRequest):
     """Trigger an immediate processing batch for pending documents in the KB queue."""

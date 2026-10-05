@@ -2888,7 +2888,7 @@ async function executeStudioGraphRAGSearch(explicitQuery = null) {
         </div>
       `;
     }
-    
+
     if (typeof logDiagnosticEntry === "function") {
       logDiagnosticEntry({
         source: "frontend",
@@ -3760,6 +3760,9 @@ function init3DKnowledgeUniverse() {
 
     glsl3D.controls.addEventListener("start", () => {
       glsl3D.isUserInteracting = true;
+      if (glsl3D.orbitalTourActive) {
+        stop3DOrbitalTour(false);
+      }
       if (glsl3D.cameraTransitionAnim) {
         cancelAnimationFrame(glsl3D.cameraTransitionAnim);
         glsl3D.cameraTransitionAnim = null;
@@ -3804,10 +3807,13 @@ function init3DKnowledgeUniverse() {
   canvasEl.addEventListener("dblclick", on3DMouseDblClick);
   canvasEl.addEventListener("mouseleave", on3DMouseLeave);
 
-  // Window Resize Listener
+  // Window & Elastic Container Resize Listener
   window.addEventListener("resize", onWindowResize3D);
   if (typeof ResizeObserver !== "undefined") {
-    new ResizeObserver(() => onWindowResize3D()).observe(container);
+    const parentWrapper = document.getElementById("glsl-canvas-wrapper") || container;
+    const ro = new ResizeObserver(() => onWindowResize3D());
+    ro.observe(container);
+    if (parentWrapper !== container) ro.observe(parentWrapper);
   }
 
   glsl3D.initialized = true;
@@ -3889,14 +3895,37 @@ function create3DTextSprite(text, borderColorHex, fontSize = 22) {
   return sprite;
 }
 
+// function onWindowResize3D() {
+//   if (!glsl3D.renderer || !glsl3D.camera || !glsl3D.container) return;
+//   const width = glsl3D.container.clientWidth;
+//   const height = glsl3D.container.clientHeight;
+//   if (!width || !height || width <= 0 || height <= 0) return;
+
+//   glsl3D.camera.aspect = width / height;
+//   glsl3D.camera.updateProjectionMatrix();
+//   glsl3D.renderer.setSize(width, height);
+// }
+
 function onWindowResize3D() {
   if (!glsl3D.renderer || !glsl3D.camera || !glsl3D.container) return;
-  const width = glsl3D.container.clientWidth || 800;
-  const height = glsl3D.container.clientHeight || 650;
+  const width = glsl3D.container.clientWidth;
+  const height = glsl3D.container.clientHeight;
+  if (!width || !height || width <= 0 || height <= 0) return;
+
   glsl3D.camera.aspect = width / height;
+
+  // Shift the 3D projection center to the right by ~140 pixels (approx. 3.5cm)
+  // This optically centers the universe in the remaining visible space 
+  // next to the left-floating legend panel, without breaking orbit controls.
+  // Signature: setViewOffset(fullWidth, fullHeight, xOffset, yOffset, viewWidth, viewHeight)
+  glsl3D.camera.setViewOffset(width, height, -60, 0, width, height);
   glsl3D.camera.updateProjectionMatrix();
   glsl3D.renderer.setSize(width, height);
+
+  // Sync the 3D scene offset with UI panel layout changes
+  update3DViewOffset();
 }
+
 
 async function load3DUniverseData(forceReload = false, filterParams = null, transitionFromOldPositions = null) {
   // If filterParams is null, check URL search params if any
@@ -4610,6 +4639,39 @@ window.openUniverseClusterDrawer = openUniverseClusterDrawer;
 window.closeUniverseClusterDrawer = closeUniverseClusterDrawer;
 window.filterUniverseClusterDrawer = filterUniverseClusterDrawer;
 
+/**
+ * Dynamically shifts the Three.js optical center to avoid overlapping UI panels.
+ * Keeps the selected node perfectly centered in the visible gap.
+ */
+function update3DViewOffset() {
+  if (!glsl3D.camera || !glsl3D.container) return;
+  const width = glsl3D.container.clientWidth;
+  const height = glsl3D.container.clientHeight;
+  if (!width || !height) return;
+
+  const legend = document.getElementById("axes-legend-overlay");
+  const inspector = document.getElementById("glsl-node-inspector");
+
+  // Calculate Left UI Intrusion (Legend Panel)
+  let leftOffset = 0;
+  if (legend) {
+    leftOffset = legend.classList.contains("collapsed") ? 250 : 380;
+  }
+
+  // Calculate Right UI Intrusion (Inspector Panel)
+  let rightOffset = 0;
+  if (inspector && !inspector.classList.contains("hidden")) {
+    rightOffset = 340;
+  }
+
+  // Positive xOffset shifts the scene LEFT. Negative shifts the scene RIGHT.
+  const xOffset = (rightOffset - leftOffset) / 2;
+
+  glsl3D.camera.setViewOffset(width, height, xOffset, 0, width, height);
+  glsl3D.camera.updateProjectionMatrix();
+}
+window.update3DViewOffset = update3DViewOffset;
+
 function get3DUniverseCentroid() {
   if (!glsl3D.nodes || glsl3D.nodes.length === 0) {
     return new THREE.Vector3(0, 0, -100);
@@ -4636,24 +4698,36 @@ function smoothTransitionTo3DNode(targetNode, duration = 900) {
   const endTarget = new THREE.Vector3(targetNode.x, targetNode.y, targetNode.z);
   const startCamPos = glsl3D.camera.position.clone();
 
-  // 1. Calculate centroid (center of mass C) of active nodes in the universe
-  const centroid = get3DUniverseCentroid();
+  // 1. Determine the True Center
+  // In Thematic mode, the absolute center of the solar systems is exactly (0,0,0).
+  // In Spatial mode, we continue to use the dynamic cloud centroid.
+  const universeCenter = (glsl3D.layoutMode === "thematic")
+    ? new THREE.Vector3(0, 0, 0)
+    : (typeof get3DUniverseCentroid === "function" ? get3DUniverseCentroid() : new THREE.Vector3(0, 0, -100));
 
-  // 2. Determine outward direction vector D = (N - C) / ||N - C||
-  let dir = new THREE.Vector3().subVectors(endTarget, centroid);
+  // 2. Determine outward direction vector into the void: D = (Node - Center)
+  let dir = new THREE.Vector3().subVectors(endTarget, universeCenter);
+
   if (dir.lengthSq() < 0.0001) {
     // If node is at the centroid or graph is single-node, default to elevated 3/4 vector
-    dir.set(1.0, 0.75, 1.0).normalize();
+    dir.set(1.0, 0.15, 1.0).normalize();
   } else {
+    // CRITICAL: In thematic mode, flatten the Y-axis calculation.
+    // This prevents the camera from diving under or flying over the node based on its bobbing trajectory.
+    // We want a pure horizontal push outward into the void.
+    if (glsl3D.layoutMode === "thematic") {
+      dir.y = 0;
+    }
     dir.normalize();
   }
 
   // 3. Distance padding (90–140 units) scaled smoothly based on node degree/neighborhood density
   const deg = Number(targetNode.degree) || 1;
-  const distancePadding = Math.min(140, Math.max(90, 100 + Math.log2(deg + 1) * 6));
+  const distancePadding = Math.min(150, Math.max(90, 100 + Math.log2(deg + 1) * 6));
 
+  // 4. Elevation offset: Ensure a strict 3/4 top-down perspective
   // 4. Subtle elevation offset (+Y) ensuring elevated 3/4 perspective looking through node toward cloud
-  const elevationY = Math.max(25, distancePadding * 0.32);
+  const elevationY = Math.max(35, distancePadding * 0.45);
   const elevation = new THREE.Vector3(0, elevationY, 0);
 
   // 5. Frustum-optimized camera position:
@@ -4684,8 +4758,10 @@ function smoothTransitionTo3DNode(targetNode, duration = 900) {
     glsl3D.controls.update();
 
     if (progress < 1.0) {
+      // Request the next frame of the animation loop.
       glsl3D.cameraTransitionAnim = requestAnimationFrame(step);
     } else {
+      // Ensure final values are snapped exactly (prevents oscillation or overshooting)
       glsl3D.controls.target.copy(endTarget);
       glsl3D.camera.position.copy(endCamPos);
       glsl3D.controls.update();
@@ -4693,7 +4769,7 @@ function smoothTransitionTo3DNode(targetNode, duration = 900) {
       glsl3D.autoSpin = prevAutoSpin;
     }
   }
-
+  // Request the first frame of the animation loop.
   glsl3D.cameraTransitionAnim = requestAnimationFrame(step);
 }
 window.smoothTransitionTo3DNode = smoothTransitionTo3DNode;
@@ -5083,22 +5159,93 @@ async function set3DUniverseLayout(mode) {
     }
   }
 
-  // 2. Update HUD Legend text
+  // 2. Synchronize Docked Legend HUD Visibility & Hero Badges
+  const legendOverlay = document.getElementById("axes-legend-overlay");
+  const legendBody = document.getElementById("axes-legend-body");
+  const legendBtn = document.querySelector(".btn-legend-collapse");
+  if (legendOverlay) {
+    if (mode === "thematic") {
+      // Automatically expand and display cluster hierarchy drawer
+      legendOverlay.classList.remove("collapsed");
+      if (legendBody) legendBody.style.display = "flex";
+      if (legendBtn) legendBtn.textContent = "−";
+    } else {
+      // Automatically collapse into minimal floating badge pill
+      legendOverlay.classList.add("collapsed");
+      if (legendBody) legendBody.style.display = "none";
+      if (legendBtn) legendBtn.textContent = "+";
+    }
+  }
+
+  const badgeDimVal = document.getElementById("badge-dim-val");
+  const badgeAlgoVal = document.getElementById("badge-algo-val");
+  if (badgeDimVal) {
+    badgeDimVal.textContent = mode === "thematic" ? "Thematic Gravitational Space" : "High-Dim → 3D PCA";
+  }
+  if (badgeAlgoVal) {
+    badgeAlgoVal.textContent = mode === "thematic" ? "Thematic Solar Centroids (k=7)" : "Unsupervised K-Means";
+  }
+
+  // 3. Update HUD Legend text
   update3DAxesLegendForMode(mode);
 
-  // 3. Smooth Camera Refocus
+  // 4. Smooth Camera Refocus
   if (glsl3D.controls && glsl3D.controls.target) {
     glsl3D.controls.target.set(0, 0, mode === "thematic" ? 0 : -100);
   }
 
-  // 4. Capture current node positions for animated ease transition
+  // 5. Capture current node positions for animated ease transition
   const oldPositions = new Map();
   glsl3D.nodes.forEach(n => {
     oldPositions.set(n.id, { x: n.x, y: n.y, z: n.z });
   });
 
-  // 5. Reload universe with the chosen layout mode and animate
+  // 6. Diagnostics & Toast Feedback on layout switch
+  const modeTitle = mode === "thematic" ? "Thematic Mindmap" : "Spatial View";
+  pushDiagnosticLog(
+    "info",
+    `Switching 3D Universe topology to ${modeTitle}...`,
+    "frontend",
+    "GLSL3D",
+    { target_mode: mode, active_nodes: glsl3D.nodes.length }
+  );
+
+  // Announce the heavy computation instantly
+  showToast(
+    mode === "thematic"
+      ? "⏳ Computing Thematic Topology... applying force-directed physics (this may take a few seconds)."
+      : "⏳ Computing Spatial PCA... recalculating latent variance (this may take a few seconds).",
+    "info",
+    8000
+  );
+
+  // CRITICAL: Yield to the browser's main thread for 150ms. 
+  // This allows the DOM to actually render the toast animation and CSS changes 
+  // BEFORE the heavy 3D physics calculations lock up the CPU.
+  await new Promise(resolve => setTimeout(resolve, 150));
+
+  // 7. Reload universe with the chosen layout mode and animate
   await load3DUniverseData(true, { layout: mode }, oldPositions);
+
+  // 8. Post-transition Success Toast
+  showToast(
+    mode === "thematic"
+      ? "🪐 Thematic Mindmap successfully generated!"
+      : "🌐 Spatial View successfully generated!",
+    "success",
+    3500
+  );
+
+  // 9. Post-transition Diagnostic telemetry
+  const themeCluster = glsl3D.clusters ? glsl3D.clusters.find(c => c.id === 6) : null;
+  const themeCount = themeCluster ? themeCluster.rendered_count : 0;
+  pushDiagnosticLog(
+    "success",
+    `Topology successfully switched to ${modeTitle}: ${glsl3D.nodes.length} nodes rendered`,
+    "frontend",
+    "GLSL3D",
+    { mode, rendered_nodes: glsl3D.nodes.length, thematic_suns: themeCount }
+  );
 }
 window.set3DUniverseLayout = set3DUniverseLayout;
 
@@ -5258,11 +5405,14 @@ async function open3DNodeInspector(node) {
   if (typeBadge) typeBadge.textContent = node.type;
   if (nameEl) nameEl.textContent = node.name;
   if (degreeEl) degreeEl.textContent = node.degree;
-  if (docCountEl) docCountEl.textContent = node.doc_count || 1;
+  if (docCountEl) docCountEl.textContent = (node.doc_count !== undefined && node.doc_count !== null) ? node.doc_count : 0;
   if (coordsEl) coordsEl.textContent = `[${node.x}, ${node.y}, ${node.z}]`;
-  if (dateEl) dateEl.textContent = node.latest_date ? node.latest_date.split("T")[0] : "2026-03-24";
+  if (dateEl) dateEl.textContent = node.latest_date ? node.latest_date.split("T")[0] : (node.doc_count ? "Recent" : "None");
 
   drawer.classList.remove("hidden");
+
+  // Recenter universe for the newly opened right panel
+  update3DViewOffset();
 
   // Focus camera smoothly toward the node & emphasize connecting links
   smoothTransitionTo3DNode(node, 850);
@@ -5531,7 +5681,11 @@ function close3DNodeInspector() {
     dimmed.needsUpdate = true;
   }
   const drawer = document.getElementById("glsl-node-inspector");
-  if (drawer) drawer.classList.add("hidden");
+  if (drawer) {
+    drawer.classList.add("hidden");
+    // Re-apply offset so the gap closes immediately
+    update3DViewOffset();
+  }
 }
 
 function toggle3DAutoSpin() {
@@ -5629,33 +5783,287 @@ function filter3DCluster(clusterId) {
 
 
 
+/**
+ * Zenith View: Top Orthogonal / Planar projection looking straight down
+ * onto the 3D cosmic plane to inspect orbital satellites and solar hubs.
+ */
+function set3DZenithView(duration = 800) {
+  if (!glsl3D.camera || !glsl3D.controls) return;
+
+  // Stop running orbital tour if active
+  if (glsl3D.orbitalTourActive) {
+    stop3DOrbitalTour(false);
+  }
+
+  // Target center of coordinate space
+  const targetZ = glsl3D.layoutMode === "thematic" ? 0 : -100;
+  const endTarget = new THREE.Vector3(0, 0, targetZ);
+  // High Y altitude directly above target (e.g. Y = 460) with small Z epsilon to avoid gimbal lock
+  const endCamPos = new THREE.Vector3(0, 460, targetZ + 0.001);
+  const startTarget = glsl3D.controls.target.clone();
+  const startCamPos = glsl3D.camera.position.clone();
+  const startUp = glsl3D.camera.up.clone();
+  const endUp = new THREE.Vector3(0, 0, -1); // North points toward top of viewport
+
+  const btnZenith = document.getElementById("btn-glsl-zenith");
+  const btnOrbital = document.getElementById("btn-glsl-orbital");
+  if (btnZenith) btnZenith.classList.add("active");
+  if (btnOrbital) btnOrbital.classList.remove("active");
+
+  const prevAutoSpin = glsl3D.autoSpin;
+  glsl3D.autoSpin = false;
+
+  const startTime = performance.now();
+  if (glsl3D.cameraTransitionAnim) {
+    cancelAnimationFrame(glsl3D.cameraTransitionAnim);
+    glsl3D.cameraTransitionAnim = null;
+  }
+
+  function step(now) {
+    const elapsed = now - startTime;
+    const progress = Math.min(1.0, elapsed / duration);
+    const ease = progress < 0.5
+      ? 4 * progress * progress * progress
+      : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+
+    glsl3D.controls.target.lerpVectors(startTarget, endTarget, ease);
+    glsl3D.camera.position.lerpVectors(startCamPos, endCamPos, ease);
+    glsl3D.camera.up.lerpVectors(startUp, endUp, ease).normalize();
+    glsl3D.controls.update();
+
+    if (progress < 1.0) {
+      glsl3D.cameraTransitionAnim = requestAnimationFrame(step);
+    } else {
+      glsl3D.controls.target.copy(endTarget);
+      glsl3D.camera.position.copy(endCamPos);
+      glsl3D.camera.up.copy(endUp);
+      glsl3D.controls.update();
+      glsl3D.cameraTransitionAnim = null;
+      glsl3D.autoSpin = prevAutoSpin;
+    }
+  }
+
+  glsl3D.cameraTransitionAnim = requestAnimationFrame(step);
+
+  showToast("🔭 Zenith View: Top-down planar projection activated", "info", 3000);
+  pushDiagnosticLog("info", "Activated 3D Zenith Camera View (top-down planar orthogonal projection)", "frontend", "GLSL3D", {
+    layout: glsl3D.layoutMode,
+    camera_y: 460
+  });
+}
+window.set3DZenithView = set3DZenithView;
+
+/**
+ * 3/4 Isometric Sequential Tour:
+ * Fly smoothly through thematic solar hubs or major entity clusters sequentially.
+ */
+function stop3DOrbitalTour(notify = true) {
+  glsl3D.orbitalTourActive = false;
+  if (glsl3D.orbitalTourTimer) {
+    clearTimeout(glsl3D.orbitalTourTimer);
+    glsl3D.orbitalTourTimer = null;
+  }
+  const btnOrbital = document.getElementById("btn-glsl-orbital");
+  const icon = document.getElementById("orbital-tour-icon");
+  const text = document.getElementById("orbital-tour-text");
+  if (btnOrbital) btnOrbital.classList.remove("active");
+  if (icon) icon.textContent = "🪐";
+  if (text) text.textContent = "Orbital Tour";
+
+  if (notify) {
+    showToast("⏸ Orbital Tour stopped", "info", 2000);
+    pushDiagnosticLog("info", "Orbital Tour stopped by user", "frontend", "GLSL3D");
+  }
+}
+window.stop3DOrbitalTour = stop3DOrbitalTour;
+
+function toggle3DOrbitalTour() {
+  if (glsl3D.orbitalTourActive) {
+    stop3DOrbitalTour(true);
+    return;
+  }
+
+  glsl3D.orbitalTourActive = true;
+  const btnOrbital = document.getElementById("btn-glsl-orbital");
+  const btnZenith = document.getElementById("btn-glsl-zenith");
+  const icon = document.getElementById("orbital-tour-icon");
+  const text = document.getElementById("orbital-tour-text");
+  if (btnOrbital) btnOrbital.classList.add("active");
+  if (btnZenith) btnZenith.classList.remove("active");
+  if (icon) icon.textContent = "⏸";
+  if (text) text.textContent = "Stop Tour";
+
+  // Ensure camera upright orientation
+  if (glsl3D.camera) glsl3D.camera.up.set(0, 1, 0);
+
+  // Identify tour waypoints:
+  let waypoints = [];
+  if (glsl3D.layoutMode === "thematic") {
+    waypoints = glsl3D.nodes.filter(n => n.type === "theme" || n.is_hub === true);
+  }
+  if (!waypoints || waypoints.length === 0) {
+    // Fallback: top 8 highest degree nodes in current view
+    waypoints = [...glsl3D.nodes].sort((a, b) => (b.degree || 0) - (a.degree || 0)).slice(0, 8);
+  }
+
+  if (waypoints.length === 0) {
+    stop3DOrbitalTour(false);
+    showToast("No hubs available for tour", "warning", 2500);
+    return;
+  }
+
+  showToast(`🪐 Orbital Tour: Sequential inspection of ${waypoints.length} hubs active`, "info", 3000);
+  pushDiagnosticLog("info", `Started 3D Orbital Tour across ${waypoints.length} hubs`, "frontend", "GLSL3D", {
+    waypoints_count: waypoints.length,
+    layout: glsl3D.layoutMode
+  });
+
+  let currentWaypointIndex = 0;
+  const orbitCenter = (glsl3D.layoutMode === "thematic")
+    ? new THREE.Vector3(0, 0, 0)
+    : (typeof get3DUniverseCentroid === "function" ? get3DUniverseCentroid() : new THREE.Vector3(0, 0, -100));
+
+  function visitNextWaypoint() {
+    if (!glsl3D.orbitalTourActive) return;
+
+    const targetNode = waypoints[currentWaypointIndex];
+    currentWaypointIndex = (currentWaypointIndex + 1) % waypoints.length;
+
+    // Smoothly fly to waypoint while keeping camera pointed into the center of the orbit
+    transitionOrbitalTourCamera(targetNode, orbitCenter, 1400);
+    open3DNodeInspector(targetNode);
+    emphasizeNodeLinks(targetNode.id);
+
+    // Schedule next waypoint visit after transit and dwell time (3400ms)
+    glsl3D.orbitalTourTimer = setTimeout(() => {
+      if (glsl3D.orbitalTourActive) {
+        visitNextWaypoint();
+      }
+    }, 3400);
+  }
+
+  visitNextWaypoint();
+}
+window.toggle3DOrbitalTour = toggle3DOrbitalTour;
+
+/**
+ * Orbital Tour camera transition:
+ * Positions camera on the outer rim looking through target hub straight into the center of the orbit.
+ */
+function transitionOrbitalTourCamera(targetNode, orbitCenter, duration = 1400) {
+  if (!glsl3D.camera || !glsl3D.controls || !targetNode) return;
+
+  const startTarget = glsl3D.controls.target.clone();
+  // Camera always points into the center of the orbit!
+  const endTarget = orbitCenter.clone();
+  const startCamPos = glsl3D.camera.position.clone();
+
+  const vec = new THREE.Vector3(
+    targetNode.x - orbitCenter.x,
+    targetNode.y - orbitCenter.y,
+    targetNode.z - orbitCenter.z
+  );
+  const dist = vec.length();
+  let dir = vec.clone();
+  if (dist < 1.0) {
+    dir.set(1.0, 0.0, 1.0).normalize();
+  } else {
+    dir.normalize();
+  }
+
+  // Camera placed on outer rim looking through the hub towards the center
+  const camDist = Math.max(dist * 1.35, dist + 60);
+  const elevationY = 40;
+  const endCamPos = new THREE.Vector3(
+    orbitCenter.x + dir.x * camDist,
+    orbitCenter.y + dir.y * camDist + elevationY,
+    orbitCenter.z + dir.z * camDist
+  );
+
+  const startTime = performance.now();
+  if (glsl3D.cameraTransitionAnim) {
+    cancelAnimationFrame(glsl3D.cameraTransitionAnim);
+    glsl3D.cameraTransitionAnim = null;
+  }
+
+  function step(now) {
+    const elapsed = now - startTime;
+    const progress = Math.min(1.0, elapsed / duration);
+    const ease = progress < 0.5
+      ? 4 * progress * progress * progress
+      : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+
+    glsl3D.controls.target.lerpVectors(startTarget, endTarget, ease);
+    glsl3D.camera.position.lerpVectors(startCamPos, endCamPos, ease);
+    glsl3D.camera.up.set(0, 1, 0);
+    glsl3D.controls.update();
+
+    if (progress < 1.0) {
+      glsl3D.cameraTransitionAnim = requestAnimationFrame(step);
+    } else {
+      glsl3D.controls.target.copy(endTarget);
+      glsl3D.camera.position.copy(endCamPos);
+      glsl3D.camera.up.set(0, 1, 0);
+      glsl3D.controls.update();
+      glsl3D.cameraTransitionAnim = null;
+    }
+  }
+
+  glsl3D.cameraTransitionAnim = requestAnimationFrame(step);
+}
+
 function reset3DCamera() {
+  if (glsl3D.orbitalTourActive) {
+    stop3DOrbitalTour(false);
+  }
+
+  const btnZenith = document.getElementById("btn-glsl-zenith");
+  const btnOrbital = document.getElementById("btn-glsl-orbital");
+  if (btnZenith) btnZenith.classList.remove("active");
+  if (btnOrbital) btnOrbital.classList.remove("active");
+
   if (glsl3D.camera && glsl3D.controls) {
-    setCameraPosition()
+    glsl3D.camera.up.set(0, 1, 0);
+    setCameraPosition();
     if (glsl3D.worldGroup) {
       glsl3D.worldGroup.rotation.set(0, 0, 0);
     }
   }
-}
 
-function handle3DNodeSearch(name) {
-  if (!name || !name.trim()) return;
-  const match = glsl3D.nodes.find(n => n.name.toLowerCase() === name.trim().toLowerCase());
-  if (match) {
-    smoothTransitionTo3DNode(match);
-    open3DNodeInspector(match);
-    emphasizeNodeLinks(match.id);
+  // Remove emphasized node links and close node inspector
+  if (glsl3D.highlightedEdgesMesh && glsl3D.worldGroup) {
+    glsl3D.worldGroup.remove(glsl3D.highlightedEdgesMesh);
+    glsl3D.highlightedEdgesMesh = null;
   }
+  if (glsl3D.pointsMesh && glsl3D.pointsMesh.geometry.attributes.aDimmed) {
+    const dimmed = glsl3D.pointsMesh.geometry.attributes.aDimmed;
+    for (let i = 0; i < dimmed.count; i++) dimmed.setX(i, 0.0);
+    dimmed.needsUpdate = true;
+  }
+  close3DNodeInspector();
+
+  showToast("↺ Camera perspective reset to default", "info", 2000);
+  pushDiagnosticLog("info", "Reset 3D Knowledge Universe camera perspective", "frontend", "GLSL3D");
 }
+window.reset3DCamera = reset3DCamera;
 
 function toggleLegendHUD() {
+  const overlay = document.getElementById("axes-legend-overlay");
   const body = document.getElementById("axes-legend-body");
   const btn = document.querySelector(".btn-legend-collapse");
-  if (!body) return;
-  const isHidden = body.style.display === "none";
-  body.style.display = isHidden ? "flex" : "none";
-  if (btn) btn.textContent = isHidden ? "−" : "+";
+  if (!overlay) return;
+
+  const isCollapsed = overlay.classList.toggle("collapsed");
+  if (body) {
+    body.style.display = isCollapsed ? "none" : "flex";
+  }
+  if (btn) {
+    btn.textContent = isCollapsed ? "+" : "−";
+  }
+  // ADD THIS LINE:
+  update3DViewOffset();
 }
+window.toggleLegendHUD = toggleLegendHUD;
 
 function interrogateEntityInAIStudio() {
   if (!glsl3D.selectedNode) return;

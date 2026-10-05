@@ -86,20 +86,24 @@ if ($isRemote) {
     try {
         $checkRemote = Invoke-RestMethod -Uri "$configuredOllamaUrl/api/tags" -Method Get -TimeoutSec 2 -ErrorAction Stop
         Write-Host "  -> [CONNECTE] PC2 CUDA Node actif ($configuredOllamaUrl)." -ForegroundColor Green
-    } catch {
+    }
+    catch {
         Write-Host "  -> [ATTENTION] PC2 CUDA Node non joignable a $configuredOllamaUrl." -ForegroundColor Yellow
     }
-} else {
+}
+else {
     $isOllamaListening = $false
     if ($hasOllamaInstalled) {
         $listeningCheck = netstat -ano | findstr :11434 | findstr LISTENING
         if ($listeningCheck) {
             $isOllamaListening = $true
             Write-Host "[DETECTE] Serveur Ollama local deja actif et en ecoute (http://127.0.0.1:11434)." -ForegroundColor Green
-        } else {
+        }
+        else {
             Write-Host "[DETECTE] Ollama installe mais non actif. Il sera demarre dans un onglet." -ForegroundColor Yellow
         }
-    } else {
+    }
+    else {
         Write-Host "[INFO] Ollama non present sur cette machine (fallback RAG distant/heuristique actif)." -ForegroundColor DarkGray
     }
     $needStartOllama = $hasOllamaInstalled -and (-not $isOllamaListening -or $ForceOllamaTab)

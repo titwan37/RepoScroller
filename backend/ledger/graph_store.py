@@ -177,6 +177,110 @@ class PropertyGraphStore:
             "theme_distribution": dict(sorted(themes.items(), key=lambda kv: -kv[1])),
         }
 
+    def backfill_financial_pillars(self, batch_size: int = 500) -> Dict[str, Any]:
+        """Detect and backfill financial pillar archetypes across the document ledger.
+        
+        Scans document_fts full-text index for contractual payment mechanisms:
+        rent, salary, mortgage, fee, fine, interest, insurance_premium.
+        """
+        PILLAR_DEFINITIONS = {
+            "financial_pillar_rent": ("Rent", "Universal rental and lease payment commitments", "Miete OR Mietzins OR Loyer OR Rent OR Bail"),
+            "financial_pillar_salary": ("Salary", "Employment remuneration, payroll, and compensation", "Lohn OR Gehalt OR Salär OR Salaire OR Salary OR Remuneration OR Bonus"),
+            "financial_pillar_mortgage": ("Mortgage", "Real estate hypothecary loans and collateralized credit", "Hypothek OR Hypothekardarlehen OR Mortgage"),
+            "financial_pillar_fee": ("Fee", "Administrative, brokerage, management, and legal fee structures", "Gebühr OR Honorar OR Frais OR Courtage OR Commission OR Fee"),
+            "financial_pillar_fine": ("Fine", "Judicial, penal, regulatory, and contractual fines or penalties", "Busse OR Konventionalstrafe OR Pénalité OR Fine OR Penalty"),
+            "financial_pillar_interest": ("Interest", "Credit interest, default interest, and capital yield rates", "Zins OR Verzugszins OR Intérêt OR Interest"),
+            "financial_pillar_insurance_premium": ("Insurance Premium", "Social security, health, and commercial insurance coverage", "Prämie OR Prime OR AHV OR ALV OR Pensionskasse"),
+        }
+
+        with self.repo._lock:
+            cur = self.repo.conn.cursor()
+
+            # 1. Ensure financial_pillar archetype knowledge_nodes exist
+            for node_id, (name, desc, _) in PILLAR_DEFINITIONS.items():
+                cur.execute("""
+                    INSERT INTO knowledge_nodes (node_id, node_type, name, properties_json, updated_at)
+                    VALUES (?, 'financial_pillar', ?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(node_id) DO UPDATE SET
+                        name = excluded.name,
+                        properties_json = excluded.properties_json,
+                        updated_at = CURRENT_TIMESTAMP;
+                """, (node_id, name, json.dumps({"description": desc, "canonical_name": name})))
+
+            cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='document_fts';")
+            has_fts = bool(cur.fetchone())
+
+            total_linked = 0
+            pillar_counts: Dict[str, int] = {}
+
+            for node_id, (name, _, fts_query) in PILLAR_DEFINITIONS.items():
+                matched_shas = []
+                if has_fts:
+                    try:
+                        cur.execute("SELECT DISTINCT sha256_hash FROM document_fts WHERE document_fts MATCH ?;", (fts_query,))
+                        matched_shas = [r[0] for r in cur.fetchall()]
+                    except Exception:
+                        matched_shas = []
+
+                if matched_shas:
+                    for i in range(0, len(matched_shas), batch_size):
+                        batch = [(sha, node_id) for sha in matched_shas[i:i + batch_size]]
+                        cur.executemany("""
+                            INSERT INTO document_entity_links (sha256_hash, node_id, role, confidence)
+                            VALUES (?, ?, 'financial_term', 1.0)
+                            ON CONFLICT(sha256_hash, node_id, role) DO UPDATE SET confidence = 1.0;
+                        """, batch)
+                    pillar_counts[node_id] = len(matched_shas)
+                    total_linked += len(matched_shas)
+
+            self.repo.conn.commit()
+
+        return {
+            "pillars_populated": len(PILLAR_DEFINITIONS),
+            "total_links_created": total_linked,
+            "pillar_distribution": pillar_counts,
+        }
+
+    def backfill_geo_entity_links(self) -> Dict[str, Any]:
+        """Synchronize geographic and edge document links into document_entity_links.
+        
+        Ensures canonical geographic nodes (e.g. location_ch_zg_6312, location_steinhausen,
+        location_ch_zg) accurately reflect their document links in document_entity_links.
+        """
+        with self.repo._lock:
+            cur = self.repo.conn.cursor()
+            
+            # 1. Mirror doc_% edges from knowledge_edges into document_entity_links
+            cur.execute("""
+                INSERT OR IGNORE INTO document_entity_links (sha256_hash, node_id, role, confidence)
+                SELECT SUBSTR(e.source_id, 5), e.target_id, e.relation_type, COALESCE(e.weight, 1.0)
+                FROM knowledge_edges e
+                WHERE e.source_id LIKE 'doc_%'
+                  AND EXISTS (SELECT 1 FROM knowledge_nodes n WHERE n.node_id = e.target_id)
+                  AND EXISTS (SELECT 1 FROM document_ledger dl WHERE dl.sha256_hash = SUBSTR(e.source_id, 5));
+            """)
+            mirrored_from_edges = cur.rowcount if cur.rowcount >= 0 else 0
+
+            # 2. Mirror document_geo_links into document_entity_links for matching location nodes
+            cur.execute("""
+                INSERT OR IGNORE INTO document_entity_links (sha256_hash, node_id, role, confidence)
+                SELECT dgl.sha256_hash, n.node_id, 'LOCATED_IN', COALESCE(dgl.confidence, 1.0)
+                FROM document_geo_links dgl
+                JOIN knowledge_nodes n ON (
+                    n.node_id = 'location_' || LOWER(REPLACE(REPLACE(dgl.geo_id, '-', '_'), ' ', '_'))
+                    OR (n.properties_json LIKE '%"geo_id":"' || dgl.geo_id || '"%')
+                )
+                WHERE EXISTS (SELECT 1 FROM document_ledger dl WHERE dl.sha256_hash = dgl.sha256_hash);
+            """)
+            mirrored_from_geolinks = cur.rowcount if cur.rowcount >= 0 else 0
+
+            self.repo.conn.commit()
+            return {
+                "mirrored_from_edges": mirrored_from_edges,
+                "mirrored_from_geolinks": mirrored_from_geolinks,
+                "total_mirrored": mirrored_from_edges + mirrored_from_geolinks
+            }
+
     def get_document_entities(self, sha256_hash: str) -> List[Dict[str, Any]]:
         """Retrieve all entities associated with a specific document."""
         with self.repo._lock:
@@ -284,10 +388,11 @@ class PropertyGraphStore:
 
             # Associated documents
             cur.execute("""
-                SELECT dl.sha256_hash, dl.canonical_filename, dl.doc_type, dl.doc_date, dl.lifecycle_status, l.role
+                SELECT DISTINCT dl.sha256_hash, dl.canonical_filename, dl.doc_type, dl.doc_date, dl.lifecycle_status, l.role
                 FROM document_entity_links l
                 JOIN document_ledger dl ON l.sha256_hash = dl.sha256_hash
                 WHERE l.node_id = ?
+                ORDER BY dl.doc_date DESC
                 LIMIT 50;
             """, (canonical_id,))
             docs = [dict(r) for r in cur.fetchall()]
