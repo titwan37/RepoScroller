@@ -161,6 +161,24 @@ uv run python -m reposcroller.main sidecar --batch --limit 20
 uv run python -m reposcroller.main sidecar --poll-interval 3.0
 ```
 
+#### 5. Re-index & Resolve Banking Entities (Zuger Kantonalbank & PostFinance)
+
+```powershell
+# Scan ledger & document chunks, consolidate fragmented nodes, and backfill banking links
+python -m backend.main reindex-banking
+# Or directly:
+python -m backend.ledger.reindex_banking_entities
+```
+
+#### 6. Re-index & Classify Career Documents (Cover Letters & Applications)
+
+```powershell
+# Reclassify application letters, motivation pitches, and profiles into career_cover_letter
+python -m backend.main reindex-career
+# Or directly:
+python -m backend.ledger.reindex_career_documents
+```
+
 ---
 
 ## 🧠 Sovereign GraphRAG & Knowledge Base Sidecar
@@ -183,6 +201,150 @@ RepoScroller features a multi-signal **GraphRAG** pipeline designed for corpora 
 3. **Signal C (Knowledge Graph Expansion):** 1-hop and 2-hop entity neighborhood expansion (`(:Party)-[:SIGNS]->(:Contract)` / `(:Doc)-[:SUPERSEDES]->(:Doc)`).
 4. **Reciprocal Rank Fusion (RRF):** Merges candidate lists using:
    $$\text{RRF Score}(d) = \sum_{m \in \{\text{dense}, \text{sparse}\}} \frac{1}{60 + \text{rank}_m(d)}$$
+
+---
+
+## 🌌 3D Knowledge Universe & Graph Navigation
+
+RepoScroller features a high-performance **Three.js / WebGL 3D Knowledge Universe** mapping high-dimensional entity representations into an interactive, stratified 3D topological space (PCA-1 Domain Specificity, PCA-2 Temporal Maturity, PCA-3 Graph Centrality).
+
+```
+                      3D Knowledge Universe Architecture
+                      
+   [ Document Ledger ] ──( Click "🌐 3D" )──> [ Auto-Switch to Universe View ]
+                                                       │
+   [ URL Query Filter ] ──( e.g. location=zurich&org=ZKB )──> [ Dynamic Subgraph Extraction ]
+                                                       │
+                                                       ▼
+                      ┌─────────────────────────────────────────────────┐
+                      │ • Smooth Camera Flight & Ease-In-Out Zoom       │
+                      │ • Glowing Reticle Beacon Ring at Target Node    │
+                      │ • Materialized Electric-Cyan / Gold Links       │
+                      │ • Active Filter HUD Banner with 1-Click Reset   │
+                      │ • Dynamic Node & Link Brightness Sliders        │
+                      └─────────────────────────────────────────────────┘
+```
+
+### 🎯 Cross-Component Navigation (Document Ledger $\rightarrow$ 3D Universe)
+
+1. **Direct Document-to-Graph Jump:**
+   - In the **Document Ledger** table, click the **`🌐 3D`** button on any document row.
+   - Alternatively, open the **Document Lineage Drawer** and click **`🌐 Visualize in 3D Universe`**.
+2. **Automated Visual Focus & Camera Orbit:**
+   - The interface automatically switches to the **3D Universe** tab.
+   - The camera initiates a smooth ease-in-out flight path zooming directly toward the selected document/entity node.
+3. **Link Materialization & Visual Beacon:**
+   - The selected node is highlighted with an animated, pulsing **reticle beacon ring**.
+   - All 1-hop relational links connected to the document materialize with highlighted line segments, while distant background nodes gently dim for visual clarity.
+   - The **Node Inspector Panel** opens with metadata, degree centrality, connected entities, and quick actions.
+
+---
+
+### 🔍 Neighborhood Connections & Progressive Semantic Expansion
+
+The 3D Universe allows deep interactive inspection and on-demand graph expansion directly from the WebGL viewport:
+
+```
+                      Interactive Neighborhood Exploration
+                      
+   [ 3D Node Click ] ──> [ Smooth Camera Glide & Reticle Beacon ]
+                                   │
+                                   ▼
+                      ┌───────────────────────────────────────────────┐
+                      │             Node Inspector Panel              │
+                      │ • Entity Metadata, Type Badge & Degree        │
+                      │ • 1-Hop Connected Relations & Role Badges     │
+                      │ • Linked Documents with 1-Click Jump          │
+                      │ • [⚡ Expand 1-Hop Neighbors] Button          │
+                      └───────────────────────┬───────────────────────┘
+                                              │ (Click Expand or Double-Click)
+                                              ▼
+                      ┌───────────────────────────────────────────────┐
+                      │    Progressive Dynamic Subgraph Expansion     │
+                      │ • Fetches unrendered 1-hop neighbor entities  │
+                      │ • Spherical cluster injection around parent   │
+                      │ • Live edge materialization without re-render │
+                      └───────────────────────────────────────────────┘
+```
+
+#### 1. Node Inspector & Relationship Explorer
+* **Single-Click on any 3D node:**
+  - Instantly centers the camera and draws a glowing **3D reticle beacon ring**.
+  - Highlights and materializes connected relational links in electric-cyan and gold.
+  - Opens the **Node Inspector Drawer** on the right side, showing:
+    - **Entity Type & Cluster**: Color-coded category badge and topological archetype.
+    - **Graph Metrics**: Degree centrality, 3D PCA coordinates, and document frequency.
+    - **Neighborhood Connections**: Interactive list of all incoming and outgoing relations (e.g. `LOCATED_IN`, `SUBJECT_TO`, `DENOMINATED_IN`, `INVOLVES_PAYMENT`). Clicking any neighbor glides the camera directly to it.
+    - **Linked Documents**: Direct list of all associated files indexed in SQLite. Click any document item (`📄 file.pdf ➔`) to refocus the graph on that document's entity network.
+
+#### 2. Progressive Semantic Expansion (Dynamic Subgraph Injection)
+* **Double-Click on any 3D node** or click **`⚡ Expand 1-Hop Neighbors`** in the inspector:
+  - Fetches undiscovered 1-hop and 2-hop neighbor entities from `/api/v1/sidecar/graph/node/{node_id}?hops=1`.
+  - Dynamically calculates local spherical coordinates around the target entity.
+  - Injects new nodes and connecting line segments directly into the active Three.js point cloud without reloading the page or resetting your camera perspective.
+
+#### 3. Full Document Node Support & Resilient Fallbacks
+* Supports both canonical knowledge graph entities (`organization`, `person`, `location`, `statute`) and synthetic document nodes (`doc_<sha>`).
+* Inspecting a document node automatically lists all extracted entities and their extraction roles (`subject`, `location`, `signee`).
+* Features a built-in **Local Scene Fallback Engine**: if network latency or connectivity is interrupted, the inspector transparently reconstructs the neighborhood from cached WebGL scene edges with zero error popups.
+
+---
+
+### ⚡ Dynamic 3D Graph Filtering & Search
+
+The 3D Universe supports dynamic multi-attribute query filtering to slice and explore subgraphs in real time.
+
+#### 1. In-App Query Filter Bar
+Located in the 3D Universe top toolbar (`#glsl-filter-query-input`):
+* Enter multi-attribute queries using URL query parameter syntax:
+  ```text
+  location=zurich&org=ZKB
+  org=Visana&type=statute
+  cluster=3&person=Müller
+  doc_sha=a1b2c3...
+  q=Krankenversicherung
+  ```
+* Press **`Enter`** or click **`⚡ Filter`**.
+* The 3D renderer dynamically fetches and renders only the matching subgraph, preserving co-occurrence paths between connected organizations and locations.
+* An **Active Filter HUD Banner** appears above the viewport showing current filter pills and a **`✕ Reset Filters`** button.
+
+#### 2. Quick Node Search
+* Use the **`Quick find entity in 3D space...`** input with auto-complete datalist to instantly snap and fly the camera to any node by name.
+
+#### 3. Real-Time Viewport Controls
+* **`🎨 Color Mode`**: Switch between *Topological Clusters*, *Centrality Heatmap*, and *Schema Entity Types*.
+* **`🌐 Cluster Filter`**: Filter viewport display to specific archetype clusters (e.g., *Governance & Regulatory*, *Financial & Banking*, *Entities & People*).
+* **`✨ Nodes Brightness Slider`**: Modulate GLSL vertex particle illumination (0.1x to 2.0x).
+* **`🕸️ Links Brightness Slider`**: Dynamically adjust edge line opacity (0.0 to 1.0) in real time.
+* **`↺ Reset View`**: Re-center camera and restore default galactic orbit perspective.
+
+---
+
+### 🔌 3D Sidecar API Filtering Reference
+
+The backend endpoint `GET /api/v1/sidecar/graph-3d` accepts dynamic query parameters for programmatic headless extraction:
+
+```bash
+# Filter by organization and geographic location
+curl "http://127.0.0.1:8090/api/v1/sidecar/graph-3d?location=zurich&org=ZKB"
+
+# Focus on a specific document hash and its connected subgraph
+curl "http://127.0.0.1:8090/api/v1/sidecar/graph-3d?doc_sha=8f4e2...&limit=150"
+
+# Filter by entity schema type or semantic cluster index
+curl "http://127.0.0.1:8090/api/v1/sidecar/graph-3d?node_type=organization&cluster=1"
+```
+
+| Parameter | Type | Description |
+| :--- | :--- | :--- |
+| `location` | `string` | Filter nodes located in or associated with a specific city / canton / country |
+| `org` / `organization` | `string` | Filter entities and documents associated with an organization |
+| `person` / `author` | `string` | Filter by signee, author, or mentioned person |
+| `doc_sha` / `sha256` | `string` | Target specific document SHA-256 hash and its 1-hop & 2-hop entity neighborhood |
+| `node_type` / `type` | `string` | Schema filter (`organization`, `location`, `person`, `statute`, `financial_pillar`, etc.) |
+| `cluster` | `int` | Filter by topological cluster ID (0 to 5) |
+| `q` / `search` | `string` | General keyword search across node names, aliases, and properties |
+| `limit` | `int` | Maximum number of nodes to return (default: `1200`) |
 
 ---
 
@@ -222,6 +384,8 @@ RepoScroller features a multi-signal **GraphRAG** pipeline designed for corpora 
 ### Knowledge Base Sidecar & Graph
 
 - `GET /api/v1/sidecar/stats` — Queue length, chunks indexed, and graph node/edge counts.
+- `GET /api/v1/sidecar/graph-3d` — 3D Knowledge Universe nodes, links, and PCA axes with dynamic query parameter filtering (`location`, `org`, `person`, `doc_sha`, `node_type`, `cluster`, `q`).
+- `GET /api/v1/sidecar/3d-cluster` — Archetype clusters, representativity metrics, and quota allocations.
 - `POST /api/v1/sidecar/process` — Trigger immediate batch processing for pending queue items.
 - `POST /api/v1/sidecar/search` — Dense semantic vector search over document chunks.
 - `GET /api/v1/sidecar/graph/node/{node_id}` — Expand entity neighborhood and connected documents.

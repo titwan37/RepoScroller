@@ -1,0 +1,126 @@
+```mermaid
+
+
+config:
+  theme: neutral
+  look: manual
+  themeVariables:
+    fontFamily: "'Source Code Pro', monospace"
+    mainBkg: "#ffffff"
+    clusterBkg: "#f8fafc"
+    clusterBorder: "#cbd5e1"
+    lineColor: "#6366f1"
+---
+
+flowchart TD
+    %% =========================================================================
+    %% STYLING & CLASS DEFINITIONS
+    %% =========================================================================
+    classDef storageStyle fill:#1e293b,stroke:#475569,stroke-width:1.5px,color:#f8fafc;
+    classDef l1Style fill:#0f172a,stroke:#0284c7,stroke-width:1.5px,color:#f8fafc;
+    classDef l2Style fill:#0f172a,stroke:#059669,stroke-width:1.5px,color:#f8fafc;
+    classDef pc1Style fill:#1e1b4b,stroke:#6366f1,stroke-width:1.5px,color:#f8fafc;
+    classDef pc2Style fill:#1c1917,stroke:#ea580c,stroke-width:1.5px,color:#f8fafc;
+    classDef agentStyle fill:#1e293b,stroke:#8b5cf6,stroke-width:1.5px,color:#f8fafc;
+    classDef graph3dStyle fill:#090d16,stroke:#38bdf8,stroke-width:2px,color:#f8fafc;
+
+    %% =========================================================================
+    %% STORAGE REPOSITORIES
+    %% =========================================================================
+    subgraph Repositories ["Distributed Storage Repositories"]
+        R1["\\\\SyNAS\\xcloud\\docs"]
+        R2["\\\\SyNAS\\CloudSpace\\LexSpace"]
+        R3["Mounted Cloud Drives (H:\\, L:\\, G:\\)"]
+    end
+    class R1,R2,R3 storageStyle;
+
+    %% =========================================================================
+    %% LAYER 1: INGESTION & HASHING
+    %% =========================================================================
+    subgraph Layer1 ["Layer 1: Ingestion & Dual-Hashing (ALCOA+)"]
+        Crawler["MultiRootCrawler Pool<br/>(6× Concurrent Worker Threads)"]
+        FastPath{"Fast-Path Bypass<br/>(mtime & size match?)"}
+        SHA["Streaming SHA-256<br/>(Bit-for-Bit Identity / O(1))"]
+        SimHash["64-bit SimHash LSH<br/>(Draft Lineage / Hamming ≤ 12)"]
+    end
+    class Crawler,FastPath,SHA,SimHash l1Style;
+
+    %% =========================================================================
+    %% LAYER 2: ACID LEDGER
+    %% =========================================================================
+    subgraph Layer2 ["Layer 2: ACID SQLite WAL Ledger (reposcroller_ledger.db)"]
+        LedgerCore[("Relational & Audit Tables<br/>• document_ledger<br/>• file_locations<br/>• version_chains<br/>• audit_log")]
+        Maturity["Heuristic MaturityScore<br/>(Completeness + Signatures + Date + Naming)"]
+        FTS5["SQLite FTS5 BM25<br/>(Deterministic Lexical Search)"]
+    end
+    class LedgerCore,Maturity,FTS5 l2Style;
+
+    %% =========================================================================
+    %% LAYER 3: SPLIT WORKLOAD COMPUTE
+    %% =========================================================================
+    subgraph Layer3 ["Layer 3: Distributed Split Workload Engine"]
+        subgraph PC1 ["PC1 Host Engine (CPU / Reasoning)"]
+            ChatEngine["api/chat: llama3.2:3b<br/>(Document Categorization & Intent Analysis)"]
+        end
+
+        subgraph PC2 ["PC2 CUDA Remote Node (RTX 3060 6GB)"]
+            EmbedEngine["api/embed: snowflake-arctic-embed2<br/>(1024-dim Float32 Tensors | 4× Workers)"]
+        end
+    end
+    class ChatEngine pc1Style;
+    class EmbedEngine pc2Style;
+
+    %% =========================================================================
+    %% LAYER 4: AGENTIC INTERROGATION
+    %% =========================================================================
+    subgraph Layer4 ["Layer 4: LangGraph Procedural Interrogation Agent"]
+        IntentRouter{"Intent Router<br/>(Existence Check vs. Content QA)"}
+        Ranker["Canonical Lineage Ranker<br/>(Maturity & Authority Resolution)"]
+        QASynth["Grounded Context Synthesis<br/>(Source Attribution & Verification)"]
+    end
+    class IntentRouter,Ranker,QASynth agentStyle;
+
+    %% =========================================================================
+    %% LAYER 5: 3D UNIVERSE & SIDECAR
+    %% =========================================================================
+    subgraph Layer5 ["Layer 5: Knowledge Base Sidecar & 3D WebGL Universe"]
+        BipartiteGraph[("Property Graph Store<br/>• Organizations & Persons<br/>• Cantonal Hierarchy (CH-ZG ➔ 11 Communes)<br/>• Governing Statutes & Contracts")]
+        Universe3D["WebGL Three.js Universe<br/>• Centroid Look-Inward Frustum Framing<br/>• Stratified Archetype Quotas (250/type)<br/>• Dynamic Query Filters (?location=...&org=...)"]
+    end
+    class BipartiteGraph,Universe3D graph3dStyle;
+
+    %% =========================================================================
+    %% WORKFLOW CONNECTIONS
+    %% =========================================================================
+    R1 --> R2 --> R3
+    R2 --> Crawler
+    Crawler --> FastPath
+    FastPath -- "s65" --> LedgerCore
+    FastPath -- "s66" --> SHA
+    SHA --> SimHash
+    SHA --> Maturity
+    Maturity --> LedgerCore
+    LedgerCore --> FTS5
+
+    %% CDC Pipeline to Split Workload & Sidecar
+    LedgerCore ==>|"Async CDC Event Stream"| PC1
+    LedgerCore ==>|"Async CDC Event Stream"| PC2
+    ChatEngine <-->|"Gigabit LAN Bridge"| EmbedEngine
+    EmbedEngine -->|"Dense Vector Embeddings"| BipartiteGraph
+    ChatEngine -->|"Entity & Hierarchy Tuples"| BipartiteGraph
+    BipartiteGraph -->|"Graph Topology & Edge Arrays"| Universe3D
+
+    %% Interrogation Flow
+    UserQuery(["User Interrogation / REST API"]) --> IntentRouter
+    IntentRouter -->|"Existence Check"| LedgerCore
+    IntentRouter -->|"Document Q&A"| FTS5
+    IntentRouter -->|"Document Q&A"| BipartiteGraph
+    LedgerCore --> Ranker
+    FTS5 --> Ranker
+    BipartiteGraph --> Ranker
+    Ranker --> QASynth
+    QASynth ==>|"Verified Evidentiary Response"| OutputResult(["Response with Canonical Source"])
+
+    %% Cross-Component Linkage
+    Universe3D -.->|"Node Selection & Navigation Focus"| IntentRouter
+```

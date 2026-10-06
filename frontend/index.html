@@ -1,0 +1,1907 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RepoScroller - ALCOA+ Document Intelligence & Deduplication</title>
+  <script>
+    (function () {
+      var p = window.location.pathname;
+      var baseHref = p.startsWith('/reposcroller') ? '/reposcroller/' : '/';
+      var base = document.createElement('base');
+      base.href = baseHref;
+      document.head.prepend(base);
+    })();
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+    rel="stylesheet">
+  <link rel="icon" type="image/x-icon" href="favicon.ico">
+  <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+  <link rel="icon" type="image/png" sizes="64x64" href="favicon.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+  <link rel="stylesheet" href="style.css?v=33">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+</head>
+
+<body>
+  <!-- Top Navigation Bar -->
+  <header class="navbar">
+    <div class="nav-brand">
+      <div class="logo-icon">📜</div>
+      <div class="brand-text">
+        <h1>Administrative Document Repository Scroller</h1>
+        <span class="alcoa-badge">ALCOA+ Compliant</span>
+      </div>
+    </div>
+
+    <!-- Pre-flight Duplicate Dropzone -->
+    <div class="nav-actions">
+      <section class="dropzone-section">
+        <div id="dropzone" class="dropzone" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)"
+          ondrop="handleDrop(event)" onclick="triggerFileInput()">
+          <input type="file" id="file-input" style="display:none" onchange="handleFileSelected(event)">
+          <!-- <div class="drop-icon">📥</div> -->
+          <div class="drop-title">📥 Pre-Flight Duplicate Inspection</div>
+          <p class="drop-desc">Drag & drop any document here before saving, or <span>browse file</span></p>
+          <div class="drop-hint">Computes SHA-256 & SimHash instantly to detect bitwise copies & drafts</div>
+        </div>
+        <div id="drop-result" class="drop-result hidden"></div>
+      </section>
+    </div>
+
+    <div class="nav-actions">
+      <div id="backend-status" class="status-indicator">
+        <span class="pulse-dot"></span>
+        <span id="backend-status-text">Connecting...</span>
+      </div>
+      <button id="btn-scan" class="btn btn-primary" onclick="triggerScan()">
+        <span class="btn-icon">⚡</span> Quick Scan
+      </button>
+      <button id="btn-watch" class="btn btn-outline" onclick="toggleWatcher()">
+        <span class="btn-icon">👁️</span> <span id="watch-btn-text">Start Watcher</span>
+      </button>
+      <button id="btn-diag-toggle" class="btn btn-outline btn-diag-nav" onclick="toggleDiagnosticConsole()"
+        title="Toggle Live Diagnostic Console">
+        <span class="btn-icon">🩺</span> Diagnostics
+        <span id="nav-diag-badge" class="badge-diag-counter hidden">0</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Top Workspace Switcher Bar -->
+  <nav class="workspace-nav-bar">
+    <div class="workspace-tabs-group">
+      <button id="ws-btn-process" class="ws-tab-btn active" onclick="switchWorkspace('process')">
+        <!-- <span class="ws-tab-icon">📊</span> -->
+        <span class="ws-tab-title">📊 Process Scroller</span>
+        <span class="ws-tab-pill">Digitalization Pipeline</span>
+      </button>
+      <button id="ws-btn-ledger" class="ws-tab-btn" onclick="switchWorkspace('ledger')">
+        <!-- <span class="ws-tab-icon">🗄️</span> -->
+        <span class="ws-tab-title">🗄️ Document Ledger</span>
+        <span class="ws-tab-pill">Single Source of Truth</span>
+      </button>
+      <button id="ws-btn-graphrag" class="ws-tab-btn" onclick="switchWorkspace('graphrag')">
+        <!-- <span class="ws-tab-icon">🧠</span> -->
+        <span class="ws-tab-title">🧠 GraphRAG Sovereign Studio</span>
+        <span class="ws-tab-pill pill-ai">CUDA Hybrid Search</span>
+      </button>
+      <button id="ws-btn-universe" class="ws-tab-btn" onclick="switchWorkspace('universe')">
+        <!-- <span class="ws-tab-icon">🌐</span> -->
+        <span class="ws-tab-title">🌐 3D Knowledge Universe</span>
+        <span class="ws-tab-pill pill-glsl">WebGL GLSL 3D</span>
+      </button>
+      <button id="ws-btn-authors" class="ws-tab-btn" onclick="switchWorkspace('authors')">
+        <span class="ws-tab-title">✍️ Author Review</span>
+        <span class="ws-tab-pill">Human approval queue</span>
+      </button>
+      <button id="ws-btn-chat" class="ws-tab-btn" onclick="switchWorkspace('chat')">
+        <!-- <span class="ws-tab-icon">💬</span> -->
+        <span class="ws-tab-title">💬 AI Interrogation Assistant</span>
+        <span class="ws-tab-pill pill-chat">Grounded Reasoning</span>
+      </button>
+    </div>
+  </nav>
+
+  <!-- =========================================================================
+         WORKSPACE 0: PROCESS SCROLLER & LINEAGE EXPLORER
+         ========================================================================= -->
+
+  <main id="ws-pane-process" class="workspace-pane active process-scroller-layout">
+    <!-- Storage Mounts Bar -->
+    <section class="mounts-bar">
+      <div class="mounts-label">Active Storage Mounts:</div>
+      <div id="mounts-list" class="mounts-chips">
+        <span class="chip chip-loading">Probing storage roots...</span>
+      </div>
+    </section>
+
+    <!-- Metrics KPI Cards -->
+    <section class="metrics-grid">
+      <div class="metric-card">
+        <div class="metric-label">🏷️ Unique Documents</div>
+        <div id="metric-unique" class="metric-value">--</div>
+        <div class="metric-sub">Single source of truth</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">📁 Physical Locations</div>
+        <div id="metric-locations" class="metric-value">--</div>
+        <div class="metric-sub">Distributed files mapped</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">🕒 Version Links</div>
+        <div id="metric-lineage" class="metric-value text-cyan">--</div>
+        <div class="metric-sub">Evolved & draft chains</div>
+      </div>
+      <div class="metric-card metric-interactive" id="card-duplicates" onclick="toggleDuplicatesFilter()"
+        title="Click to view all duplicate files in the repository">
+        <div class="metric-header-row">
+          <div class="metric-label">📄 Deduplicated Savings</div>
+          <span id="duplicates-badge" class="badge-filter-active hidden">Active Filter</span>
+        </div>
+        <div id="metric-savings" class="metric-value text-emerald">--</div>
+        <div class="metric-sub" id="duplicates-sub">Exact duplicate copies (click to filter)</div>
+      </div>
+      <div class="metric-card metric-interactive" id="card-kb-metric" onclick="switchTab('graph')"
+        title="Click to inspect Snowflake Arctic Vectors & Property Graph">
+        <div class="metric-header-row">
+          <div class="metric-label">🧠 Knowledge Base</div>
+          <span id="kb-status-dot" class="badge-filter-active"
+            style="background: rgba(99,102,241,0.2); color: var(--accent-primary);">Active</span>
+        </div>
+        <div id="metric-kb-chunks" class="metric-value text-indigo">--</div>
+        <div class="metric-sub" id="metric-kb-sub">Vectors & Graph Nodes</div>
+      </div>
+    </section>
+
+    <!-- =========================================================================
+       THE PROCESS SCROLLER: 5-STAGE ALCOA+ DIGITALIZATION & REASONING PIPELINE
+       ========================================================================= -->
+    <section class="process-scroller-section" id="process-scroller-section">
+      <div class="section-hero-header">
+        <div class="section-title-wrap">
+          <span class="section-icon">🔄</span>
+          <div>
+            <h2 class="section-title">The Process Scroller: 5-Stage Digitalization & Provenance Pipeline</h2>
+            <p class="section-subtitle">Real-time telemetry and activity tracking across Crawler, Chunker, Cascaded
+              Analyzer, CUDA Embedder, and Lineage Graph Engine</p>
+          </div>
+        </div>
+        <div class="pipeline-live-indicator">
+          <span class="pulse-dot"></span>
+          <span id="pipeline-live-status-text">Pipeline Active</span>
+        </div>
+      </div>
+
+      <!-- 5 Pipeline Stage Cards Connected by Flow Channels -->
+      <div class="pipeline-stages-grid">
+
+        <!-- Stage 1: Crawler & Storage Discovery -->
+        <div class="pipeline-stage-card" id="stage-card-crawler">
+          <div class="stage-card-header">
+            <div class="stage-number">01</div>
+            <div class="stage-icon">📂</div>
+            <div class="stage-info">
+              <div class="stage-name">Storage Ingest & Crawler</div>
+              <div class="stage-module">crawler.py</div>
+            </div>
+            <span class="stage-status-badge badge-active" id="stage-crawler-badge">Watching</span>
+          </div>
+          <div class="stage-body">
+            <p class="stage-desc">MultiRootCrawler scanning distributed mounts with antichronological priority and
+              continuous PollingObserver.</p>
+            <div class="stage-metrics-list">
+              <div class="stage-metric"><span class="lbl">Configured Roots:</span> <strong id="ps-crawler-roots">6
+                  Mounts</strong></div>
+              <div class="stage-metric"><span class="lbl">Online Roots:</span> <strong id="ps-crawler-accessible"
+                  class="text-emerald">6/6 Accessible</strong></div>
+              <div class="stage-metric"><span class="lbl">Scan Order:</span> <strong>Antichronological</strong></div>
+              <div class="stage-metric"><span class="lbl">Observer Status:</span> <strong
+                  id="ps-crawler-observer">Ready</strong></div>
+            </div>
+          </div>
+          <div class="stage-footer">
+            <button class="stage-action-btn" onclick="triggerScan()">⚡ Run Quick Scan</button>
+          </div>
+        </div>
+
+        <!-- Connector 1-2 -->
+        <div class="stage-connector">
+          <div class="connector-line"></div>
+          <div class="connector-arrow">➔</div>
+        </div>
+
+        <!-- Stage 2: Document Chunker & PDF I/O -->
+        <div class="pipeline-stage-card" id="stage-card-chunker">
+          <div class="stage-card-header">
+            <div class="stage-number">02</div>
+            <div class="stage-icon">📄</div>
+            <div class="stage-info">
+              <div class="stage-name">Context Chunker & PDF I/O</div>
+              <div class="stage-module">chunker.py + telemetry.py</div>
+            </div>
+            <span class="stage-status-badge badge-active" id="stage-chunker-badge">512 Tokens</span>
+          </div>
+          <div class="stage-body">
+            <p class="stage-desc">DocumentChunker sliding window tokenization with context header injection:
+              <code>[Doc | Cat | Date | Src]</code>.
+            </p>
+            <div class="stage-metrics-list">
+              <div class="stage-metric"><span class="lbl">Window / Overlap:</span> <strong>512 / 64 tokens</strong>
+              </div>
+              <div class="stage-metric"><span class="lbl">PDF / Doc I/O Speed:</span> <strong id="ps-chunker-io-speed"
+                  class="text-cyan">0.0 MB/s</strong></div>
+              <div class="stage-metric"><span class="lbl">Files Processed:</span> <strong
+                  id="ps-chunker-files-read">11,202 docs</strong></div>
+              <div class="stage-metric"><span class="lbl">Avg Extraction:</span> <strong id="ps-chunker-read-lat">--
+                  ms</strong></div>
+            </div>
+          </div>
+          <div class="stage-footer">
+            <span class="stage-footer-tag" id="ps-chunker-types-tag">.pdf • .docx • .txt • .md</span>
+          </div>
+        </div>
+
+        <!-- Connector 2-3 -->
+        <div class="stage-connector">
+          <div class="connector-line"></div>
+          <div class="connector-arrow">➔</div>
+        </div>
+
+        <!-- Stage 3: Cascaded Intelligence Analyzer -->
+        <div class="pipeline-stage-card" id="stage-card-analyzer">
+          <div class="stage-card-header">
+            <div class="stage-number">03</div>
+            <div class="stage-icon">🤖</div>
+            <div class="stage-info">
+              <div class="stage-name">Cascaded LLM Analyzer</div>
+              <div class="stage-module">analyzer.py</div>
+            </div>
+            <span class="stage-status-badge badge-ai" id="stage-analyzer-badge">Cascaded</span>
+          </div>
+          <div class="stage-body">
+            <p class="stage-desc">DocumentAnalyzer: 3-tier cascade (OpenRouter ➔ Ollama Llama 3.2 ➔ Heuristic Rules) for
+              taxonomy & maturity.</p>
+            <div class="stage-metrics-list">
+              <div class="stage-metric"><span class="lbl">Active LLM Target:</span> <strong id="ps-analyzer-target"
+                  class="text-indigo">PC2 (3B CUDA)</strong></div>
+              <div class="stage-metric"><span class="lbl">Taxonomy Categories:</span> <strong
+                  id="ps-analyzer-categories">18 Slugs</strong></div>
+              <div class="stage-metric"><span class="lbl">Lifecycle Scored:</span> <strong
+                  id="ps-analyzer-lifecycle">Final / Draft / Review</strong></div>
+              <div class="stage-metric"><span class="lbl">Auto-Taxonomy:</span> <strong class="text-emerald">Active
+                  Discovery</strong></div>
+            </div>
+          </div>
+          <div class="stage-footer">
+            <button class="stage-action-btn" onclick="switchChatNode(activeChatNode === 'pc1' ? 'pc2' : 'pc1')">⇄ Toggle
+              Routing Node</button>
+          </div>
+        </div>
+
+        <!-- Connector 3-4 -->
+        <div class="stage-connector">
+          <div class="connector-line"></div>
+          <div class="connector-arrow">➔</div>
+        </div>
+
+        <!-- Stage 4: Remote CUDA GPU Embedder -->
+        <div class="pipeline-stage-card stage-card-cuda" id="stage-card-embedder">
+          <div class="stage-card-header">
+            <div class="stage-number">04</div>
+            <div class="stage-icon">⚡</div>
+            <div class="stage-info">
+              <div class="stage-name">CUDA Embedding Engine</div>
+              <div class="stage-module">sidecar_worker.py</div>
+            </div>
+            <span class="stage-status-badge badge-cuda" id="stage-embedder-badge">RTX 3060</span>
+          </div>
+          <div class="stage-body">
+            <p class="stage-desc">KnowledgeBaseSidecarWorker async HTTP pool (6x) to PC2 NVIDIA RTX 3060 CUDA GPU.</p>
+            <div class="stage-metrics-list">
+              <div class="stage-metric"><span class="lbl">Embedding Model:</span> <strong id="ps-embedder-model"
+                  class="text-cyan">snowflake-arctic-embed2</strong></div>
+              <div class="stage-metric"><span class="lbl">Vector Dimensions:</span> <strong>1024-dim Floats</strong>
+              </div>
+              <div class="stage-metric"><span class="lbl">GPU VRAM Allocated:</span> <strong id="ps-embedder-vram"
+                  class="text-emerald">664 MB Resident</strong></div>
+              <div class="stage-metric"><span class="lbl">Worker Pool:</span> <strong id="ps-embedder-pool">6x Async
+                  HTTP</strong></div>
+            </div>
+          </div>
+          <div class="stage-footer">
+            <span class="stage-footer-tag text-emerald font-bold" id="ps-embedder-velocity">⚡ 96.5k tokens/s</span>
+          </div>
+        </div>
+
+        <!-- Connector 4-5 -->
+        <div class="stage-connector">
+          <div class="connector-line"></div>
+          <div class="connector-arrow">➔</div>
+        </div>
+
+        <!-- Stage 5: Lineage & SQLite WAL Graph Store -->
+        <div class="pipeline-stage-card" id="stage-card-lineage">
+          <div class="stage-card-header">
+            <div class="stage-number">05</div>
+            <div class="stage-icon">🕒</div>
+            <div class="stage-info">
+              <div class="stage-name">Lineage & WAL Graph Store</div>
+              <div class="stage-module">repository.py + graph_store.py</div>
+            </div>
+            <span class="stage-status-badge badge-active" id="stage-lineage-badge">WAL Mode</span>
+          </div>
+          <div class="stage-body">
+            <p class="stage-desc">ACID document ledger with version lineage relationships, duplicate deduplication, and
+              Property Graph indexing.</p>
+            <div class="stage-metrics-list">
+              <div class="stage-metric"><span class="lbl">Version Links:</span> <strong id="ps-lineage-links"
+                  class="text-cyan">3,555,530</strong></div>
+              <div class="stage-metric"><span class="lbl">Graph Entities:</span> <strong id="ps-lineage-nodes"
+                  class="text-indigo">14,728 Nodes</strong></div>
+              <div class="stage-metric"><span class="lbl">Graph Relationships:</span> <strong
+                  id="ps-lineage-edges">1,066,018 Edges</strong></div>
+              <div class="stage-metric"><span class="lbl">Dedup Savings:</span> <strong id="ps-lineage-savings"
+                  class="text-emerald">8,177 Files</strong></div>
+            </div>
+          </div>
+          <div class="stage-footer">
+            <button class="stage-action-btn" onclick="scrollToLineageExplorer()">🔍 Inspect Lineage</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =========================================================================
+       DUAL-NODE REALTIME OLLAMA PROCESS INSPECTOR (/api/ps PULSED LIVE)
+       ========================================================================= -->
+    <section class="dual-ollama-ps-section" id="dual-ollama-ps-section">
+      <div class="section-hero-header">
+        <div class="section-title-wrap">
+          <span class="section-icon">🧠</span>
+          <div>
+            <h2 class="section-title">Dual-Node Realtime Ollama Process Inspector (`/api/ps`)</h2>
+            <p class="section-subtitle">Direct live telemetry on model residency in memory, VRAM allocation, context
+              windows, quantization, and expiration countdowns</p>
+          </div>
+        </div>
+        <div class="ps-refresh-actions">
+          <span class="ps-sync-pill" id="ps-sync-timestamp">⟳ Synced: --:--:--</span>
+          <button class="btn btn-outline btn-xs" onclick="pollOllamaProcessInspector(true)"
+            title="Force refresh /api/ps probes">
+            <span>⟳</span> Probe Hardware
+          </button>
+        </div>
+      </div>
+
+      <div class="dual-ps-cards-grid">
+
+        <!-- PC1 Localhost Engine /api/ps -->
+        <div class="ps-node-panel" id="panel-ps-pc1">
+          <div class="ps-panel-header">
+            <div class="ps-panel-title-group">
+              <span class="ps-node-avatar">💻</span>
+              <div>
+                <div class="ps-node-heading">PC1 Host Engine (CPU / Host RAM)</div>
+                <div class="ps-node-url-tag">
+                  <a href="http://127.0.0.1:11434/api/ps" target="_blank"
+                    title="Test direct API endpoint">http://127.0.0.1:11434/api/ps ↗</a>
+                </div>
+              </div>
+            </div>
+            <span class="node-status-badge badge-online" id="ps-pc1-status-badge"><span class="dot"></span>
+              Online</span>
+          </div>
+
+          <div class="ps-models-table-wrap">
+            <table class="ps-models-table">
+              <thead>
+                <tr>
+                  <th>Model</th>
+                  <th>Family / Params</th>
+                  <th>Quant</th>
+                  <th>Context</th>
+                  <th>Residency</th>
+                  <th>Expires In</th>
+                </tr>
+              </thead>
+              <tbody id="ps-pc1-models-tbody">
+                <tr>
+                  <td colspan="6" class="text-center text-muted">Probing http://127.0.0.1:11434/api/ps...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="ps-panel-footer">
+            <span class="ps-footer-info" id="ps-pc1-summary">3 models loaded • ~15.4 GB Host RAM • 100% CPU</span>
+          </div>
+        </div>
+
+        <!-- PC2 Remote CUDA GPU Server /api/ps -->
+        <div class="ps-node-panel cuda-panel" id="panel-ps-pc2">
+          <div class="ps-panel-header">
+            <div class="ps-panel-title-group">
+              <span class="ps-node-avatar cuda-avatar">⚡</span>
+              <div>
+                <div class="ps-node-heading">PC2 Remote CUDA Node (NVIDIA RTX 3060)</div>
+                <div class="ps-node-url-tag">
+                  <a href="http://nitro-an51755:11434/api/ps" target="_blank"
+                    title="Test direct API endpoint">http://nitro-an51755:11434/api/ps ↗</a>
+                </div>
+              </div>
+            </div>
+            <span class="node-status-badge badge-online" id="ps-pc2-status-badge"><span class="dot"></span> ⚡ CUDA
+              Ready</span>
+          </div>
+
+          <!-- Immediate VRAM Capacity & LAN Latency Banner -->
+          <div class="pc2-vram-gauge-banner" id="pc2-vram-gauge-banner">
+            <div class="vram-banner-header">
+              <span class="vram-banner-title">
+                <span class="text-cyan font-bold">⚡ RTX 3060 VRAM Allocation:</span>
+                <strong id="ps-pc2-vram-gauge-text">664 MB / 6,144 MB (10.8%)</strong>
+              </span>
+              <span class="vram-banner-ping" id="ps-pc2-live-ping">
+                <span class="ping-dot ping-fast"></span> Probe Latency: <strong id="ps-pc2-ping-val">-- ms</strong>
+              </span>
+            </div>
+            <div class="vram-bar-track">
+              <div class="vram-bar-fill" id="ps-pc2-vram-bar" style="width: 10.8%"></div>
+            </div>
+          </div>
+
+          <div class="ps-models-table-wrap">
+            <table class="ps-models-table">
+              <thead>
+                <tr>
+                  <th>Model</th>
+                  <th>Family / Params</th>
+                  <th>Quant</th>
+                  <th>Context</th>
+                  <th>GPU VRAM</th>
+                  <th>Expires In</th>
+                </tr>
+              </thead>
+              <tbody id="ps-pc2-models-tbody">
+                <tr>
+                  <td colspan="6" class="text-center text-muted">Probing http://nitro-an51755:11434/api/ps...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="ps-panel-footer">
+            <span class="ps-footer-info text-emerald font-bold" id="ps-pc2-summary">1 model in VRAM (664 MB) • 100% GPU
+              Accelerated</span>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+
+    <!-- Live Pulsed Realtime Telemetry Heartbeat & Sidecar Ingestion Banner -->
+    <section class="telemetry-pulse-hero-bar" id="ws0-telemetry-pulse-bar">
+      <div class="pulse-hero-header">
+        <div class="pulse-hero-title-group">
+          <span class="pulse-live-icon">📡</span>
+          <div>
+            <div class="pulse-hero-title">Pulsed Realtime Telemetry & Ingestion Hub</div>
+            <div class="pulse-hero-subtitle">Continuous live heartbeats from dual Ollama engines, KB Sidecar, and
+              Diagnostic Event stream</div>
+          </div>
+        </div>
+        <div class="pulse-endpoints-chips">
+          <a href="http://127.0.0.1:11434/api/ps" target="_blank" class="pulse-chip" id="pulse-chip-pc1"
+            title="Localhost Host Engine /api/ps">
+            <span class="dot-pulse dot-emerald"></span>
+            <span class="pulse-chip-label">PC1 (127.0.0.1:11434)</span>
+            <strong id="pulse-pc1-models-count" class="pulse-chip-val">3 models</strong>
+            <span class="pulse-chip-ext">↗</span>
+          </a>
+          <a href="http://nitro-an51755:11434/api/ps" target="_blank" class="pulse-chip" id="pulse-chip-pc2"
+            title="Remote CUDA GPU Node /api/ps">
+            <span class="dot-pulse dot-cyan"></span>
+            <span class="pulse-chip-label">PC2 (nitro-an51755:11434)</span>
+            <strong id="pulse-pc2-models-count" class="pulse-chip-val">664MB CUDA</strong>
+            <span class="pulse-chip-ext">↗</span>
+          </a>
+          <a href="http://127.0.0.1:8090/api/v1/sidecar/stats" target="_blank" class="pulse-chip"
+            id="pulse-chip-sidecar" title="Knowledge Base Sidecar Pipeline Stats">
+            <span class="dot-pulse dot-indigo"></span>
+            <span class="pulse-chip-label">Sidecar /stats</span>
+            <strong id="pulse-sidecar-val" class="pulse-chip-val">87.7k chunks</strong>
+            <span class="pulse-chip-ext">↗</span>
+          </a>
+          <a href="http://127.0.0.1:8090/api/v1/diagnostics/logs" target="_blank" class="pulse-chip"
+            id="pulse-chip-diag" title="Unified Diagnostic Logs Buffer">
+            <span class="dot-pulse dot-amber"></span>
+            <span class="pulse-chip-label">Diagnostics /logs</span>
+            <strong id="pulse-diag-val" class="pulse-chip-val">Active Stream</strong>
+            <span class="pulse-chip-ext">↗</span>
+          </a>
+        </div>
+      </div>
+
+      <!-- Live Ingestion Progress Bar & Controls -->
+      <div class="pulse-progress-panel">
+        <div class="pulse-progress-meta">
+          <div class="pulse-progress-title">
+            <span>⚡ Sidecar Knowledge Base Ingestion</span>
+            <span id="ws0-sidecar-status-pill" class="badge-status-pill badge-idle">Idle (Standby)</span>
+            <span id="ws0-sidecar-uptime-badge" class="badge-uptime hidden">⏱ 0s</span>
+          </div>
+          <div class="pulse-progress-stats">
+            <span>Processed: <strong id="ws0-docs-chunked-stat">11,202</strong> / <span
+                id="ws0-docs-total-stat">25,137</span> docs (<strong id="ws0-progress-pct"
+                class="text-emerald">44.5%</strong>)</span>
+            <span class="meta-sep">•</span>
+            <span>Indexed: <strong id="ws0-chunks-indexed-stat" class="text-cyan">87,721</strong> vectors</span>
+            <span class="meta-sep">•</span>
+            <span>Graph: <strong id="ws0-graph-nodes-stat" class="text-indigo">14,728</strong> nodes</span>
+          </div>
+        </div>
+        <div class="pulse-progress-track">
+          <div id="ws0-progress-bar-completed" class="pulse-bar-seg seg-completed" style="width: 44.5%;"
+            title="Completed"></div>
+          <div id="ws0-progress-bar-processing" class="pulse-bar-seg seg-processing" style="width: 0%;"
+            title="Processing"></div>
+          <div id="ws0-progress-bar-pending" class="pulse-bar-seg seg-pending" style="width: 55.5%;"
+            title="Pending Ingestion Queue"></div>
+        </div>
+        <div class="pulse-actions-bar">
+          <div class="pulse-actions-left">
+            <button id="ws0-btn-sidecar-toggle" class="btn btn-primary btn-sm" onclick="toggleContinuousSidecar()">
+              <span class="btn-icon">🚀</span> <span id="ws0-sidecar-btn-text">Start Continuous Sidecar</span>
+            </button>
+            <button id="ws0-btn-trigger-batch" class="btn btn-outline btn-sm" onclick="triggerSidecarBatch()"
+              title="Embed 32 queued documents in one GPU burst">
+              <span class="btn-icon">⚡</span> Single Batch (32)
+            </button>
+            <button id="ws0-btn-validate-entities" class="btn btn-outline btn-sm" onclick="triggerEntityValidation()"
+              title="Trigger LLM Knowledge Graph entity validation and pruning">
+              <span class="btn-icon">🛡️</span> Validate Entities
+            </button>
+            <button class="btn btn-outline btn-sm" onclick="triggerScan()" title="Trigger filesystem multi-root scan">
+              <span class="btn-icon">📂</span> Scan Roots
+            </button>
+            <button class="btn btn-outline btn-sm" onclick="toggleWatcher()"
+              title="Toggle continuous filesystem watcher">
+              <span class="btn-icon">👁️</span> <span id="ws0-watch-text">Start Watcher</span>
+            </button>
+          </div>
+          <div class="pulse-actions-right">
+            <span class="pulse-rate-tag" id="ws0-pulse-rate-tag">⚡ 0.0 files/m • 0.0 chunks/m</span>
+            <button class="btn-refresh-pill"
+              onclick="loadWorkloadTelemetry(true); loadSidecarStats(); loadProcessScrollerData();"
+              title="Force refresh all pulsed telemetry">
+              <span>⟳</span> Refresh All
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Split Workload Telemetry HUD (PC1 Localhost vs PC2 CUDA GPU) -->
+    <section class="workload-hud-bar" id="workload-hud-bar">
+      <div class="workload-hud-header">
+        <div class="workload-hud-title-group">
+          <span class="workload-hud-icon">⚡</span>
+          <span class="workload-hud-title">Split Workload Architecture</span>
+          <span class="workload-hud-pill pill-ai" id="hud-active-tier-pill">⚡ CUDA Remote Node (PC2)</span>
+          <span class="workload-hud-pill pill-subtle" id="hud-active-model-pill">snowflake-arctic-embed2:latest</span>
+        </div>
+        <div class="workload-hud-actions">
+          <!-- Dynamic api/chat Node Switcher -->
+          <div class="chat-node-switcher" id="chat-node-switcher" title="Switch LLM Reasoning target (api/chat)">
+            <span class="switcher-label">api/chat:</span>
+            <div class="switcher-toggle-group">
+              <button class="btn-node-toggle" id="btn-chat-toggle-pc1" onclick="switchChatNode('pc1')"
+                title="Route reasoning to PC1 Host (CPU)">
+                💻 PC1 (CPU)
+              </button>
+              <button class="btn-node-toggle active" id="btn-chat-toggle-pc2" onclick="switchChatNode('pc2')"
+                title="Route reasoning to PC2 Remote Node (CUDA RTX 3060)">
+                ⚡ PC2 (CUDA)
+              </button>
+            </div>
+          </div>
+          <span class="hud-sync-time" id="hud-sync-time">⟳ Synced: --:--:--</span>
+          <button class="btn-workload-refresh" id="btn-workload-refresh" onclick="loadWorkloadTelemetry(true)"
+            title="Force Refresh Node Status">
+            <span class="refresh-icon">⟳</span> Probe Hardware
+          </button>
+        </div>
+      </div>
+      <div class="workload-nodes-grid">
+
+        <!-- PC1 Localhost Node -->
+        <div class="workload-node-card" id="node-card-pc1">
+          <div class="node-card-header">
+            <div class="node-title-group">
+              <span class="node-icon">💻</span>
+              <div>
+                <div class="node-name">PC1 Host Engine <span class="node-role-pill">api/chat</span></div>
+                <div class="node-target" id="pc1-node-url">http://127.0.0.1:11434</div>
+              </div>
+            </div>
+            <div class="node-header-right">
+              <span class="node-status-badge badge-probing" id="pc1-node-badge"><span class="dot"></span>
+                Probing...</span>
+            </div>
+          </div>
+
+          <div class="node-models-bar">
+            <span class="models-label">Loaded:</span>
+            <div class="models-tag-list" id="pc1-models-list">
+              <span class="mini-tag">Loading...</span>
+            </div>
+          </div>
+
+          <div class="node-metrics-row">
+            <div class="node-metric-item">
+              <span class="node-metric-label">Model (CPU)</span>
+              <span class="node-metric-val" id="pc1-model-name">Loading...</span>
+            </div>
+            <div class="node-metric-item">
+              <span class="node-metric-label">Local Ping</span>
+              <span class="node-metric-val" id="pc1-ping-ms">--</span>
+            </div>
+            <div class="node-metric-item">
+              <div class="node-metric-label">Chat Calls</div>
+              <div class="node-metric-val text-indigo" id="pc1-chat-count">0 calls</div>
+            </div>
+            <div class="node-metric-item">
+              <div class="node-metric-label">Processor / RAM</div>
+              <div class="node-metric-val" id="pc1-latency-ms">100% CPU</div>
+            </div>
+            <div class="node-metric-item">
+              <div class="node-metric-label">Host Status / Context</div>
+              <div class="node-metric-val" id="pc1-activity-status">idle</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- LAN Stream & Ingestion Throughput Bridge Card -->
+        <div class="workload-node-card throughput-card" id="node-card-throughput">
+          <div class="node-card-header">
+            <div class="node-title-group">
+              <span class="node-icon stream-icon">⇄</span>
+              <div>
+                <div class="node-name">LAN Stream & Throughput <span class="node-role-pill pill-stream">PC1 ⇄ PC2</span>
+                </div>
+                <div class="node-target" id="stream-endpoints-desc">http://localhost:11434 ⇄ http://NITRO-AN51755:11434
+                </div>
+              </div>
+            </div>
+            <div class="node-header-right">
+              <span class="node-status-badge badge-stream" id="bridge-status-badge">
+                <span class="dot-stream"></span> Active Stream
+              </span>
+            </div>
+          </div>
+
+          <!-- Animated Directional Transfer Pipeline -->
+          <div class="stream-pipeline-box">
+            <div class="stream-channel outbound">
+              <div class="stream-meta">
+                <span class="stream-label">Text Chunks ➔ PC2 CUDA</span>
+                <span class="stream-endpoint-tag">POST /api/embed</span>
+              </div>
+              <div class="stream-track">
+                <div class="stream-pulse pulse-outbound"></div>
+              </div>
+            </div>
+
+            <div class="stream-channel inbound">
+              <div class="stream-meta">
+                <span class="stream-label">Dense Vectors ➔ PC1 SQLite</span>
+                <span class="stream-endpoint-tag">1024-dim Floats (200 OK)</span>
+              </div>
+              <div class="stream-track">
+                <div class="stream-pulse pulse-inbound"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Real-Time Pipeline Flow Inspector ("See-Through") -->
+          <div class="pipeline-flow-inspector" id="pipeline-flow-inspector"
+            title="Live Pipeline Flow: In-flight queue depths and stage bottlenecks">
+            <div class="flow-stage-step" id="stage-producer">
+              <span class="flow-stage-label">Producer:</span>
+              <strong id="flow-producer-val">Idle</strong>
+            </div>
+            <span class="flow-arrow">➔</span>
+            <div class="flow-stage-step" id="stage-embed-queue">
+              <span class="flow-stage-label">Embed Q:</span>
+              <strong id="flow-embed-q-val" class="text-cyan">0/100</strong>
+            </div>
+            <span class="flow-arrow">➔</span>
+            <div class="flow-stage-step" id="stage-http-workers">
+              <span class="flow-stage-label">HTTP Pool:</span>
+              <strong id="flow-workers-val" class="text-emerald">6x (0 active)</strong>
+            </div>
+            <span class="flow-arrow">➔</span>
+            <div class="flow-stage-step" id="stage-db-queue">
+              <span class="flow-stage-label">DB Q:</span>
+              <strong id="flow-db-q-val" class="text-amber">0/100</strong>
+            </div>
+            <span class="flow-arrow">➔</span>
+            <div class="flow-stage-step" id="stage-db-writer">
+              <span class="flow-stage-label">DB Writer:</span>
+              <strong id="flow-writer-val">Idle</strong>
+            </div>
+            <span class="flow-arrow">➔</span>
+            <div class="flow-stage-step" id="stage-entity-validator">
+              <span class="flow-stage-label">KG Validator:</span>
+              <strong id="flow-validator-val">Idle</strong>
+            </div>
+          </div>
+
+          <!-- Real-Time Subsystems Zoo Matrix Observatory Strip -->
+          <div class="zoo-observatory-strip" id="zoo-observatory-strip"
+            title="Real-Time Unified Subsystems Matrix ('The Zoo')">
+            <div class="zoo-chip" id="zoo-pdf-chip" title="Local Disk PDF / Document Text Extraction I/O">
+              <span class="zoo-icon">📄</span>
+              <span class="zoo-lbl">PDF I/O:</span>
+              <strong id="zoo-pdf-val">0.0 MB/s</strong>
+              <span class="zoo-sub" id="zoo-pdf-sub">(0 f/m)</span>
+            </div>
+            <div class="zoo-chip" id="zoo-lan-chip" title="Gigabit LAN Traffic (PC1 ⇄ PC2 Embeddings & Prompts)">
+              <span class="zoo-icon">🌐</span>
+              <span class="zoo-lbl">LAN Ping:</span>
+              <strong id="zoo-lan-val">-- ms</strong>
+              <span class="zoo-sub" id="zoo-lan-sub">PC1 ⇄ PC2</span>
+            </div>
+            <div class="zoo-chip" id="zoo-wal-chip" title="SQLite WAL Journal & Checkpoint Pressure">
+              <span class="zoo-icon">💾</span>
+              <span class="zoo-lbl">WAL DB:</span>
+              <strong id="zoo-wal-val">-- MB</strong>
+              <span class="zoo-sub text-emerald" id="zoo-wal-sub">Healthy</span>
+            </div>
+            <div class="zoo-chip" id="zoo-chat-chip" title="LLM Interrogation & Reasoning Target">
+              <span class="zoo-icon">🤖</span>
+              <span class="zoo-lbl">Chat LLM:</span>
+              <strong id="zoo-chat-val" class="text-indigo">PC1 (3B)</strong>
+              <span class="zoo-sub" id="zoo-chat-sub">0 calls</span>
+            </div>
+            <div class="zoo-chip" id="zoo-validator-chip" title="Knowledge Graph Entity Certification & Pruning">
+              <span class="zoo-icon">🛡️</span>
+              <span class="zoo-lbl">KG Auditor:</span>
+              <strong id="zoo-validator-val">Idle</strong>
+              <span class="zoo-sub text-emerald" id="zoo-validator-sub">Certified</span>
+            </div>
+          </div>
+
+          <div class="node-metrics-row">
+            <div class="node-metric-item">
+              <span class="node-metric-label">Ingestion Rate</span>
+              <span class="node-metric-val text-cyan" id="throughput-fpm">-- files/min</span>
+            </div>
+            <div class="node-metric-item">
+              <span class="node-metric-label">Chunk Velocity</span>
+              <span class="node-metric-val" id="throughput-cpm">-- chunks/min</span>
+            </div>
+            <div class="node-metric-item">
+              <div class="node-metric-label">Token Batch</div>
+              <div class="node-metric-val text-indigo" id="throughput-tokens">1,206 tokens</div>
+            </div>
+            <div class="node-metric-item">
+              <div class="node-metric-label">Checkpoints</div>
+              <div class="node-metric-val text-amber" id="throughput-checkpoints">0 (WAL Normal)</div>
+            </div>
+            <div class="node-metric-item">
+              <div class="node-metric-label">Vector Payload</div>
+              <div class="node-metric-val text-emerald font-bold" id="throughput-payload">37.702 MiB</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- PC2 CUDA GPU Node -->
+        <div class="workload-node-card cuda-accelerated" id="node-card-pc2">
+          <div class="node-card-header">
+            <div class="node-title-group">
+              <span class="node-icon">⚡</span>
+              <div>
+                <div class="node-name">PC2 CUDA Server (RTX 3060) <span class="node-role-pill cuda">api/embed</span>
+                </div>
+                <div class="node-target" id="pc2-node-url">http://NITRO-AN51755:11434</div>
+              </div>
+            </div>
+            <div class="node-header-right">
+              <span class="node-status-badge badge-probing" id="pc2-node-badge"><span class="dot"></span>
+                Probing...</span>
+            </div>
+          </div>
+
+          <div class="node-models-bar">
+            <span class="models-label">VRAM Loaded:</span>
+            <div class="models-tag-list" id="pc2-models-list">
+              <span class="mini-tag tag-cuda">snowflake-arctic-embed2:latest</span>
+              <span class="mini-tag tag-chat">llama3.2:3b</span>
+            </div>
+          </div>
+
+          <div class="node-metrics-row">
+            <div class="node-metric-item">
+              <span class="node-metric-label">Embedding Model</span>
+              <span class="node-metric-val text-cyan" id="pc2-model-name">snowflake-arctic-embed2</span>
+            </div>
+            <div class="node-metric-item">
+              <span class="node-metric-label">LAN Ping</span>
+              <span class="node-metric-val" id="pc2-ping-ms">--</span>
+            </div>
+            <div class="node-metric-item">
+              <div class="node-metric-label">Vectors Embedded</div>
+              <div class="node-metric-val text-emerald font-bold" id="pc2-chunks-count">0 chunks</div>
+            </div>
+            <div class="node-metric-item">
+              <div class="node-metric-label">VRAM Loaded</div>
+              <div class="node-metric-val text-emerald font-bold" id="pc2-latency-ms">VRAM Standby</div>
+            </div>
+            <div class="node-metric-item">
+              <div class="node-metric-label">CUDA & Context</div>
+              <div class="node-metric-val text-cyan" id="pc2-activity-status">100% GPU</div>
+            </div>
+          </div>
+
+          <!-- PC2 Hardware Telemetry Live Gauges (CPU, Host RAM, RTX 3060 Compute, VRAM) -->
+          <div class="pc2-hw-live-gauges" id="pc2-hw-live-gauges">
+            <div class="hw-gauge-cell">
+              <div class="hw-gauge-label-row">
+                <span class="hw-lbl">CPU Load</span>
+                <span class="hw-val text-cyan" id="pc2-hw-cpu">-- %</span>
+              </div>
+              <div class="hw-bar-track">
+                <div class="hw-bar-fill bg-cyan" id="pc2-hw-cpu-bar" style="width: 0%"></div>
+              </div>
+            </div>
+            <div class="hw-gauge-cell">
+              <div class="hw-gauge-label-row">
+                <span class="hw-lbl">Host RAM</span>
+                <span class="hw-val text-indigo" id="pc2-hw-ram">-- GB</span>
+              </div>
+              <div class="hw-bar-track">
+                <div class="hw-bar-fill bg-indigo" id="pc2-hw-ram-bar" style="width: 0%"></div>
+              </div>
+            </div>
+            <div class="hw-gauge-cell">
+              <div class="hw-gauge-label-row">
+                <span class="hw-lbl">GPU Compute</span>
+                <span class="hw-val text-emerald" id="pc2-hw-gpu">-- %</span>
+              </div>
+              <div class="hw-bar-track">
+                <div class="hw-bar-fill bg-emerald" id="pc2-hw-gpu-bar" style="width: 0%"></div>
+              </div>
+            </div>
+            <div class="hw-gauge-cell">
+              <div class="hw-gauge-label-row">
+                <span class="hw-lbl">VRAM (6GB Max)</span>
+                <span class="hw-val text-amber font-bold" id="pc2-hw-vram">-- MB (0%)</span>
+              </div>
+              <div class="hw-bar-track">
+                <div class="hw-bar-fill bg-amber" id="pc2-hw-vram-bar" style="width: 0%"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =========================================================================
+       VERSION LINEAGE & DOCUMENT EVOLUTION EXPLORER
+       ========================================================================= -->
+    <section class="lineage-explorer-section" id="lineage-explorer-section">
+      <div class="section-hero-header">
+        <div class="section-title-wrap">
+          <span class="section-icon">🕒</span>
+          <div>
+            <h2 class="section-title">Version Lineage & Document Evolution Explorer</h2>
+            <p class="section-subtitle">Single Source of Truth: Automated version provenance, evolutionary derivation
+              chains, and duplicate savings</p>
+          </div>
+        </div>
+        <div class="lineage-kpis-strip">
+          <div class="lineage-kpi-chip">
+            <span class="kpi-icon">🔗</span>
+            <span class="kpi-label">Lineage Links:</span>
+            <strong id="lineage-kpi-total" class="text-cyan">3,555,530</strong>
+          </div>
+          <div class="lineage-kpi-chip">
+            <span class="kpi-icon">📄</span>
+            <span class="kpi-label">Duplicates Saved:</span>
+            <strong id="lineage-kpi-savings" class="text-emerald">8,177</strong>
+          </div>
+          <div class="lineage-kpi-chip">
+            <span class="kpi-icon">✅</span>
+            <span class="kpi-label">Final:</span>
+            <strong id="lineage-kpi-final">1,504</strong>
+          </div>
+          <div class="lineage-kpi-chip">
+            <span class="kpi-icon">📝</span>
+            <span class="kpi-label">Drafts:</span>
+            <strong id="lineage-kpi-drafts" class="text-amber">716</strong>
+          </div>
+        </div>
+      </div>
+
+      <!-- Lineage Filter & Search Toolbar -->
+      <div class="lineage-toolbar">
+        <div class="lineage-search-box">
+          <input type="text" id="lineage-search-input"
+            placeholder="Search lineage by document name (e.g. IngestionReport, Roche, Qualifikationsprofil)..."
+            oninput="handleLineageSearch(event)">
+          <button id="btn-lineage-search-clear" class="btn-clear-search hidden"
+            onclick="clearLineageSearch()">✕</button>
+        </div>
+        <div class="lineage-filter-group">
+          <select id="lineage-rel-filter" onchange="loadLineageChains()">
+            <option value="">All Relationships</option>
+            <option value="derived_from">derived_from (Revision)</option>
+            <option value="supersedes">supersedes (Evolution)</option>
+          </select>
+          <button class="btn btn-outline btn-sm" onclick="loadLineageChains(true)">
+            <span>⟳</span> Refresh Chains
+          </button>
+        </div>
+      </div>
+
+      <!-- Live Lineage Chains Table -->
+      <div class="lineage-table-container">
+        <table class="lineage-table">
+          <thead>
+            <tr>
+              <th>Parent Document (Predecessor)</th>
+              <th>Relationship</th>
+              <th>Child Document (Successor)</th>
+              <th>SimHash Score</th>
+              <th>Maturity Delta</th>
+              <th>Status Transition</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="lineage-table-tbody">
+            <tr>
+              <td colspan="7" class="text-center loading-cell">Loading version lineage relationships...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Visual Sample Evolutionary Lineage Flow Card -->
+      <div class="lineage-evolution-card">
+        <div class="evolution-card-header">
+          <span class="evolution-icon">🧬</span>
+          <span class="evolution-title">Sample Evolutionary Chain (Provenance Graph)</span>
+          <span class="evolution-badge">SimHash Cosine &gt; 96%</span>
+        </div>
+        <div class="evolution-chain-flow">
+          <div class="evolution-node node-draft">
+            <div class="evolution-node-tag">v1 • DRAFT</div>
+            <div class="evolution-node-name">260909_0813_IngestionReport.md</div>
+            <div class="evolution-node-sub">Maturity: 0.320 • SimHash 96.8%</div>
+          </div>
+          <div class="evolution-link-arrow">
+            <span class="link-label">derived_from</span>
+            <span class="arrow-glyph">➔</span>
+          </div>
+          <div class="evolution-node node-final">
+            <div class="evolution-node-tag">v2 • FINAL</div>
+            <div class="evolution-node-name">260909_1414_IngestionReport.md</div>
+            <div class="evolution-node-sub">Maturity: 0.850 • SimHash 98.4%</div>
+          </div>
+          <div class="evolution-link-arrow">
+            <span class="link-label">supersedes</span>
+            <span class="arrow-glyph">➔</span>
+          </div>
+          <div class="evolution-node node-latest">
+            <div class="evolution-node-tag">v3 • LATEST FINAL</div>
+            <div class="evolution-node-name">260909_1619_IngestionReport.md</div>
+            <div class="evolution-node-sub">Maturity: 0.980 • Single Source of Truth</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =========================================================================
+       REAL-TIME TELEMETRY & DIAGNOSTIC EVENT STREAM TICKER (/api/v1/diagnostics/logs)
+       ========================================================================= -->
+    <section class="ws0-diag-stream-section" id="ws0-diag-stream-section">
+      <div class="section-hero-header">
+        <div class="section-title-wrap">
+          <span class="section-icon">🩺</span>
+          <div>
+            <h2 class="section-title">Real-Time Telemetry & Diagnostic Event Stream</h2>
+            <p class="section-subtitle">Live pulsed activity log from <code>/api/v1/diagnostics/logs</code> across
+              Crawler, Chunker, Analyzer, Sidecar, and CUDA GPU</p>
+          </div>
+        </div>
+        <div class="diag-stream-controls">
+          <div class="diag-stream-filter-buttons">
+            <button class="stream-filter-btn active" data-filter="all" onclick="setWs0DiagFilter('all')">All (<span
+                id="ws0-log-count-all">0</span>)</button>
+            <button class="stream-filter-btn" data-filter="last10" onclick="setWs0DiagFilter('last10')">Last 10 (<span
+                id="ws0-log-count-last10">0</span>)</button>
+            <button class="stream-filter-btn" data-filter="last10errors" onclick="setWs0DiagFilter('last10errors')">Last
+              10 Errors/Warn (<span id="ws0-log-count-last10errors">0</span>)</button>
+            <button class="stream-filter-btn" data-filter="sidecar" onclick="setWs0DiagFilter('sidecar')">Sidecar (<span
+                id="ws0-log-count-sidecar">0</span>)</button>
+            <button class="stream-filter-btn" data-filter="chunker" onclick="setWs0DiagFilter('chunker')">Chunker / IO
+              (<span id="ws0-log-count-chunker">0</span>)</button>
+            <button class="stream-filter-btn" data-filter="analyzer" onclick="setWs0DiagFilter('analyzer')">Analyzer
+              (<span id="ws0-log-count-analyzer">0</span>)</button>
+            <button class="stream-filter-btn" data-filter="crawler" onclick="setWs0DiagFilter('crawler')">Crawler (<span
+                id="ws0-log-count-crawler">0</span>)</button>
+            <button class="stream-filter-btn" data-filter="errors" onclick="setWs0DiagFilter('errors')">Errors / Warn
+              (<span id="ws0-log-count-errors">0</span>)</button>
+          </div>
+          <div class="diag-stream-opts">
+            <label class="diag-autoscroll-label">
+              <input type="checkbox" id="ws0-diag-autoscroll" checked> Auto-scroll
+            </label>
+            <button class="btn btn-outline btn-xs" id="btn-copy-ws0-logs" onclick="copyWs0FilteredLogs()"
+              title="Copy current filtered logs to clipboard">📋 Copy</button>
+            <button class="btn btn-outline btn-xs" onclick="clearDiagnosticLogs()"
+              title="Clear buffered logs">Clear</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Stream List Output -->
+      <div class="ws0-diag-log-container" id="ws0-diag-log-container">
+        <div class="ws0-diag-empty" id="ws0-diag-empty-state">
+          <span class="pulse-dot"></span>
+          <span>Diagnostic event stream listening on http://127.0.0.1:8090/api/v1/diagnostics/logs...</span>
+        </div>
+        <div class="ws0-diag-log-list" id="ws0-diag-log-list"></div>
+      </div>
+    </section>
+  </main>
+
+  <!-- =========================================================================
+       WORKSPACE 1: DOCUMENT LEDGER & LINEAGE EXPLORER
+       ========================================================================= -->
+  <main id="ws-pane-ledger" class="workspace-pane hidden dashboard-grid">
+    <!-- Left Column: Pre-flight Dropzone and Ledger Table -->
+    <div class="main-column">
+      <!-- Document Ledger Explorer -->
+      <section class="ledger-section">
+        <div class="section-header">
+          <div class="section-title">Document Ledger (WAL)</div>
+          <div class="filter-controls">
+            <input type="text" id="search-box" placeholder="Search filename or snippet (e.g. touran)..."
+              oninput="handleSearch(event)">
+            <select id="category-filter" onchange="handleCategoryChange()" title="Filter by dynamic taxonomy category">
+              <option value="">All Categories (Taxonomy)</option>
+            </select>
+            <select id="status-filter" onchange="loadLedger()">
+              <option value="">All Statuses</option>
+              <option value="final">Final Only</option>
+              <option value="draft">Drafts Only</option>
+              <option value="review">Under Review</option>
+              <option value="truncated">Truncated / Partial</option>
+            </select>
+            <button id="btn-clear-filters" class="btn btn-outline btn-sm hidden" onclick="clearAllFilters()">✕
+              Reset</button>
+          </div>
+        </div>
+
+        <div id="active-filter-bar" class="active-filter-bar hidden">
+          <span id="active-filter-text">Filtered by duplicates</span>
+          <button class="btn-clear-pill" onclick="clearAllFilters()">Reset Filter ✕</button>
+        </div>
+
+        <div class="table-container">
+          <table class="ledger-table">
+            <thead>
+              <tr>
+                <th class="th-sortable" onclick="setSort('canonical_filename')">
+                  <span>Document</span> <span class="sort-indicator" id="sort-canonical_filename">↕</span>
+                </th>
+                <th class="th-sortable" onclick="setSort('doc_type')">
+                  <span>Category</span> <span class="sort-indicator" id="sort-doc_type">↕</span>
+                </th>
+                <th class="th-sortable" onclick="setSort('maturity_score')">
+                  <span>Maturity</span> <span class="sort-indicator" id="sort-maturity_score">↕</span>
+                </th>
+                <th class="th-sortable" onclick="setSort('lifecycle_status')">
+                  <span>Status</span> <span class="sort-indicator" id="sort-lifecycle_status">↕</span>
+                </th>
+                <th class="th-sortable" onclick="setSort('location_count')">
+                  <span>Copies</span> <span class="sort-indicator" id="sort-location_count">↕</span>
+                </th>
+                <th class="th-sortable" onclick="setSort('doc_date')"
+                  title="Sort by document date (filename prefix, content, or last modified)">
+                  <span>Doc Date</span> <span class="sort-indicator" id="sort-doc_date">↕</span>
+                </th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="ledger-rows">
+              <tr>
+                <td colspan="7" class="text-center loading-cell">Loading document ledger...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <!-- Right Column Resizer Handle -->
+    <div id="side-column-resizer" class="side-column-resizer" title="Drag to resize panel (Double-click to reset)">
+      <div class="resizer-handle-grip"></div>
+    </div>
+
+    <!-- Right Column: Document Lineage Detail Panel -->
+    <aside class="side-column" id="side-column">
+      <div class="tabs-header">
+        <button id="tab-btn-detail" class="tab-btn active">Lineage & Cryptographic Detail</button>
+      </div>
+
+      <div id="tab-detail" class="tab-content active">
+        <div id="detail-empty" class="empty-state">
+          <div class="empty-icon">🔍</div>
+          <div class="empty-text">Select a document from the ledger to inspect its cryptographic identity, NAS/GDrive
+            locations, and version lineage.</div>
+        </div>
+        <div id="detail-panel" class="detail-panel hidden">
+          <!-- Populated dynamically via app.js -->
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <!-- =========================================================================
+       WORKSPACE 2: GRAPHRAG SOVEREIGN STUDIO (FULL-WIDTH HERO VIEW)
+       ========================================================================= -->
+  <main id="ws-pane-graphrag" class="workspace-pane hidden graphrag-studio-layout">
+    <!-- Hero GraphRAG Search Section -->
+    <section class="studio-hero-search-card">
+      <div class="studio-search-header">
+        <div class="studio-title-group">
+          <span class="studio-icon">🧠</span>
+          <div>
+            <h2 class="studio-title">Multi-Signal GraphRAG Sovereign Explorer</h2>
+            <p class="studio-subtitle">Deep hybrid retrieval combining dense RTX 3060 CUDA vector embeddings, BM25
+              keyword matching, and 1-hop Property Knowledge Graph expansion with Reciprocal Rank Fusion (RRF).</p>
+          </div>
+        </div>
+        <div class="studio-badge-pill">⚡ NVIDIA RTX 3060 CUDA Accelerated</div>
+      </div>
+
+      <div class="studio-search-bar-row">
+        <div class="studio-search-input-wrap">
+          <span class="search-input-icon">🔍</span>
+          <input type="text" id="studio-rag-input"
+            placeholder="Query semantic knowledge base (e.g. touran assurance, contrat de bail genève, decision kantonsgericht)..."
+            onkeydown="if(event.key==='Enter') executeStudioGraphRAGSearch()">
+          <button id="btn-studio-rag-clear" class="btn-clear-search hidden" onclick="clearStudioRAGSearch()">✕</button>
+        </div>
+        <button id="btn-studio-rag-search" class="btn btn-primary btn-studio-search"
+          onclick="executeStudioGraphRAGSearch()">
+          <span>⚡ Execute Hybrid Retrieval</span>
+        </button>
+      </div>
+
+      <!-- Quick Suggestion Chips -->
+      <div class="studio-suggestion-chips">
+        <span class="chips-label">Quick Prompts:</span>
+        <button class="suggestion-chip" onclick="executeStudioSuggestedQuery('touran')">🚗 Touran Documents</button>
+        <button class="suggestion-chip" onclick="executeStudioSuggestedQuery('contrat de travail')">📄 Contrats de
+          travail</button>
+        <button class="suggestion-chip" onclick="executeStudioSuggestedQuery('gericht urteil entscheid')">⚖️ Court
+          Judgments</button>
+        <button class="suggestion-chip" onclick="executeStudioSuggestedQuery('allianz versicherung')">🛡️ Allianz
+          Policies</button>
+        <button class="suggestion-chip" onclick="executeStudioSuggestedQuery('steuerveranlagung')">🏷️ Tax
+          Assessments</button>
+      </div>
+    </section>
+
+    <!-- 2-Column Studio Grid: Left Results / Right Topology & Sidecar Ingestion -->
+    <div class="studio-content-grid">
+
+      <!-- Left Column: Knowledge Topology & Sidecar Ingestion Controls -->
+      <div class="studio-controls-column">
+
+        <!-- Sidecar Indexing Pipeline & Telemetry Card -->
+        <div class="studio-card">
+          <div class="studio-card-header">
+            <div class="studio-card-title">
+              <span>⚡ Sidecar Indexing Pipeline</span>
+              <span id="studio-kb-engine-tag" class="kb-engine-badge">snowflake-arctic-embed2:latest</span>
+            </div>
+            <button class="btn btn-outline btn-xs" onclick="loadSidecarStats()"
+              title="Refresh Sidecar Stats">🔄</button>
+          </div>
+
+          <!-- Queue Progress Track -->
+          <div class="kb-progress-section">
+            <div class="kb-progress-labels">
+              <span class="kb-progress-label-main">Ingestion Progress</span>
+              <span id="studio-kb-progress-pct" class="kb-progress-pct">0%</span>
+            </div>
+            <div class="kb-progress-bar-multi">
+              <div id="studio-kb-bar-completed" class="kb-bar-seg seg-completed" style="width: 0%;" title="Completed">
+              </div>
+              <div id="studio-kb-bar-processing" class="kb-bar-seg seg-processing" style="width: 0%;"
+                title="Processing"></div>
+              <div id="studio-kb-bar-pending" class="kb-bar-seg seg-pending" style="width: 0%;" title="Pending"></div>
+              <div id="studio-kb-bar-failed" class="kb-bar-seg seg-failed" style="width: 0%;" title="Failed"></div>
+            </div>
+            <div class="kb-queue-legend">
+              <span class="legend-item"><span class="dot dot-completed"></span> Completed: <strong
+                  id="studio-kb-stat-completed">0</strong></span>
+              <span class="legend-item"><span class="dot dot-processing"></span> Active: <strong
+                  id="studio-kb-stat-processing">0</strong></span>
+              <span class="legend-item"><span class="dot dot-pending"></span> Queue: <strong
+                  id="studio-kb-stat-pending">0</strong></span>
+              <span class="legend-item"><span class="dot dot-failed"></span> Failed: <strong
+                  id="studio-kb-stat-failed">0</strong></span>
+            </div>
+          </div>
+
+          <!-- Vector & Chunks Metrics -->
+          <div class="kb-metrics-mini">
+            <div class="kb-mini-stat">
+              <span class="kb-stat-num" id="studio-kb-stat-chunks">0</span>
+              <span class="kb-stat-lbl">Chunks Embedded</span>
+            </div>
+            <div class="kb-mini-stat">
+              <span class="kb-stat-num" id="studio-kb-stat-docs-chunked">0</span>
+              <span class="kb-stat-lbl">Docs Processed</span>
+            </div>
+            <div class="kb-mini-stat actions-group">
+              <button id="studio-btn-sidecar-toggle" class="btn btn-emerald btn-xs" onclick="toggleContinuousSidecar()"
+                title="Start/Stop continuous background ingestion">
+                <span id="studio-sidecar-toggle-icon">▶</span> <span id="studio-sidecar-toggle-text">Start Continuous
+                  Ingestion</span>
+              </button>
+              <button id="studio-btn-trigger-batch" class="btn btn-outline btn-xs" onclick="triggerSidecarBatch()"
+                title="Process a single batch immediately">
+                ⚡ Single Batch
+              </button>
+              <button id="studio-btn-validate-entities" class="btn btn-outline btn-xs"
+                onclick="triggerEntityValidation()" title="Audit and certify entities with LLM">
+                🛡️ Validate Entities
+              </button>
+            </div>
+          </div>
+
+          <!-- Live Session Status Strip -->
+          <div id="studio-kb-session-strip" class="kb-session-strip">
+            <div class="kb-session-left">
+              <span class="kb-worker-dot" id="studio-kb-worker-dot"></span>
+              <span id="studio-kb-worker-status-text" class="kb-worker-status-text">Pipeline Idle</span>
+            </div>
+            <div class="kb-session-right">
+              <span id="studio-kb-session-counter" class="kb-session-counter">Session: 0 docs • 0 chunks</span>
+              <span id="studio-kb-session-uptime" class="kb-session-uptime"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Property Graph Knowledge Topology Card -->
+        <div class="studio-card">
+          <div class="studio-card-header">
+            <div class="studio-card-title">
+              <span>🕸️ Property Knowledge Graph</span>
+              <span class="kb-engine-badge"
+                style="background: rgba(16,185,129,0.15); color: var(--accent-emerald);">Hybrid Neo4j/SQLite</span>
+            </div>
+          </div>
+
+          <div class="kb-graph-summary">
+            <div class="kb-graph-metric">
+              <span class="kb-graph-val" id="studio-kb-graph-nodes">0</span>
+              <span class="kb-graph-lbl">Entities (Nodes)</span>
+            </div>
+            <div class="kb-graph-metric">
+              <span class="kb-graph-val" id="studio-kb-graph-edges">0</span>
+              <span class="kb-graph-lbl">Relations (Edges)</span>
+            </div>
+            <div class="kb-graph-metric">
+              <span class="kb-graph-val" id="studio-kb-graph-doclinks">0</span>
+              <span class="kb-graph-lbl">Document Links</span>
+            </div>
+          </div>
+
+          <div class="kb-nodetypes-wrap">
+            <div class="kb-nodetypes-header">
+              <div class="kb-sub-title">Entity Distribution</div>
+              <span class="kb-hint-text">Click type to inspect entities</span>
+            </div>
+            <div id="studio-kb-nodetypes-list" class="kb-chips-row">
+              <button class="kb-type-chip" data-type="contract_type" onclick="toggleEntityType('contract_type')">📄
+                <strong>contract_type</strong>: <span class="badge-count">--</span></button>
+              <button class="kb-type-chip" data-type="location" onclick="toggleEntityType('location')">📍
+                <strong>location</strong>: <span class="badge-count">--</span></button>
+              <button class="kb-type-chip" data-type="organization" onclick="toggleEntityType('organization')">🏢
+                <strong>organization</strong>: <span class="badge-count">--</span></button>
+              <button class="kb-type-chip" data-type="person" onclick="toggleEntityType('person')">👤
+                <strong>person</strong>: <span class="badge-count">--</span></button>
+              <button class="kb-type-chip" data-type="statute" onclick="toggleEntityType('statute')">🏷️
+                <strong>statute</strong>: <span class="badge-count">--</span></button>
+            </div>
+
+            <!-- Collapsible Entity List Drawer -->
+            <div id="studio-kb-entity-drawer" class="kb-entity-drawer hidden">
+              <div class="kb-drawer-header">
+                <div class="kb-drawer-title-row">
+                  <span id="studio-kb-drawer-title" class="kb-drawer-title">🏢 Organization Entities</span>
+                  <span id="studio-kb-drawer-count" class="badge badge-sm badge-info">0</span>
+                </div>
+                <button class="kb-drawer-close" onclick="closeEntityDrawer()" title="Close list">✕</button>
+              </div>
+              <div class="kb-drawer-search">
+                <input type="text" id="studio-kb-entity-filter-input" placeholder="Filter entities in list..."
+                  oninput="filterEntityList(this.value)">
+              </div>
+              <div id="studio-kb-entity-items" class="kb-entity-items-grid">
+                <!-- Populated dynamically -->
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Column: Multi-Signal Ranked Results -->
+      <div class="studio-results-column">
+        <div class="studio-column-header">
+          <div class="column-title"
+            style="display: flex; align-items: center; justify-content: space-between; width: 100%; flex-wrap: wrap; gap: 0.5rem;">
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+              <span>📊 Retrieved Candidates & Signal Breakdown</span>
+              <span id="studio-results-count" class="badge badge-sm badge-info">0 candidates</span>
+            </div>
+            <div
+              style="display: flex; align-items: center; gap: 0.35rem; font-size: 0.72rem; color: var(--text-faint);">
+              <span>Limit:</span>
+              <select id="studio-candidate-limit-select" class="btn btn-outline btn-xs"
+                style="padding: 0.15rem 0.4rem; font-size: 0.72rem; background: var(--bg-surface-2); border-color: var(--border-color); color: var(--text-main);"
+                onchange="executeStudioGraphRAGSearch()">
+                <option value="10">10</option>
+                <option value="25" selected>25</option>
+                <option value="50">50</option>
+                <option value="100">100</option>
+              </select>
+            </div>
+          </div>
+          <div id="studio-signals-summary" class="studio-signals-summary">
+            <!-- Dynamic signals stats -->
+          </div>
+        </div>
+        <div id="studio-rag-results-container" class="studio-results-list">
+          <div class="studio-empty-state">
+            <div class="empty-icon">🔬</div>
+            <div class="empty-title">Ready for Multi-Signal Retrieval</div>
+            <div class="empty-text">Enter a query above or click one of the quick prompts to execute dense vector search
+              on PC2
+              CUDA, BM25 scoring, and graph entity neighborhood expansion.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- =========================================================================
+       WORKSPACE: 3D KNOWLEDGE UNIVERSE & GLSL TOPOLOGICAL CLUSTERING
+       ========================================================================= -->
+  <main id="ws-pane-universe" class="workspace-pane hidden glsl-universe-layout">
+    <!-- Universe Hero & Metrics Banner (Single-Row Compact Hero with Inline Badges) -->
+    <div class="universe-hero-bar compact-hero">
+      <div class="universe-hero-left">
+        <div class="universe-hero-title-row">
+          <span class="universe-hero-pre">Data Science</span>
+          <h2 class="universe-hero-title">3D Knowledge Graph Universe</h2>
+          <span class="universe-hero-desc">Topological Clustering &amp; Visual Analytics</span>
+        </div>
+        <div class="universe-badges-strip">
+          <span class="universe-badge-pill" id="badge-dim" title="Dimensionality Transformation"><span
+              class="badge-dot dot-cyan"></span><span class="badge-label">Dim:</span> <strong class="text-cyan"
+              id="badge-dim-val">High-Dim → 3D PCA</strong></span>
+          <span class="universe-badge-pill" id="badge-algo" title="Clustering Algorithm"><span
+              class="badge-dot dot-purple"></span><span class="badge-label">Algo:</span> <strong class="text-purple"
+              id="badge-algo-val">Unsupervised K-Means</strong></span>
+          <span class="universe-badge-pill" id="badge-topo" title="Active Topology Elements"><span
+              class="badge-dot dot-emerald"></span><span class="badge-label">Topology:</span> <strong
+              class="text-emerald"><span id="glsl-stat-nodes">1,000</span> Nodes • <span
+                id="glsl-stat-edges">3,000</span> Links</strong></span>
+          <span class="universe-badge-pill" id="badge-render" title="Hardware Acceleration Engine"><span
+              class="badge-dot dot-amber"></span><span class="badge-label">Renderer:</span> <strong
+              class="text-amber">Three.js WebGL GLSL</strong></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- HUD Control Toolbar -->
+    <div class="universe-toolbar">
+      <div class="universe-toolbar-left">
+        <!-- View Topology Mode: Spatial PCA vs Thematic Mindmap -->
+        <div class="universe-view-segmented" role="group" aria-label="3D View Topology">
+          <button id="btn-view-spatial" class="hud-glsl-btn active" onclick="set3DUniverseLayout('spatial')"
+            title="Spatial PCA View: Multivariate Latent Semantic Variance">
+            <span>🌐</span> Spatial View
+          </button>
+          <button id="btn-view-thematic" class="hud-glsl-btn" onclick="set3DUniverseLayout('thematic')"
+            title="Thematic Mindmap: Taxonomy Gravitational Suns & Planetary Orbits">
+            <span>🪐</span> Thematic Mindmap
+          </button>
+        </div>
+        <div class="toolbar-sep"></div>
+
+        <button id="btn-glsl-spin" class="hud-glsl-btn active" onclick="toggle3DAutoSpin()"
+          title="Toggle orbital auto-spin">
+          <span id="glsl-spin-icon">🔄</span> <span id="glsl-spin-text">Auto-Spin: ON</span>
+        </button>
+        <button id="btn-glsl-edges" class="hud-glsl-btn active" onclick="toggle3DEdges()"
+          title="Toggle relational graph edge links">
+          <span id="glsl-edges-icon">🕸️</span> <span id="glsl-edges-text">Links: Visible</span>
+        </button>
+        <button id="btn-glsl-labels" class="hud-glsl-btn active" onclick="toggle3DLabels()"
+          title="Toggle floating billboard entity labels">
+          <span>🏷️</span> <span id="glsl-labels-text">Labels: ON</span>
+        </button>
+        <div class="toolbar-sep"></div>
+        <!-- 3D Universe Brightness Sliders (Nodes & Relational Links) -->
+        <div class="brightness-control-group" title="Shader particle vertex brightness multiplier (live GLSL uniform)">
+          <label for="glsl-brightness-slider" class="toolbar-lbl">✨ Nodes:</label>
+          <input type="range" id="glsl-brightness-slider" class="slider-glsl" min="0.1" max="2.0" step="0.05"
+            value="0.8" oninput="change3DBrightness(this.value)">
+          <span id="glsl-brightness-val" class="toolbar-val-pill">80%</span>
+        </div>
+
+        <div class="brightness-control-group" title="Relational graph edge links brightness & opacity">
+          <label for="glsl-links-brightness-slider" class="toolbar-lbl">🕸️ Links:</label>
+          <input type="range" id="glsl-links-brightness-slider" class="slider-glsl slider-glsl-links" min="0.0"
+            max="1.0" step="0.02" value="0.08" oninput="change3DLinksBrightness(this.value)">
+          <span id="glsl-links-brightness-val" class="toolbar-val-pill">8%</span>
+        </div>
+
+        <div class="toolbar-sep"></div>
+
+        <div class="toolbar-select-group">
+          <label for="select-glsl-color" class="toolbar-lbl">Color Mode:</label>
+          <select id="select-glsl-color" class="select-glsl" onchange="change3DColorMode(this.value)">
+            <option value="cluster" selected>🎨 Topological Clusters</option>
+            <option value="centrality">🔥 Centrality &amp; Degree Heatmap</option>
+            <option value="type">🏷️ Entity Schema Type</option>
+          </select>
+        </div>
+
+        <div class="toolbar-select-group">
+          <label for="select-glsl-cluster" class="toolbar-lbl">Filter:</label>
+          <select id="select-glsl-cluster" class="select-glsl" onchange="filter3DCluster(this.value)">
+            <option value="all" selected>🌐 All Semantic Clusters</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="universe-toolbar-right">
+        <div class="universe-query-filter-wrap">
+          <input type="text" id="glsl-filter-query-input" placeholder="Query filter: location=zug&org=ZKB..."
+            onkeydown="if(event.key==='Enter') handle3DFilterQuery(this.value)"
+            title="Dynamic 3D query filter (e.g. location=zug&org=ZKB, org=Visana, doc_sha=...)">
+          <button class="hud-glsl-btn btn-filter-submit"
+            onclick="handle3DFilterQuery(document.getElementById('glsl-filter-query-input').value)"
+            title="Execute 3D Graph Query Filter">
+            <span>⚡</span> Filter
+          </button>
+        </div>
+        <div class="universe-search-wrap">
+          <input type="text" id="glsl-node-search" placeholder="Quick find entity in 3D space..."
+            oninput="handle3DNodeSearch(this.value)" list="glsl-entities-datalist">
+          <datalist id="glsl-entities-datalist"></datalist>
+        </div>
+        <button class="hud-glsl-btn btn-reload" onclick="load3DUniverseData(true)"
+          title="Reload Graph Universe from Database">
+          <span>⟳</span> Refresh
+        </button>
+        <!-- Camera Control Suite -->
+        <button id="btn-glsl-zenith" class="hud-glsl-btn" onclick="set3DZenithView()"
+          title="Top Orthogonal Projection: Planar view of orbital satellites and solar hubs">
+          <span>🔭</span> Zenith View
+        </button>
+        <button id="btn-glsl-orbital" class="hud-glsl-btn" onclick="toggle3DOrbitalTour()"
+          title="3/4 Isometric Sequential Tour: Fly through orbital hubs sequentially">
+          <span id="orbital-tour-icon">🪐</span> <span id="orbital-tour-text">Orbital Tour</span>
+        </button>
+        <button id="btn-reset" class="hud-glsl-btn btn-reset" onclick="reset3DCamera()"
+          title="Reset Camera Perspective">
+          <span>↺</span> Reset View
+        </button>
+      </div>
+    </div>
+
+    <!-- 3D Canvas Viewport Container -->
+    <div class="universe-canvas-wrapper" id="glsl-canvas-wrapper">
+      <div id="glsl-3d-canvas-container" class="glsl-3d-canvas-container"></div>
+
+      <!-- Axes of Importance Legend HUD Overlay -->
+      <div class="axes-legend-overlay" id="axes-legend-overlay">
+        <div class="legend-header">
+          <div class="legend-title-row">
+            <span class="legend-icon">📐</span>
+            <span class="legend-title">Axes of Importance &amp; Clusters</span>
+          </div>
+          <button class="btn-legend-collapse" onclick="toggleLegendHUD()" title="Collapse / Expand Legend">−</button>
+        </div>
+        <div class="legend-body" id="axes-legend-body">
+          <div class="axes-group">
+            <div class="axis-item">
+              <span class="axis-badge axis-x">X-Axis</span>
+              <div class="axis-info">
+                <span class="axis-name">Domain Specificity &amp; Category Divergence</span>
+                <span class="axis-pca">PCA-1 • Latent Semantic Variance</span>
+              </div>
+            </div>
+            <div class="axis-item">
+              <span class="axis-badge axis-y">Y-Axis</span>
+              <div class="axis-info">
+                <span class="axis-name">Temporal Recency &amp; Lifecycle Maturity</span>
+                <span class="axis-pca">PCA-2 • Historical Lineage &amp; Validation</span>
+              </div>
+            </div>
+            <div class="axis-item">
+              <span class="axis-badge axis-z">Z-Axis</span>
+              <div class="axis-info">
+                <span class="axis-name">Graph Centrality &amp; Hub Authority Degree</span>
+                <span class="axis-pca">PCA-3 • Network Eigenvector Density</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="legend-divider"></div>
+
+          <!-- Clusters Legend Section -->
+          <div class="cluster-legend-section">
+            <div class="cluster-legend-title-row">
+              <div class="cluster-legend-title">Topical Clusters</div>
+              <span class="cluster-legend-quota-pill"
+                title="Viewport quota is capped at max 250 nodes per entity archetype to guarantee balanced visual macro coverage">Quota:
+                250 max / type</span>
+            </div>
+            <div class="cluster-items-list" id="cluster-legend-items">
+              <!-- Dynamically populated -->
+            </div>
+            <div class="cluster-macro-summary" id="cluster-macro-summary">
+              <!-- Dynamically populated overall representativity -->
+            </div>
+          </div>
+
+          <div class="legend-footer-tip">
+            <span>💡 <strong>Tip:</strong> Drag to rotate • Scroll to zoom • Right-click to pan • Click to inspect •
+              <strong>Double-click to expand 1-hop LOD</strong></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Real-Time Node Inspector Glass Drawer -->
+      <div class="glsl-node-inspector hidden" id="glsl-node-inspector">
+        <div class="inspector-header">
+          <div class="inspector-badge-row">
+            <span class="inspector-cluster-dot" id="insp-cluster-dot"></span>
+            <span class="inspector-cluster-name" id="insp-cluster-name">Cluster</span>
+            <span class="inspector-type-badge" id="insp-type-badge">organization</span>
+          </div>
+          <button class="inspector-close-btn" onclick="close3DNodeInspector()" title="Close Inspector">✕</button>
+        </div>
+        <div class="inspector-body">
+          <h3 class="inspector-node-title" id="insp-node-name">Entity Name</h3>
+
+          <div class="inspector-metrics-grid">
+            <div class="insp-stat-card">
+              <span class="insp-stat-lbl">Centrality Degree</span>
+              <span class="insp-stat-val text-indigo" id="insp-degree">0</span>
+            </div>
+            <div class="insp-stat-card">
+              <span class="insp-stat-lbl">Document Count</span>
+              <span class="insp-stat-val text-cyan" id="insp-doc-count">0</span>
+            </div>
+            <div class="insp-stat-card">
+              <span class="insp-stat-lbl">3D PCA Coordinates</span>
+              <span class="insp-stat-val text-muted" id="insp-coords">[0, 0, 0]</span>
+            </div>
+            <div class="insp-stat-card">
+              <span class="insp-stat-lbl">Latest Linked Date</span>
+              <span class="insp-stat-val text-emerald" id="insp-date">--</span>
+            </div>
+          </div>
+
+          <div class="inspector-actions">
+            <button class="btn btn-secondary btn-block btn-insp-action" id="insp-btn-expand"
+              onclick="expand3DSelectedNode()">
+              🔬 Expand Subgraph (+1 Hop LOD)
+            </button>
+            <button class="btn btn-primary btn-block btn-insp-action" id="insp-btn-chat"
+              onclick="interrogateEntityInAIStudio()">
+              💬 Interrogate in AI Room ➔
+            </button>
+            <button class="btn btn-outline btn-block btn-insp-action" id="insp-btn-ledger"
+              onclick="locateEntityInDocumentLedger()">
+              🗄️ Locate in Document Ledger ➔
+            </button>
+          </div>
+
+          <div class="inspector-neighborhood-box" id="insp-neighborhood-box"
+            style="margin-top: 14px; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 10px;">
+            <div
+              style="font-size: 11px; font-weight: 600; text-transform: uppercase; color: #94a3b8; margin-bottom: 6px;">
+              Neighborhood Connections (<span id="insp-neighborhood-count">0</span>)</div>
+            <div id="insp-neighborhood-list"
+              style="max-height: calc(100vh - 400px); overflow-y: auto; font-size: 12px; display: flex; flex-direction: column; gap: 4px;">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Hover Tooltip -->
+      <div class="glsl-hover-tooltip" id="glsl-hover-tooltip" style="display: none;">
+        <div class="tooltip-header">
+          <span class="tooltip-cluster-dot" id="tt-cluster-dot"></span>
+          <span class="tooltip-entity-name" id="tt-name">--</span>
+        </div>
+        <div class="tooltip-meta">
+          <span class="tooltip-badge" id="tt-type">--</span>
+          <span class="tooltip-badge cluster" id="tt-cluster">--</span>
+        </div>
+        <div class="tooltip-row">
+          <span>Degree:</span> <strong id="tt-degree">--</strong>
+        </div>
+        <div class="tooltip-row">
+          <span>Documents:</span> <strong id="tt-docs">--</strong>
+        </div>
+        <div class="tooltip-hint">Click node to inspect &amp; interrogate</div>
+      </div>
+    </div>
+  </main>
+
+  <!-- =========================================================================
+       WORKSPACE 3: AI INTERROGATION & REASONING ROOM (FULL-WIDTH CHAT)
+       ========================================================================= -->
+  <main id="ws-pane-chat" class="workspace-pane hidden ai-interrogation-layout">
+    <div class="ai-chat-studio-container">
+      <!-- Chat Header -->
+      <div class="ai-chat-header-bar">
+        <div class="ai-chat-title-group">
+          <span class="ai-chat-icon">💬</span>
+          <div>
+            <h2 class="ai-chat-title">GraphRAG-Powered AI Interrogation Assistant</h2>
+            <p class="ai-chat-subtitle">Verified multi-document reasoning grounded in vector embeddings, knowledge graph
+              entities,
+              and ALCOA+ ledger records via the selected reasoning node.</p>
+          </div>
+        </div>
+        <div class="ai-chat-badges">
+          <span class="badge-pill-chat">🧠 GraphRAG Grounded</span>
+          <div class="chat-workspace-switcher" title="Select Reasoning Node for AI Interrogation">
+            <button class="chat-pill-toggle" id="chat-ws-toggle-pc1" onclick="switchChatNode('pc1')">💻 PC1 (llama3.2:1b
+              CPU)</button>
+            <button class="chat-pill-toggle active" id="chat-ws-toggle-pc2" onclick="switchChatNode('pc2')">⚡ PC2
+              (llama3.1:8b
+              CUDA)</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Active Document Context Banner -->
+      <div id="chat-context-banner" class="chat-context-banner hidden">
+        <div class="chat-context-info">
+          <span class="chat-context-icon">📄</span>
+          <span class="chat-context-label">Active Document Focus:</span>
+          <span id="chat-context-name" class="chat-context-name"
+            title="Current document in interrogation context"></span>
+        </div>
+        <button class="chat-context-clear" onclick="clearChatDocumentContext()"
+          title="Clear document focus to query across all repositories">✕ Query Entire Repository</button>
+      </div>
+
+      <!-- Chat Stream Messages Body -->
+      <div id="chat-messages" class="chat-messages ai-studio-messages">
+        <div class="chat-msg bot">
+          <div class="msg-bubble">
+            <p>Hello! I am your <strong>RepoScroller Sovereign Interrogation Assistant</strong>.</p>
+            <p>I can analyze version lineages, search for duplicate drafts, and answer complex cross-repository
+              inquiries grounded in your <strong>Knowledge Graph and Vector Store</strong>.</p>
+            <div class="suggestion-chips-container">
+              <div class="chips-title">Suggested questions:</div>
+              <div class="suggestion-chips">
+                <span class="chip suggestion"
+                  onclick="sendSuggestion('What agreements or contracts exist with Allianz?')">🛡️ Allianz
+                  Agreements</span>
+                <span class="chip suggestion"
+                  onclick="sendSuggestion('Find all court judgments from Kantonsgericht')">⚖️ Kantonsgericht
+                  Decisions</span>
+                <span class="chip suggestion"
+                  onclick="sendSuggestion('Do we have any vehicle inspection or tax assessment for Touran?')">🚗 Touran
+                  Records</span>
+                <span class="chip suggestion"
+                  onclick="sendSuggestion('List all duplicates across Google Drive and SyNAS')">📁 Find Cross-Drive
+                  Duplicates</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Chat Input Toolbar -->
+      <div class="ai-chat-input-container">
+        <div class="ai-chat-input-wrap">
+          <textarea id="chat-input"
+            placeholder="Ask any question about your documents, contracts, drafts, or counterparties..." rows="1"
+            onkeydown="handleChatInputKey(event)"></textarea>
+          <button id="btn-send-chat" class="btn btn-primary btn-chat-send" onclick="sendChatMessage()">
+            <span>Send ➔</span>
+          </button>
+        </div>
+        <div class="ai-chat-footer-hint">Press <strong>Enter</strong> to send, <strong>Shift+Enter</strong> for a new
+          line. Answers are grounded in dense vectors and property graph entities.</div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Human-in-the-loop review: candidates remain provisional until explicitly approved. -->
+  <main id="ws-pane-authors" class="workspace-pane hidden dashboard-grid"
+    style="overflow:auto;padding:1.5rem;display:block">
+    <section class="author-graph-section" aria-labelledby="author-graph-title">
+      <div class="author-graph-header">
+        <div>
+          <h3 id="author-graph-title">3D Author-Candidate–Document Graph</h3>
+          <p class="text-muted">This graph includes raw person/document associations for context. Only explicit,
+            high-confidence authorship evidence appears in the human review queue below.</p>
+        </div>
+        <button class="btn btn-outline btn-sm" onclick="loadAuthorGraph()">⟳ Refresh graph</button>
+      </div>
+      <div class="author-graph-legend">
+        <span><i class="author-legend-dot approved"></i> Approved</span>
+        <span><i class="author-legend-dot pending"></i> Pending review</span>
+        <span><i class="author-legend-dot rejected"></i> Declined</span>
+        <span><i class="author-legend-dot document"></i> Document</span>
+        <strong>10+ distinct linked documents flags review only; it is not credibility or authorship proof and never
+          auto-approves.</strong>
+      </div>
+      <div id="author-graph-canvas" class="author-graph-canvas" role="img"
+        aria-label="Interactive 3D graph of provisional author candidates and associated documents"></div>
+      <div id="author-graph-summary" class="author-graph-summary" aria-live="polite">Loading author graph…</div>
+    </section>
+    <section class="panel" style="margin:0 auto;padding:1.5rem">
+      <header style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap">
+        <div>
+          <h2>Author candidate review</h2>
+          <p class="text-muted" style="margin-top:.35rem">The review queue only lists candidates that pass a
+            deterministic name filter and local-LLM authorship check (confidence ≥90% plus a verifiable quote). This is
+            triage, not identity verification; a human still decides.</p>
+        </div>
+        <div class="author-review-header-actions">
+          <button id="author-prevalidate-button" class="btn btn-primary btn-sm"
+            onclick="prevalidateAuthorCandidates()">🧠 Prevalidate next 10</button>
+          <button class="btn btn-outline" onclick="loadAuthorCandidates()">⟳ Refresh</button>
+        </div>
+      </header>
+      <p id="author-prevalidation-status" class="text-muted author-prevalidation-status" aria-live="polite">Candidate
+        review requires prevalidation. LLM calls run only when requested.</p>
+      <div style="display:flex;gap:.75rem;align-items:center;flex-wrap:wrap;margin:1rem 0">
+        <label for="author-review-status">Queue</label>
+        <select id="author-review-status" onchange="loadAuthorCandidates(); loadAuthorGraph()">
+          <option value="pending">Pending</option>
+          <option value="approved">Approved</option>
+          <option value="rejected">Declined</option>
+          <option value="all">All decisions</option>
+        </select>
+        <input id="author-review-search" type="search" placeholder="Filter name, filename, or snippet"
+          onkeydown="if(event.key==='Enter')loadAuthorCandidates()">
+        <label for="author-reviewer">Reviewer</label>
+        <input id="author-reviewer" type="text" maxlength="200" placeholder="Your name or ID" required>
+        <span id="author-review-count" class="text-muted"></span>
+      </div>
+
+      <h3 class="author-queue-heading">Candidate decision queue</h3>
+      <div id="author-review-list" aria-live="polite">Loading candidate reviews…</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:1rem">
+        <button id="author-review-prev" class="btn btn-outline btn-sm" onclick="changeAuthorCandidatePage(-1)">←
+          Previous</button>
+        <span id="author-review-page" class="text-muted"></span>
+        <button id="author-review-next" class="btn btn-outline btn-sm" onclick="changeAuthorCandidatePage(1)">Next
+          →</button>
+      </div>
+      <p class="text-muted" style="margin-top:1rem;font-size:.85rem">Reviewer identity is recorded for audit purposes.
+        The current app does not authenticate reviewer identities; use this queue only in a trusted environment until
+        authentication is enabled.</p>
+    </section>
+  </main>
+
+  <!-- Toast Notification Container -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <!-- Floating Diagnostic Pill (bottom-right launcher) -->
+  <div id="diag-floating-pill" class="diag-floating-pill" onclick="toggleDiagnosticConsole()"
+    title="Click to view Diagnostic Console">
+    <span class="diag-pill-pulse" id="diag-pill-pulse"></span>
+    <span class="diag-pill-icon">🩺</span>
+    <span class="diag-pill-text">Diagnostics</span>
+    <span id="diag-pill-badge" class="diag-pill-badge clean">0 issues</span>
+  </div>
+
+  <!-- Floating Diagnostic Console Window -->
+  <div id="diag-console-window" class="diag-console-window hidden">
+    <!-- Header -->
+    <div class="diag-header" id="diag-header">
+      <div class="diag-title-area">
+        <span class="diag-title-icon">🛠️</span>
+        <span class="diag-title-text">Diagnostic Console</span>
+        <span class="diag-live-indicator"><span class="pulse-mini"></span> Live</span>
+        <div class="diag-badge-group">
+          <span id="diag-count-errors" class="diag-counter-badge error" title="Errors">0 ❌</span>
+          <span id="diag-count-warnings" class="diag-counter-badge warning" title="Warnings">0 ⚠️</span>
+        </div>
+      </div>
+      <div class="diag-header-actions">
+        <button class="btn-diag-action" onclick="triggerTestDiagnosticIssue('WARNING')"
+          title="Emit synthetic test warning">⚠️ Warn</button>
+        <button class="btn-diag-action" onclick="triggerTestDiagnosticIssue('ERROR')"
+          title="Emit synthetic test error">❌
+          Err</button>
+        <button class="btn-diag-action" onclick="copyDiagnosticLogs()" title="Copy all logs to clipboard">📋
+          Copy</button>
+        <button class="btn-diag-action" onclick="clearDiagnosticLogs()" title="Clear console and backend buffer">🗑️
+          Clear</button>
+        <button class="btn-diag-action" id="btn-diag-maximize" onclick="toggleDiagnosticMaximize()"
+          title="Maximize / Restore">🗖</button>
+        <button class="btn-diag-action close" onclick="toggleDiagnosticConsole(false)"
+          title="Minimize console">✕</button>
+      </div>
+    </div>
+
+    <!-- Telemetry Ticker Strip -->
+    <div class="diag-telemetry-bar" id="diag-telemetry-bar">
+      <span class="telemetry-item"><strong id="telem-status" class="text-emerald">Healthy</strong></span>
+      <span class="telemetry-sep">•</span>
+      <span class="telemetry-item">DB WAL: <span id="telem-wal">Active</span></span>
+      <span class="telemetry-sep">•</span>
+      <span class="telemetry-item">Roots: <span id="telem-roots">--</span></span>
+      <span class="telemetry-sep">•</span>
+      <span class="telemetry-item">Workers: <span id="telem-threads">--</span></span>
+      <span class="telemetry-sep">•</span>
+      <span class="telemetry-item">Uptime: <span id="telem-uptime">--</span></span>
+    </div>
+
+    <!-- Filter Toolbar -->
+    <div class="diag-toolbar">
+      <div class="diag-filter-buttons">
+        <button class="diag-filter-btn active" data-filter="all" onclick="setDiagFilter('all')">All (<span
+            id="filter-count-all">0</span>)</button>
+        <button class="diag-filter-btn" data-filter="frontend" onclick="setDiagFilter('frontend')">Frontend (<span
+            id="filter-count-frontend">0</span>)</button>
+        <button class="diag-filter-btn" data-filter="backend" onclick="setDiagFilter('backend')">Backend (<span
+            id="filter-count-backend">0</span>)</button>
+        <button class="diag-filter-btn" data-filter="errors" onclick="setDiagFilter('errors')">Errors (<span
+            id="filter-count-errors">0</span>)</button>
+        <button class="diag-filter-btn" data-filter="warnings" onclick="setDiagFilter('warnings')">Warnings (<span
+            id="filter-count-warnings">0</span>)</button>
+      </div>
+      <div class="diag-search-box">
+        <input type="text" id="diag-search-input" placeholder="Filter logs..." oninput="handleDiagSearch(event)">
+        <label class="diag-autoscroll-label">
+          <input type="checkbox" id="diag-autoscroll" checked> Auto-scroll
+        </label>
+      </div>
+    </div>
+
+    <!-- Log Stream Output Body -->
+    <div class="diag-log-container" id="diag-log-container">
+      <div class="diag-empty-logs" id="diag-empty-state">
+        <span class="diag-empty-icon">✨</span>
+        <span>Diagnostic console active. No anomalies or errors detected.</span>
+      </div>
+      <div class="diag-log-list" id="diag-log-list"></div>
+    </div>
+  </div>
+
+  <script src="app.js?v=36"></script>
+</body>
+
+</html>

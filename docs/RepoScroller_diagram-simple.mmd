@@ -1,0 +1,71 @@
+---
+config:
+  theme: neutral
+  look: manual
+  themeVariables:
+    fontFamily: "'Source Code Pro', monospace"
+    mainBkg: "#ffffff"
+    clusterBkg: "#f8fafc"
+    clusterBorder: "#cbd5e1"
+    lineColor: "#6366f1"
+---
+%%{init: {'theme': 'dark', 'themeVariables': { 'fontSize': '12px', 'fontFamily': 'Noto Sans, sans-serif'}}}%%
+flowchart LR
+
+    %% =========================================================================
+    %% STYLING
+    %% =========================================================================
+    classDef inputStyle fill:#0f172a,stroke:#38bdf8,stroke-width:1.5px,color:#f8fafc;
+    classDef stageStyle fill:#1e293b,stroke:#0ea5e9,stroke-width:1.5px,color:#f8fafc;
+    classDef pcStyle fill:#090d16,stroke:#6366f1,stroke-width:1.5px,color:#f8fafc;
+    classDef cudaStyle fill:#062312,stroke:#10b981,stroke-width:1.5px,color:#f8fafc;
+    classDef storageStyle fill:#180f2b,stroke:#a855f7,stroke-width:1.5px,color:#f8fafc;
+
+    %% =========================================================================
+    %% MULTI-SOURCE INPUTS (LEFT)
+    %% =========================================================================
+    subgraph Inputs ["1. Multi-Format & Multi-Lingual Inputs"]
+        direction LR
+        F_PDF["PDF • DOCX • TXT • EML<br/>(OpenXML / Bitmaps / Scans)"]
+        F_LANG["DE • FR • EN Tri-Lingual<br/>(Swiss Statutes & Contracts)"]
+        F_HASH["Dual Cryptographic Hashing<br/>• SHA-256 (Bit-exact)<br/>• 64-bit SimHash (Drafts)"]
+    end
+    class F_PDF,F_LANG,F_HASH inputStyle;
+
+    %% =========================================================================
+    %% 5-STAGE PIPELINE (CENTER - LANDSCAPE FLOW)
+    %% =========================================================================
+    subgraph Pipeline ["2. The Process Scroller: 5-Stage Ingestion Pipeline"]
+        direction LR
+
+        S1["<b>01. File Crawler</b><br/>• 6× Worker Threads<br/>• SMB & Cloud Mounts<br/>• mtime Cache Fast-Path"]
+        S2["<b>02. Context Chunker</b><br/>• 512-Token Windows<br/>• Header Prepending<br/>• Docling / PyMuPDF"]
+        S3["<b>03. LLM Analyzer</b><br/>• 3-Tier Dynamic Router<br/>• Taxonomy (18 Slugs)<br/>• Maturity / Lifecycle"]
+        S4["<b>04. CUDA Embedder</b><br/>• 4× Async Pool<br/>• snowflake-arctic-embed2<br/>• 1024-dim Float32 Tensors"]
+        S5["<b>05. Graph Store</b><br/>• ACID SQLite WAL<br/>• FTS5 BM25 Lexical<br/>• Property Graph Edges"]
+
+        S1 --> S2 --> S3 --> S4 --> S5
+    end
+    class S1,S2,S3,S4,S5 stageStyle;
+
+    %% =========================================================================
+    %% DISTRIBUTED COMPUTE & DESTINATION (RIGHT)
+    %% =========================================================================
+    subgraph Workload ["3. Distributed Compute & 3D Universe"]
+        direction TB
+        PC1["<b>PC1: Host Reasoning (Localhost)</b><br/>• llama3.2:3b (CPU)<br/>• Intent Router & Conversational QA"]
+        PC2["<b>PC2: Remote CUDA Node (LAN)</b><br/>• RTX 3060 6GB VRAM<br/>• Dense Tensor Forward-Pass"]
+        UNIVERSE["<b>Three.js 3D Knowledge Universe</b><br/>• Frustum Look-Inward View<br/>• Cantons: CH-ZG ➔ 11 Communes<br/>• Stratified Top Nodes (250/type)"]
+    end
+    class PC1 pcStyle;
+    class PC2 cudaStyle;
+    class UNIVERSE storageStyle;
+
+    %% =========================================================================
+    %% WIRING
+    %% =========================================================================
+    Inputs ==> S1
+    S3 -.->|"Reasoning (CPU)"| PC1
+    S4 ==>|"LAN Gigabit (1024d)"| PC2
+    S5 ==>|"Bipartite Graph & Links"| UNIVERSE
+    PC1 <-.->|"Status / Probes"| PC2
