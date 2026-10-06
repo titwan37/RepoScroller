@@ -85,6 +85,8 @@ else {
     Write-Host "  -> Created Inbound Firewall Rule: TCP Port 11435 [ALLOW]" -ForegroundColor Green
 }
 
+
+
 # 5. Restart Ollama Service / Background Process
 Write-Host ""
 Write-Host "[4/5] Restarting Ollama service with new network settings..." -ForegroundColor Cyan
