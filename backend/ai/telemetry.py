@@ -9,6 +9,7 @@ import httpx
 from backend.config import settings
 
 logger = logging.getLogger("ai.telemetry")
+_shared_probe_client = httpx.Client(timeout=5.0, limits=httpx.Limits(max_keepalive_connections=10, max_connections=20))
 
 
 class WorkloadTelemetry:
@@ -414,76 +415,73 @@ class WorkloadTelemetry:
             self._cached_nodes = result
             self._cache_time = now
             return result
-
     def _probe_single_node(self, base_url: str, expected_role: str) -> Dict[str, Any]:
         """Test reachability and extract running model details from /api/ps with robust LAN timeout."""
         t0 = time.time()
         # 1. First attempt /api/ps (running models in VRAM/RAM with full specs)
         try:
-            with httpx.Client(timeout=3.5) as client:
-                r = client.get(f"{base_url.rstrip('/')}/api/ps")
-                elapsed_ms = round((time.time() - t0) * 1000, 2)
-                if r.status_code == 200:
-                    raw_models = r.json().get("models", [])
-                    loaded_models = []
-                    models_detail = []
-                    total_vram_bytes = 0
-                    total_size_bytes = 0
-                    max_ctx = 0
+            r = _shared_probe_client.get(f"{base_url.rstrip('/')}/api/ps")
+            elapsed_ms = round((time.time() - t0) * 1000, 2)
+            if r.status_code == 200:
+                raw_models = r.json().get("models", [])
+                loaded_models = []
+                models_detail = []
+                total_vram_bytes = 0
+                total_size_bytes = 0
+                max_ctx = 0
 
-                    for m in raw_models:
-                        m_name = m.get("name", "")
-                        loaded_models.append(m_name)
-                        sz_vram = m.get("size_vram", 0)
-                        sz_total = m.get("size", 0)
-                        ctx = m.get("context_length", 0)
-                        details = m.get("details", {})
+                for m in raw_models:
+                    m_name = m.get("name", "")
+                    loaded_models.append(m_name)
+                    sz_vram = m.get("size_vram", 0)
+                    sz_total = m.get("size", 0)
+                    ctx = m.get("context_length", 0)
+                    details = m.get("details", {})
 
-                        total_vram_bytes += sz_vram
-                        total_size_bytes += sz_total
-                        if ctx > max_ctx:
-                            max_ctx = ctx
+                    total_vram_bytes += sz_vram
+                    total_size_bytes += sz_total
+                    if ctx > max_ctx:
+                        max_ctx = ctx
 
-                        models_detail.append({
-                            "name": m_name,
-                            "size_vram_bytes": sz_vram,
-                            "size_vram_mb": round(sz_vram / (1024 * 1024), 1),
-                            "size_total_mb": round(sz_total / (1024 * 1024), 1),
-                            "context_length": ctx,
-                            "quantization": details.get("quantization_level", "Unknown"),
-                            "param_size": details.get("parameter_size", ""),
-                            "processor": "100% GPU" if sz_vram > 0 and sz_vram >= sz_total * 0.9 else ("100% CPU" if sz_vram == 0 else f"{round(sz_vram/max(1, sz_total)*100)}% GPU"),
-                            "expires_at": m.get("expires_at", "")
-                        })
+                    models_detail.append({
+                        "name": m_name,
+                        "size_vram_bytes": sz_vram,
+                        "size_vram_mb": round(sz_vram / (1024 * 1024), 1),
+                        "size_total_mb": round(sz_total / (1024 * 1024), 1),
+                        "context_length": ctx,
+                        "quantization": details.get("quantization_level", "Unknown"),
+                        "param_size": details.get("parameter_size", ""),
+                        "processor": "100% GPU" if sz_vram > 0 and sz_vram >= sz_total * 0.9 else ("100% CPU" if sz_vram == 0 else f"{round(sz_vram/max(1, sz_total)*100)}% GPU"),
+                        "expires_at": m.get("expires_at", "")
+                    })
 
-                    total_vram_mb = round(total_vram_bytes / (1024 * 1024), 1)
-                    total_vram_gb = round(total_vram_bytes / (1024 * 1024 * 1024), 2)
-                    is_gpu = total_vram_bytes > 0
+                total_vram_mb = round(total_vram_bytes / (1024 * 1024), 1)
+                total_vram_gb = round(total_vram_bytes / (1024 * 1024 * 1024), 2)
+                is_gpu = total_vram_bytes > 0
 
-                    vram_formatted = f"{total_vram_gb} GB" if total_vram_gb >= 1.0 else (f"{total_vram_mb} MB" if total_vram_mb > 0 else "0 MB (CPU)")
+                vram_formatted = f"{total_vram_gb} GB" if total_vram_gb >= 1.0 else (f"{total_vram_mb} MB" if total_vram_mb > 0 else "0 MB (CPU)")
 
-                    return {
-                        "online": True,
-                        "ping_ms": elapsed_ms,
-                        "models_loaded": loaded_models,
-                        "models_detail": models_detail,
-                        "total_vram_bytes": total_vram_bytes,
-                        "total_vram_mb": total_vram_mb,
-                        "total_vram_gb": total_vram_gb,
-                        "vram_formatted": vram_formatted,
-                        "processor": "100% GPU" if is_gpu else "100% CPU",
-                        "context_length": max_ctx,
-                        "raw_models_count": len(raw_models)
-                    }
+                return {
+                    "online": True,
+                    "ping_ms": elapsed_ms,
+                    "models_loaded": loaded_models,
+                    "models_detail": models_detail,
+                    "total_vram_bytes": total_vram_bytes,
+                    "total_vram_mb": total_vram_mb,
+                    "total_vram_gb": total_vram_gb,
+                    "vram_formatted": vram_formatted,
+                    "processor": "100% GPU" if is_gpu else "100% CPU",
+                    "context_length": max_ctx,
+                    "raw_models_count": len(raw_models)
+                }
         except Exception:
             pass
 
         # 2. Try /api/tags fallback (installed models)
         try:
-            with httpx.Client(timeout=3.5) as client:
-                r2 = client.get(f"{base_url.rstrip('/')}/api/tags")
-                elapsed_ms = round((time.time() - t0) * 1000, 2)
-                if r2.status_code == 200:
+            r2 = _shared_probe_client.get(f"{base_url.rstrip('/')}/api/tags")
+            elapsed_ms = round((time.time() - t0) * 1000, 2)
+            if r2.status_code == 200:
                     models = [m.get("name", "") for m in r2.json().get("models", [])]
                     return {
                         "online": True,

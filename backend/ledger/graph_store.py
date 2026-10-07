@@ -594,7 +594,7 @@ class PropertyGraphStore:
 
         active_filters = {k: v for k, v in (filters or {}).items() if v is not None and str(v).strip() != ""}
         layout_mode = str(active_filters.pop("layout", layout or "spatial")).lower().strip()
-        if layout_mode not in ["thematic", "spatial"]:
+        if layout_mode not in ["thematic", "timeline", "spatial"]:
             layout_mode = "spatial"
 
         focus_node_id = None
@@ -621,36 +621,18 @@ class PropertyGraphStore:
                 q_filter = active_filters.get("q") or active_filters.get("query") or active_filters.get("search")
 
                 matching_node_ids = set()
+                matched_doc_shas = set()
+                extra_document_nodes = []
 
                 # 1. Document SHA Filter & Lineage Navigation
                 if doc_sha_filter:
                     clean_sha = str(doc_sha_filter).strip()
+                    matched_doc_shas.add(clean_sha)
                     cur.execute("SELECT node_id FROM document_entity_links WHERE sha256_hash = ?;", (clean_sha,))
                     doc_linked_nodes = {r["node_id"] for r in cur.fetchall()}
                     matching_node_ids.update(doc_linked_nodes)
-
-                    # Retrieve document metadata from ledger
-                    cur.execute("SELECT sha256_hash, canonical_filename, doc_type, doc_date, maturity_score, lifecycle_status FROM document_ledger WHERE sha256_hash = ?;", (clean_sha,))
-                    doc_meta = cur.fetchone()
-                    if doc_meta:
-                        doc_node_id = f"doc_{clean_sha[:16]}"
-                        focus_node_id = doc_node_id
-                        extra_document_node = {
-                            "node_id": doc_node_id,
-                            "node_type": "document",
-                            "name": doc_meta["canonical_filename"],
-                            "properties_json": json.dumps({
-                                "sha256": clean_sha,
-                                "doc_type": doc_meta["doc_type"],
-                                "status": doc_meta["lifecycle_status"]
-                            }),
-                            "doc_count": 1,
-                            "degree": len(doc_linked_nodes),
-                            "latest_doc_date": doc_meta["doc_date"] or "2024-01-01",
-                            "raw_sha": clean_sha,
-                        }
-                    elif doc_linked_nodes:
-                        focus_node_id = next(iter(doc_linked_nodes))
+                    if doc_linked_nodes:
+                        focus_node_id = f"doc_{clean_sha[:16]}"
 
                 # 2. Location & Org Filters with Inter-SubGraph Discovery
                 loc_node_ids = set()
@@ -680,7 +662,7 @@ class PropertyGraphStore:
                             loc_node_ids.add(f"location_{sr['name'].lower().replace(' ', '_')}")
 
                         cur.execute(f"""
-                            SELECT DISTINCT del.node_id
+                            SELECT DISTINCT del.node_id, del.sha256_hash
                             FROM document_geo_links dgl
                             JOIN document_entity_links del ON dgl.sha256_hash = del.sha256_hash
                             WHERE dgl.geo_id IN ({p_geos})
@@ -688,6 +670,7 @@ class PropertyGraphStore:
                         """, geo_ids + [min(400, limit)])
                         for r in cur.fetchall():
                             matching_node_ids.add(r["node_id"])
+                            matched_doc_shas.add(r["sha256_hash"])
 
                         canton_root = next((sr for sr in target_sub_regions if sr["entity_type"] == "canton"), None)
                         if canton_root:
@@ -726,14 +709,46 @@ class PropertyGraphStore:
                     if person_node_ids and not focus_node_id:
                         focus_node_id = next(iter(person_node_ids))
 
-                # Theme filter
+                # Theme filter: dynamically resolves theme hubs AND associated documents
                 if theme_filter:
                     clean_th = theme_filter.lower().strip()
-                    cur.execute("SELECT node_id FROM knowledge_nodes WHERE node_type = 'theme' AND (LOWER(node_id) LIKE ? OR LOWER(name) LIKE ?);", (f"%{clean_th}%", f"%{clean_th}%"))
+                    clean_th_under = clean_th.replace(" ", "_")
+                    clean_th_space = clean_th.replace("_", " ")
+                    th_patterns = [f"%{clean_th}%", f"%{clean_th_under}%", f"%{clean_th_space}%"]
+                    
+                    cur.execute("""
+                        SELECT node_id FROM knowledge_nodes 
+                        WHERE (node_type = 'theme' OR node_id LIKE 'theme_%' OR node_id LIKE 'document_category_%' OR node_id LIKE 'contract_type_%') AND (
+                            LOWER(node_id) LIKE ? OR LOWER(name) LIKE ? OR
+                            LOWER(node_id) LIKE ? OR LOWER(name) LIKE ? OR
+                            LOWER(node_id) LIKE ? OR LOWER(name) LIKE ?
+                        );
+                    """, [p for pat in th_patterns for p in (pat, pat)])
                     th_matched = {r["node_id"] for r in cur.fetchall()}
                     matching_node_ids.update(th_matched)
                     if th_matched and not focus_node_id:
                         focus_node_id = next(iter(th_matched))
+
+                    # Pull documents categorized under the matching theme(s)
+                    if th_matched:
+                        p_th = ",".join("?" for _ in th_matched)
+                        cur.execute(f"""
+                            SELECT DISTINCT del.sha256_hash 
+                            FROM document_entity_links del
+                            WHERE del.node_id IN ({p_th})
+                            LIMIT ?;
+                        """, list(th_matched) + [min(400, limit)])
+                        for r in cur.fetchall():
+                            matched_doc_shas.add(r["sha256_hash"])
+
+                    # Also match direct doc_type if clean_th corresponds to a document type (e.g. court_order)
+                    cur.execute("""
+                        SELECT sha256_hash FROM document_ledger 
+                        WHERE LOWER(doc_type) = ? OR LOWER(doc_type) = ?
+                        ORDER BY doc_date DESC LIMIT ?;
+                    """, (clean_th, clean_th_under, min(400, limit)))
+                    for r in cur.fetchall():
+                        matched_doc_shas.add(r["sha256_hash"])
 
                 # If multiple focal entities provided (e.g. loc + org), find bridging documents
                 if loc_node_ids and org_node_ids:
@@ -748,6 +763,7 @@ class PropertyGraphStore:
                     """, list(loc_node_ids) + list(org_node_ids))
                     shared_shas = [r["sha256_hash"] for r in cur.fetchall()]
                     if shared_shas:
+                        matched_doc_shas.update(shared_shas)
                         p_shas = ",".join("?" for _ in shared_shas)
                         cur.execute(f"SELECT DISTINCT node_id FROM document_entity_links WHERE sha256_hash IN ({p_shas});", shared_shas)
                         shared_entities = {r["node_id"] for r in cur.fetchall()}
@@ -766,7 +782,7 @@ class PropertyGraphStore:
                         matching_node_ids.update({r["neighbor_id"] for r in cur.fetchall()})
 
                         cur.execute(f"""
-                            SELECT l2.node_id, COUNT(DISTINCT l1.sha256_hash) AS shared_docs
+                            SELECT l2.node_id, COUNT(DISTINCT l1.sha256_hash) AS shared_docs, GROUP_CONCAT(DISTINCT l1.sha256_hash) AS doc_shas
                             FROM document_entity_links l1
                             JOIN document_entity_links l2 ON l1.sha256_hash = l2.sha256_hash
                             WHERE l1.node_id IN ({p_focal}) AND l2.node_id NOT IN ({p_focal})
@@ -774,12 +790,28 @@ class PropertyGraphStore:
                             ORDER BY shared_docs DESC
                             LIMIT ?;
                         """, focal_list + focal_list + [min(300, limit)])
-                        matching_node_ids.update({r["node_id"] for r in cur.fetchall()})
+                        for r in cur.fetchall():
+                            matching_node_ids.add(r["node_id"])
+                            if r["doc_shas"]:
+                                for s in r["doc_shas"].split(","):
+                                    if s:
+                                        matched_doc_shas.add(s)
 
-                # 3. Node Type Filter
+                # 3. Node Type Filter: handles entity schema types AND document types (court_order, etc.)
                 if ntype_filter:
-                    cur.execute("SELECT node_id FROM knowledge_nodes WHERE LOWER(node_type) = ? LIMIT ?;", (ntype_filter.lower(), limit))
+                    clean_nt = ntype_filter.lower().strip()
+                    clean_nt_under = clean_nt.replace(" ", "_")
+                    cur.execute("SELECT node_id FROM knowledge_nodes WHERE LOWER(node_type) = ? LIMIT ?;", (clean_nt, limit))
                     matching_node_ids.update({r["node_id"] for r in cur.fetchall()})
+
+                    # Check if ntype_filter is a document type in document_ledger
+                    cur.execute("""
+                        SELECT sha256_hash FROM document_ledger 
+                        WHERE LOWER(doc_type) = ? OR LOWER(doc_type) = ?
+                        ORDER BY doc_date DESC LIMIT ?;
+                    """, (clean_nt, clean_nt_under, min(400, limit)))
+                    for r in cur.fetchall():
+                        matched_doc_shas.add(r["sha256_hash"])
 
                 # 4. Cluster Filter
                 if cluster_filter is not None:
@@ -793,13 +825,91 @@ class PropertyGraphStore:
                     except (ValueError, TypeError):
                         pass
 
-                # 5. General Search Query
+                # 5. General Search Query: Searches entity names, node IDs, AND document filenames / text
                 if q_filter:
-                    cur.execute("SELECT node_id FROM knowledge_nodes WHERE LOWER(name) LIKE ? OR LOWER(node_id) LIKE ? LIMIT ?;", (f"%{q_filter.lower()}%", f"%{q_filter.lower()}%", limit))
+                    clean_q = q_filter.lower().strip()
+                    clean_q_under = clean_q.replace(" ", "_")
+                    cur.execute("""
+                        SELECT node_id FROM knowledge_nodes 
+                        WHERE LOWER(name) LIKE ? OR LOWER(node_id) LIKE ? OR LOWER(properties_json) LIKE ?
+                        LIMIT ?;
+                    """, (f"%{clean_q}%", f"%{clean_q}%", f"%{clean_q}%", limit))
                     q_matched = {r["node_id"] for r in cur.fetchall()}
                     matching_node_ids.update(q_matched)
                     if q_matched and not focus_node_id:
                         focus_node_id = next(iter(q_matched))
+
+                    # Crucial: Search document_ledger canonical_filename and text_snippet (e.g. 'urteil', 'obergericht', 'lawyer')
+                    cur.execute("""
+                        SELECT sha256_hash FROM document_ledger 
+                        WHERE LOWER(canonical_filename) LIKE ? OR LOWER(text_snippet) LIKE ? OR LOWER(doc_type) LIKE ?
+                        ORDER BY doc_date DESC LIMIT ?;
+                    """, (f"%{clean_q}%", f"%{clean_q}%", f"%{clean_q_under}%", min(350, limit)))
+                    for r in cur.fetchall():
+                        matched_doc_shas.add(r["sha256_hash"])
+
+                # Synthesize Document Nodes for any matched document SHAs
+                if matched_doc_shas:
+                    p_shas = ",".join("?" for _ in matched_doc_shas)
+                    sha_list = list(matched_doc_shas)
+                    cur.execute(f"""
+                        SELECT dl.sha256_hash, dl.canonical_filename, dl.doc_type, dl.lifecycle_status,
+                               dl.doc_date, dl.due_date, dl.reception_date,
+                               (SELECT del.node_id FROM document_entity_links del WHERE del.sha256_hash = dl.sha256_hash AND del.node_id LIKE 'theme_%' LIMIT 1) AS theme_id,
+                               (SELECT COUNT(*) FROM document_entity_links del WHERE del.sha256_hash = dl.sha256_hash) AS degree
+                        FROM document_ledger dl
+                        WHERE dl.sha256_hash IN ({p_shas})
+                        ORDER BY COALESCE(dl.due_date, dl.doc_date) DESC
+                        LIMIT ?;
+                    """, sha_list + [min(400, limit)])
+                    doc_rows = cur.fetchall()
+
+                    for dr in doc_rows:
+                        d_sha = dr["sha256_hash"]
+                        d_nid = f"doc_{d_sha[:16]}"
+                        extra_document_nodes.append({
+                            "node_id": d_nid,
+                            "node_type": "document",
+                            "name": dr["canonical_filename"],
+                            "properties_json": json.dumps({
+                                "sha256": d_sha,
+                                "doc_type": dr["doc_type"],
+                                "status": dr["lifecycle_status"],
+                                "theme_id": dr["theme_id"] or "theme_court_order",
+                                "due_date": dr["due_date"],
+                                "reception_date": dr["reception_date"],
+                            }),
+                            "doc_count": 1,
+                            "degree": dr["degree"] or 1,
+                            "latest_doc_date": dr["due_date"] or dr["doc_date"] or "2024-01-01",
+                            "raw_sha": d_sha,
+                        })
+
+                    # Discover connected entities for these matching documents
+                    cur.execute(f"""
+                        SELECT DISTINCT node_id FROM document_entity_links
+                        WHERE sha256_hash IN ({p_shas})
+                        LIMIT ?;
+                    """, sha_list + [min(300, limit)])
+                    matching_node_ids.update({r["node_id"] for r in cur.fetchall()})
+
+                    # Synthesize relational edges linking documents to their themes and connected entities
+                    cur.execute(f"""
+                        SELECT 'doc_' || SUBSTR(del.sha256_hash, 1, 16) AS source_id,
+                               del.node_id AS target_id,
+                               del.role AS relation_type,
+                               1.0 AS weight
+                        FROM document_entity_links del
+                        WHERE del.sha256_hash IN ({p_shas})
+                        LIMIT ?;
+                    """, sha_list + [min(800, limit * 2)])
+                    for er in cur.fetchall():
+                        extra_edges.append({
+                            "source": er["source_id"],
+                            "target": er["target_id"],
+                            "relation": er["relation_type"] or "RELATED_TO",
+                            "weight": er["weight"] or 1.0
+                        })
 
                 raw_nodes = []
                 if matching_node_ids:
@@ -820,13 +930,16 @@ class PropertyGraphStore:
                     """, list(matching_node_ids) + [limit])
                     raw_nodes = [dict(r) for r in cur.fetchall()]
 
-                if extra_document_node:
+                # Prepend all synthesized document nodes so they have highest rendering priority
+                if extra_document_nodes:
+                    raw_nodes = extra_document_nodes + raw_nodes
+                elif extra_document_node:
                     raw_nodes.insert(0, extra_document_node)
 
-            elif layout_mode == "thematic":
-                # Thematic Mindmap Mode:
+            elif layout_mode in ["thematic", "timeline"]:
+                # Thematic Mindmap & Temporal Action Timeline Mode:
                 # 1. Pull all theme hubs (Suns)
-                # 2. Pull categorized documents linked via CATEGORIZED_AS (Planets)
+                # 2. Pull categorized documents linked via CATEGORIZED_AS with stratified theme quotas
                 # 3. Pull key entities linked to these categorized documents to show cross-pollination
                 doc_limit = max(100, int(limit * 0.65))
                 ent_limit = max(50, int(limit * 0.30))
@@ -845,24 +958,44 @@ class PropertyGraphStore:
                         GROUP BY n.node_id, n.node_type, n.name
                     ),
                     ThematicDocs AS (
-                        SELECT 'doc_' || SUBSTR(dl.sha256_hash, 1, 16) AS node_id,
-                               'document' AS node_type,
-                               dl.canonical_filename AS name,
-                               json_object(
-                                   'sha256', dl.sha256_hash,
-                                   'doc_type', dl.doc_type,
-                                   'status', dl.lifecycle_status,
-                                   'theme_id', l.node_id
-                               ) AS properties_json,
-                               1 AS doc_count,
-                               (SELECT COUNT(*) FROM document_entity_links del WHERE del.sha256_hash = dl.sha256_hash) AS degree,
-                               dl.doc_date AS latest_doc_date,
-                               dl.sha256_hash AS raw_sha,
-                               2 AS priority
-                        FROM document_ledger dl
-                        JOIN document_entity_links l ON dl.sha256_hash = l.sha256_hash AND l.role = 'CATEGORIZED_AS'
-                        WHERE l.node_id LIKE 'theme_%'
-                        ORDER BY dl.doc_date DESC, degree DESC
+                        SELECT node_id, node_type, name, properties_json, doc_count, degree, latest_doc_date, raw_sha, priority
+                        FROM (
+                            SELECT 'doc_' || SUBSTR(dl.sha256_hash, 1, 16) AS node_id,
+                                   'document' AS node_type,
+                                   dl.canonical_filename AS name,
+                                   json_object(
+                                       'sha256', dl.sha256_hash,
+                                       'doc_type', dl.doc_type,
+                                       'status', dl.lifecycle_status,
+                                       'theme_id', l.node_id,
+                                       'due_date', dl.due_date,
+                                       'reception_date', dl.reception_date
+                                   ) AS properties_json,
+                                   1 AS doc_count,
+                                   (SELECT COUNT(*) FROM document_entity_links del WHERE del.sha256_hash = dl.sha256_hash) AS degree,
+                                   COALESCE(dl.due_date, dl.doc_date) AS latest_doc_date,
+                                   dl.sha256_hash AS raw_sha,
+                                   CASE 
+                                       WHEN EXISTS (SELECT 1 FROM action_items ai WHERE ai.sha256_hash = dl.sha256_hash AND ai.status = 'pending') THEN 1 
+                                       ELSE 2 
+                                   END AS priority,
+                                   ROW_NUMBER() OVER (
+                                       PARTITION BY l.node_id, dl.canonical_filename
+                                       ORDER BY dl.doc_date DESC
+                                   ) AS dup_rank,
+                                   ROW_NUMBER() OVER (
+                                       PARTITION BY l.node_id 
+                                       ORDER BY 
+                                           CASE WHEN EXISTS (SELECT 1 FROM action_items ai WHERE ai.sha256_hash = dl.sha256_hash AND ai.status = 'pending') THEN 1 ELSE 2 END ASC,
+                                           COALESCE(dl.due_date, dl.doc_date) DESC,
+                                           dl.sha256_hash ASC
+                                   ) AS theme_rank
+                            FROM document_ledger dl
+                            JOIN document_entity_links l ON dl.sha256_hash = l.sha256_hash AND l.role = 'CATEGORIZED_AS'
+                            WHERE l.node_id LIKE 'theme_%'
+                        )
+                        WHERE dup_rank = 1 AND theme_rank <= 45
+                        ORDER BY priority ASC, latest_doc_date DESC
                         LIMIT ?
                     ),
                     ConnectedEntities AS (
@@ -936,9 +1069,9 @@ class PropertyGraphStore:
                     "edges": [],
                     "clusters": cluster_definitions,
                     "axes": {
-                        "x": "Thematic Gravitational Plane (Cosmic X)" if layout_mode == "thematic" else "Domain Specificity & Category Dispersion (PCA-1)",
-                        "y": "Cross-Pollination & Inter-Domain Tension (Cosmic Y)" if layout_mode == "thematic" else "Temporal Recency & Lifecycle Maturity (PCA-2)",
-                        "z": "Solar Elevation & Centrality Mass (Cosmic Z)" if layout_mode == "thematic" else "Graph Centrality & Hub Authority (PCA-3)"
+                        "x": "Thematic Radial Track (Channel X)" if layout_mode == "timeline" else ("Thematic Gravitational Plane (Cosmic X)" if layout_mode == "thematic" else "Domain Specificity & Category Dispersion (PCA-1)"),
+                        "y": "Cross-Domain Elevation (Channel Y)" if layout_mode == "timeline" else ("Cross-Pollination & Inter-Domain Tension (Cosmic Y)" if layout_mode == "thematic" else "Temporal Recency & Lifecycle Maturity (PCA-2)"),
+                        "z": "Chronological Urgency Timeline (Z-Tunnel)" if layout_mode == "timeline" else ("Solar Elevation & Centrality Mass (Cosmic Z)" if layout_mode == "thematic" else "Graph Centrality & Hub Authority (PCA-3)")
                     },
                     "stats": {
                         "total_nodes": 0,
@@ -978,7 +1111,11 @@ class PropertyGraphStore:
                 x_sun = math.cos(angle) * r_sun
                 y_sun = math.sin(angle) * r_sun
                 z_sun = math.sin(i * 1.5) * 35.0
-                theme_anchors[t_nid] = (round(x_sun, 2), round(y_sun, 2), round(z_sun, 2))
+            # Compute thematic gravity scores for all theme nodes
+            try:
+                gravity_map = {g["theme_id"]: g for g in self.repo.compute_thematic_gravity_scores()}
+            except Exception:
+                gravity_map = {}
 
             for idx, r in enumerate(raw_nodes):
                 nid = r["node_id"]
@@ -1085,6 +1222,7 @@ class PropertyGraphStore:
                     else:
                         size_scale = max(0.8, min(4.5, 0.8 + (math.sqrt(degree + 1) * 0.25)))
 
+                grav_info = gravity_map.get(nid, {}) if ntype == "theme" else {}
                 nodes_data.append({
                     "id": nid,
                     "name": name,
@@ -1102,6 +1240,13 @@ class PropertyGraphStore:
                     "size": round(size_scale, 2),
                     "theme_id": theme_id_for_node,
                     "is_hub": ntype == "theme",
+                    "due_date": parsed_props.get("due_date"),
+                    "reception_date": parsed_props.get("reception_date"),
+                    "sha256": parsed_props.get("sha256") or r.get("raw_sha"),
+                    "gravity_score": grav_info.get("gravity_score", 1.0),
+                    "pending_todos": grav_info.get("pending_todos", 0),
+                    "overdue_todos": grav_info.get("overdue_todos", 0),
+                    "velocity_7d": grav_info.get("velocity_7d", 0),
                 })
 
             # 2. Fetch edges linking the selected top nodes
@@ -1232,9 +1377,9 @@ class PropertyGraphStore:
                 "edges": edges_data,
                 "clusters": cluster_definitions,
                 "axes": {
-                    "x": "Thematic Gravitational Plane (Cosmic X)" if layout_mode == "thematic" else "Domain Specificity & Category Dispersion (PCA-1)",
-                    "y": "Cross-Pollination & Inter-Domain Tension (Cosmic Y)" if layout_mode == "thematic" else "Temporal Recency & Lifecycle Maturity (PCA-2)",
-                    "z": "Solar Elevation & Centrality Mass (Cosmic Z)" if layout_mode == "thematic" else "Graph Centrality & Hub Authority (PCA-3)"
+                    "x": "Thematic Radial Track (Channel X)" if layout_mode == "timeline" else ("Thematic Gravitational Plane (Cosmic X)" if layout_mode == "thematic" else "Domain Specificity & Category Dispersion (PCA-1)"),
+                    "y": "Cross-Domain Elevation (Channel Y)" if layout_mode == "timeline" else ("Cross-Pollination & Inter-Domain Tension (Cosmic Y)" if layout_mode == "thematic" else "Temporal Recency & Lifecycle Maturity (PCA-2)"),
+                    "z": "Chronological Urgency Timeline (Z-Tunnel)" if layout_mode == "timeline" else ("Solar Elevation & Centrality Mass (Cosmic Z)" if layout_mode == "thematic" else "Graph Centrality & Hub Authority (PCA-3)")
                 },
                 "stats": {
                     "total_nodes": tot_nodes,
@@ -1244,8 +1389,8 @@ class PropertyGraphStore:
                     "quota_per_type": quota_per_type,
                     "overall_representativity_pct": round((len(nodes_data) / tot_nodes * 100.0), 1) if tot_nodes > 0 else 100.0,
                     "db_type_counts": type_counts,
-                    "dimensionality": "3D Thematic Gravitational Space" if layout_mode == "thematic" else "High-Dim 1024-D -> 3D PCA Space",
-                    "clustering_algorithm": "Thematic Gravitational Mindmap (k=7)" if layout_mode == "thematic" else "Stratified Topological Archetypes (k=7)",
+                    "dimensionality": "3D Chronological Urgency Tunnel" if layout_mode == "timeline" else ("3D Thematic Gravitational Space" if layout_mode == "thematic" else "High-Dim 1024-D -> 3D PCA Space"),
+                    "clustering_algorithm": "Temporal Obligation Timeline (Z-Tunnel)" if layout_mode == "timeline" else ("Thematic Gravitational Mindmap (k=7)" if layout_mode == "thematic" else "Stratified Topological Archetypes (k=7)"),
                     "layout": layout_mode
                 },
                 "active_filters": active_filters,

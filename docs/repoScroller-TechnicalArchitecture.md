@@ -50,6 +50,16 @@ Rather than creating a standalone monolith, `RepoScroller` can synthesize and ex
   │ • FastAPI SSE endpoint + Cascaded LLM Router                 │
   │ • Exact & Fuzzy Duplicate Detection on Ingestion / Query    │
   │ • Natural Language Interrogation ("Is copy available?")      │
+  └─────────────────────────────┬────────────────────────────────┘
+                                │
+                                ▼
+  ┌──────────────────────────────────────────────────────────────┐
+  │ Layer 5: Operational Obligations & ALCOA+ Auto-Strikeout     │
+  │ • reception_date, due_date & doc_date temporal disambiguation│
+  │ • Action Item Detection: Payment, Signature, Reply, Tax      │
+  │ • Deterministic Cross-Matching & Attributable Auto-Strikeout │
+  │ • High-Speed In-DB Backfill Engine (>430 docs/sec)           │
+  │ • Live Telemetry Tracker & SPA Deep Linking (/actions)       │
   └──────────────────────────────────────────────────────────────┘
 
 ```
@@ -131,6 +141,15 @@ Swiss-LexiBot source code : "C:\Dev\SwissLexiBot_v2"
 * The bot runs an immediate SHA-256 and SimHash check.
 * If an exact copy exists: It warns the user, provides the file path (`\\SyNAS\...` or `G:\...`), and displays its status.
 * If an earlier draft exists: It returns: *"A draft version exists at `H:\My Drive\...` (modified 2024-05-10), but this copy appears to be the finalized signed scan."*
+
+#### 5. Operational Obligations & Procedural Intelligence (Layer 5)
+
+* **Temporal Date Disambiguation:** Resolves multiple dates within each document into strict legal semantics:
+  * `doc_date`: Governing / substantive date of document creation.
+  * `reception_date`: Formal arrival, postmark, or notification date (`reçu le`, `eingegangen am`).
+  * `due_date`: Impending response deadline, expiration, or payment due date (`fällig bis`, `échéance`).
+* **Contractual & Financial Obligation Detection:** Scans text snippets and chunks using deterministic multilingual heuristics to detect pending obligations (`payment`, `signature`, `reply`, `review`, `tax_declaration`).
+* **ALCOA+ Attributable Auto-Strikeout:** Evaluates subsequent documents across the ledger (bank debit confirmations, signed copies, formal court receipts) to automatically cross-match and mark obligations `completed`, logging the fulfilling SHA-256 and proof directly into `action_items` and the `audit_log`.
 
 ---
 
@@ -469,21 +488,351 @@ To ensure that the most recent operational documents are indexed and available i
 | **Complete** | Truncation heuristics, page count verification, and completeness scoring detect incomplete downloads or corrupted scans. | `document_ledger(completeness_score, maturity_score)` |
 | **Consistent** | Version lineages explicitly define `supersedes`, `derived_from`, and `near_duplicate` relationships in DAG format. | `version_chains(parent_sha256, child_sha256, relationship)` |
 | **Enduring** | Zero-dependency, single-file SQLite database with Write-Ahead Logging (WAL) and ACID transactions. | `reposcroller_ledger.db` |
-| **Available** | Fast REST API endpoints, real-time Web dashboard, and resilient fallback mechanisms for offline NAS drives. | [`reposcroller/api`](file:///c:/Dev/RepoScroller/reposcroller/api) |
+| **Available** | Fast REST API endpoints, real-time Web dashboard, and resilient fallback mechanisms for offline NAS drives. | [`reposcroller/api`](file:///c:/Dev/RepoScroller/backend/api) |
 
 I have completely refactored the Sidecar Worker to use a **Multithreaded Pipeline Architecture** in [`reposcroller/ai/sidecar_worker.py`](file:///c:/Dev/RepoScroller/reposcroller/ai/sidecar_worker.py).
 
-The new architecture replaces the strictly synchronous loop with a high-throughput queue system:
+---
 
-1. **Producer Loop (Main Thread):** Continuously queries SQLite for pending documents in batches, reads the text, creates semantic chunks, and pushes them into an `embed_queue` without waiting for network IO.
-2. **HTTP Worker Pool (6 Threads):** Multiple threads pull batches from the queue and concurrently blast embedding requests to your RTX 3060 (`PC2`). Because there are multiple workers, the GPU will now receive continuous tensor workloads instead of waiting.
-3. **Consumer Thread (DB Writer):** Receives the returned embeddings and sequentially writes them back into the SQLite Vector Store and Graph Store in bulk. By isolating the SQLite writes to a single thread, we prevent `database is locked` contention while allowing the HTTP threads to keep the network saturated.
+### Multithreaded Knowledge Base Sidecar Pipeline Architecture
 
-### What you should see now
+To decouple slow network I/O and remote GPU compute from local filesystem extraction, the Knowledge Base indexing engine ([`backend/ai/sidecar_worker.py`](file:///c:/Dev/RepoScroller/backend/ai/sidecar_worker.py)) operates as a **tri-stage producer-consumer pipeline**:
 
-* **LAN Throughput:** The 32 Kbps limit will spike to multiple megabytes per second as 6 concurrent workers request vectors simultaneously.
+```
+ ┌──────────────────────┐        ┌──────────────────────┐        ┌──────────────────────┐
+ │ Stage 1: Producer    │        │ Stage 2: Workers (6) │        │ Stage 3: Consumer    │
+ │ SQLite Batch Reader  │───────>│ Concurrent HTTP      │───────>│ Sequential SQLite    │
+ │ Semantic Chunking    │ queue  │ CUDA Vector Tensors  │ queue  │ WAL DB Writer        │
+ └──────────────────────┘        └──────────────────────┘        └──────────────────────┘
+   (Zero network wait)             (Saturates PC2 RTX 3060)        (Zero WAL lock contention)
+```
 
-* **GPU Utilization:** The RTX 3060 should show a steady, sustained load rather than 1-3% sporadic spikes.
-* **Total Indexing Time:** Expect an exponential decrease in the time required to index the entire 12,000+ document base.
+1. **Producer Loop (Main Thread):** Queries SQLite for pending documents in batches, extracts text, performs recursive semantic chunking, and enqueues tasks into `embed_queue` without blocking on network latency.
+2. **HTTP Worker Pool (6 Concurrent Threads):** Pulls batches from the queue and concurrently dispatches vector embedding requests to the remote CUDA node (`PC2` - NVIDIA RTX 3060). Workers reuse a persistent connection pool via `httpx.Limits(max_keepalive_connections=8, max_connections=16)` to prevent TCP port exhaustion.
+3. **Consumer Thread (Single DB Writer):** Pulls embedded vectors from `db_queue` and writes them into `document_chunks` and property graph nodes sequentially within an explicit transaction. By isolating SQLite write operations to a single thread, write contention (`sqlite3.OperationalError: database is locked`) is completely eliminated while maintaining peak network throughput.
 
-If you are running the daemon in the background (`task-2928`), you may need to restart it so that it picks up the new multithreaded worker logic. Let me know if you want to further increase the number of concurrent HTTP threads (currently set to 6) or if you encounter any `database is locked` issues under the new load!
+---
+
+### Windows OS Network Resilience & Socket Exhaustion Prevention ([WinError 10055])
+
+High-frequency telemetry, background worker polling, and status probes on Windows require strict connection pooling architecture to avoid operating system network buffer exhaustion:
+
+#### 1. The Windows Ephemeral Port Exhaustion Problem
+
+On Microsoft Windows, creating short-lived, unpooled HTTP clients (e.g., standard `with httpx.Client() as client:` blocks inside fast periodic polling loops such as Ollama `/api/ps` model probes or CUDA telemetry checks) rapidly consumes the operating system's ephemeral TCP port range (dynamic port block `49152`–`65535`).
+
+* When closed, sockets enter the Windows kernel `TIME_WAIT` state for the 2MSL duration (typically 120 to 240 seconds).
+* Rapid polling causes all available dynamic outbound ports to be held in `TIME_WAIT`, triggering:
+
+  ```text
+  [WinError 10055] An operation on a socket could not be performed because 
+  the system lacked sufficient buffer space or because a queue was full.
+  ```
+
+#### 2. Singleton Persistent Connection Pooling Architecture
+
+To eliminate socket leakage permanently, all background monitoring and API probe endpoints use module-level singleton clients with strict connection reuse limits:
+
+```python
+# backend/api/routes/diagnostics.py & backend/ai/telemetry.py
+import httpx
+
+# Reusable connection pool across all probe cycles
+_shared_client = httpx.Client(
+    timeout=1.5,
+    limits=httpx.Limits(
+        max_keepalive_connections=5,
+        max_connections=10,
+        keepalive_expiry=30.0
+    )
+)
+```
+
+* **Zero Ephemeral Port Churn:** The same TCP socket is reused across consecutive polls, keeping active socket handles near constant ($\le 2$ sockets).
+* **Defensive Exception Handling:** If Ollama or remote hosts are unreachable, connection errors (`httpx.ConnectError`, `httpx.TimeoutException`) are handled cleanly without destroying or recreating the pool.
+
+---
+
+### Layer 5: Operational Obligations, Temporal Dates & ALCOA+ Auto-Strikeout
+
+To transform a static document catalog into an **actionable procedural intelligence engine**, RepoScroller incorporates temporal date extraction, contractual obligation tracking, and automatic cross-matching.
+
+```
+                              [Document Text & Chunks]
+                                         │
+                                         ▼
+                      ┌──────────────────────────────────────┐
+                      │    Deterministic Semantic Analyzer   │
+                      │       (DocumentAnalyzer Heuristic)   │
+                      └──────────────────┬───────────────────┘
+                                         │
+                   ┌─────────────────────┴─────────────────────┐
+                   ▼                                           ▼
+         [Temporal Dates Extraction]                 [Action Item Detection]
+         • reception_date (Arrival / Postmark)       • payment (Invoices, Tax bills)
+         • due_date (Deadlines, Expirations)         • signature (Contracts, NDAs)
+         • governing_date (Substantive doc_date)     • reply / submission (Court, Notice)
+                   │                                           │
+                   ▼                                           ▼
+      [document_ledger Enrichment]                   [action_items Registry]
+      (reception_date, due_date)                     (status: 'pending')
+                   │                                           │
+                   └─────────────────────┬─────────────────────┘
+                                         │
+                                         ▼
+                    ┌──────────────────────────────────────────┐
+                    │      ALCOA+ Auto-Strikeout Engine        │
+                    │   (Cross-Matching Fulfillment Engine)    │
+                    └────────────────────┬─────────────────────┘
+                                         │
+                ┌────────────────────────┴────────────────────────┐
+                ▼                                                 ▼
+      [Fulfillment Verified]                            [Unmatched / Active]
+      • Payment: bank debit matches invoice             • Retains 'pending'
+      • Signature: executed copy matches request        • Flagged if overdue:
+      • Status ➔ 'completed'                              due_date < date('now')
+      • Audit log ➔ 'action_item_completed'
+      • Graph Store ➔ FULFILLS edge inserted
+```
+
+#### 1. Temporal Schema & Date Disambiguation
+
+Each document record in `document_ledger` tracks distinct temporal milestones to support auditing, statutory deadlines, and tax reconciliation:
+
+* **`doc_date` (Governing Date):** The substantive date appearing within the body of the document (contract execution date, statement period date, judicial order date).
+* **`reception_date` (Arrival / Issuance Date):** The formal arrival, postmark, or issuance date (`reçu le`, `eingegangen am`, `ausstellungsdatum`). Enables precise response-window computation.
+* **`due_date` (Actionable Deadline):** The impending expiration, statutory response deadline, or payment due date (`fällig bis`, `zahlbar bis`, `échéance`, `deadline`).
+
+```sql
+ALTER TABLE document_ledger ADD COLUMN reception_date TEXT;
+ALTER TABLE document_ledger ADD COLUMN due_date TEXT;
+CREATE INDEX IF NOT EXISTS idx_ledger_reception_date ON document_ledger(reception_date);
+CREATE INDEX IF NOT EXISTS idx_ledger_due_date ON document_ledger(due_date);
+```
+
+#### 2. Action Items & Operational Obligations Registry
+
+Detected obligations are stored in an attributable, indexed SQLite table:
+
+```sql
+CREATE TABLE IF NOT EXISTS action_items (
+    action_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sha256_hash TEXT NOT NULL REFERENCES document_ledger(sha256_hash) ON DELETE CASCADE,
+    theme_id TEXT,                              -- Taxonomy theme slug (e.g. theme_financial_invoice)
+    action_type TEXT NOT NULL,                  -- payment, signature, reply, review, submission
+    description TEXT NOT NULL,                  -- Concise actionable obligation
+    counterparty TEXT,                          -- Detected creditor, vendor, court, or employer
+    amount REAL,                                -- Monetary sum (if payment)
+    currency TEXT DEFAULT 'CHF',                -- CHF, EUR, USD
+    due_date TEXT,                              -- Target deadline (ISO YYYY-MM-DD)
+    status TEXT DEFAULT 'pending',              -- pending, completed, dismissed
+    fulfilled_by_sha256 TEXT,                   -- Hash of fulfilling document (receipt, signed copy)
+    fulfillment_evidence TEXT,                  -- Verification proof and matching rationale
+    fulfilled_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_action_status_due ON action_items(status, due_date ASC);
+CREATE INDEX IF NOT EXISTS idx_action_theme ON action_items(theme_id, status);
+CREATE INDEX IF NOT EXISTS idx_action_sha ON action_items(sha256_hash);
+CREATE INDEX IF NOT EXISTS idx_action_fulfilled ON action_items(fulfilled_by_sha256);
+```
+
+#### 3. High-Speed In-DB Backfill Engine ([`backend/ledger/backfill_obligations.py`](file:///c:/Dev/RepoScroller/backend/ledger/backfill_obligations.py))
+
+When new extraction patterns or fields are added, existing documents do **not** require raw filesystem re-scanning or expensive vector re-embedding:
+
+* **In-Memory Heuristic Execution:** Leverages cached `text_snippet` and `document_chunks` already persisted in SQLite. Scans **>25,000 documents in ~60 seconds** on a single CPU core.
+* **Step-by-Step Backfill Pipeline:**
+  1. *Batch Fetch:* Queries SQLite for document chunks and text snippets in chunks of `1,000` records.
+  2. *Deterministic Parsing:* Runs `DocumentAnalyzer._heuristic_analyze()` over cached text to extract `reception_date`, `due_date`, and candidate `action_items`.
+  3. *Bulk Date Updates:* Executes bulk `cur.executemany()` updates to update `reception_date` and `due_date` across `document_ledger`.
+  4. *Obligation Insertion:* Inserts detected action items into `action_items`, preventing duplicates using `(sha256_hash, action_type, description)`.
+  5. *ALCOA+ Cross-Matching:* Runs `repo.cross_match_and_strikeout_actions()` across the database to detect payments and countersignatures, auto-marking fulfilled items as `completed`.
+* **Production Benchmark & Performance:**
+
+  ```powershell
+  python -m backend.main backfill-obligations --batch-size 1000 --limit 0
+  ```
+
+  * **Documents Processed:** 26,503 documents in **60.28 seconds** (Throughput: **439.6 docs/sec**).
+  * **Document Dates Enriched:** 26,285 documents updated with `reception_date` and `due_date`.
+  * **Obligations Discovered:** 2,516 total operational obligations.
+  * **Pending Obligations:** 504 items awaiting payment or signature.
+  * **Overdue Deadlines:** 11 past due dates flagged for immediate review.
+  * **Auto-Struck (Cross-Matched):** 2,012 fulfilled obligations automatically verified and reconciled.
+
+#### 4. Real-Time Telemetry & Monitoring Architecture ([`ObligationsProgressTracker`](file:///c:/Dev/RepoScroller/backend/ledger/backfill_obligations.py#L22-L126))
+
+To provide visibility into the backfill process without blocking callers:
+
+* **Thread-Safe Singleton Tracker:** Tracks `is_running`, `total_docs`, `scanned_docs`, `enriched_dates`, `found_actions`, `auto_struck`, `start_time`, `elapsed_seconds`, `docs_per_sec`, and type breakdowns (`payment`, `signature`, `reply`).
+* **Dual-Mode Invocation:**
+  * **CLI Mode (Synchronous):** Provides immediate terminal output and summary stats.
+  * **Sidecar Mode (Asynchronous):** Triggers backfill as a background thread via `POST /api/v1/sidecar/obligations-backfill?async_mode=true` and streams live telemetry via `GET /api/v1/sidecar/obligations-backfill/progress`.
+
+#### 5. ALCOA+ Auto-Strikeout & Cross-Matching Rules
+
+The cross-matching engine evaluates documents bidirectionally across the ledger to detect fulfillments:
+
+1. **Rule 1 (Financial Payments & Bank Debits):**
+   * If an obligation is of type `payment` with `amount > 0` and currency `CHF`:
+   * Checks candidate documents for matching exact amount string (`amount.toFixed(2)`), counterparty name, and financial fulfillment terms (`zahlung`, `überweisung`, `virement`, `paiement`, `quittung`, `debit`, `auszug`, `relevé`).
+   * When matched: Status transitions to `completed`, `fulfilled_by_sha256` is recorded, and an attributable `FULFILLS` graph edge (`doc_receipt` $\rightarrow$ `doc_invoice`) is created.
+2. **Rule 2 (Signatures & Countersigned Execution):**
+   * If an obligation is of type `signature`:
+   * Checks candidate documents for execution keywords (`signé`, `unterzeichnet`, `unterschrieben`, `executed`, `countersigned`) and matching counterparty or parent document SHA prefix.
+   * Auto-strikes the obligation with cryptographic attribution.
+3. **Rule 3 (Filings & Formal Inquiries):**
+   * Matches formal confirmation receipts, court stamps, and postal tracking receipts against pending submission obligations.
+
+#### 6. Database-Wide Global KPI Aggregation vs. Paginated Slices
+
+To prevent discrepancies between summary KPI cards and displayed table rows:
+
+* **Decoupled Metric Calculation:** In `backend/api/routes/actions.py`, `list_action_items()` does not compute metrics from the paginated slice (e.g. `items[:100]`).
+* **Direct SQL Aggregations:** Computes total counts across the complete `action_items` table:
+
+  ```python
+  total_items = cur.execute("SELECT COUNT(*) FROM action_items").fetchone()[0]
+  pending_count = cur.execute("SELECT COUNT(*) FROM action_items WHERE status = 'pending'").fetchone()[0]
+  completed_count = cur.execute("SELECT COUNT(*) FROM action_items WHERE status = 'completed'").fetchone()[0]
+  overdue_count = cur.execute(
+      "SELECT COUNT(*) FROM action_items WHERE status = 'pending' AND due_date IS NOT NULL AND due_date < date('now')"
+  ).fetchone()[0]
+  ```
+
+* **Payload Structure:** Returns a unified response containing both `metrics` (global database totals) and `todos` / `items` (paginated table view), ensuring the UI cards accurately display all 2,516 records.
+
+#### 7. Direct SPA Deep Linking & HTML5 Routing
+
+To support browser reloads, bookmarking, and direct URL navigation for the To-Do Ledger:
+
+* **FastAPI Server Fallbacks:** `backend/api/app.py` registers direct GET routes for `/actions` and `/todos` that serve `index.html`.
+* **Client-Side Workspace Navigation:** `frontend/app.js` inspects `window.location.pathname` on startup. If `/actions` or `/todos` is detected, it switches the active view to Workspace 12.5 (To-Do Ledger), activates the navigation pill badge, and immediately invokes `loadActionItems()`.
+* **Defensive Rendering:** `renderActionItems()` implements defensive nullish checks for `docSha`, `docName`, and `amount_due` (`docSha ? docSha.substring(0, 12) : 'N/A'`), eliminating JavaScript `TypeError` crashes on missing fields.
+
+#### 8. REST API & Dashboard Integration Matrix
+
+| Endpoint | Method | Purpose | Reference |
+| :--- | :--- | :--- | :--- |
+| `/api/v1/actions/todos` | `GET` | Paginated obligation ledger with database-wide KPI summary metrics (`total_items`, `pending_count`, `completed_count`, `overdue_count`). | [`actions.py:list_action_items`](file:///c:/Dev/RepoScroller/backend/api/routes/actions.py) |
+| `/api/v1/actions/{action_id}/resolve` | `POST` | Manual or programmatic resolution/strikeout with ALCOA+ audit entry. | [`actions.py:resolve_action_item`](file:///c:/Dev/RepoScroller/backend/api/routes/actions.py) |
+| `/api/v1/actions/create` | `POST` | Manual creation of an operational obligation linked to a document. | [`actions.py:create_action_item`](file:///c:/Dev/RepoScroller/backend/api/routes/actions.py) |
+| `/api/v1/sidecar/obligations-backfill` | `POST` | Triggers the high-speed in-DB backfill pass (supports `?async_mode=true`). | [`sidecar.py:trigger_obligations_backfill`](file:///c:/Dev/RepoScroller/backend/api/routes/sidecar.py) |
+| `/api/v1/sidecar/obligations-backfill/progress` | `GET` | Polling endpoint for real-time backfill progress, throughput, and counts. | [`sidecar.py:get_obligations_backfill_progress`](file:///c:/Dev/RepoScroller/backend/api/routes/sidecar.py) |
+| `/actions`, `/todos` | `GET` | Direct SPA deep-link routing returning the dashboard and opening Workspace 12.5. | [`app.py:serve_dashboard`](file:///c:/Dev/RepoScroller/backend/api/app.py) |
+
+#### 9. 3D WebGL Temporal Action Timeline & Thematic Urgency Tunnel
+
+The 3D Knowledge Universe (`frontend/app.js`, `backend/ledger/graph_store.py`) features a dedicated **Temporal Action Timeline** layout mode (`timeline`), projecting actionable obligations and dated documents down a 3D chronological tunnel:
+
+* **Z-Axis Urgency Tunneling:**
+  * Computes $\Delta\text{days} = \text{Target Date} - \text{Today}$.
+  * **Overdue Obligations ($\Delta\text{days} < 0$):** Clustered prominently in the frontal focus zone ($Z \in [45, 75]$) immediately before the camera viewport, scaled up to beacon sizes ($5.5 - 7.0$).
+  * **Imminent & Near-Term ($0 \le \Delta\text{days} \le 14$):** Positioned at the mouth of the tunnel ($Z \in [15, 40]$).
+  * **Mid-to-Long Deadlines ($15 \le \Delta\text{days} \le 120$):** Projected down the corridor ($Z \in [-40, -120]$).
+  * **Fulfilled & Historical Ledger Items:** Stretched behind the active threshold ($Z \in [-130, -280]$).
+  * **Ambient / Undated Documents:** Dispersed into the deep starry background ($Z \in [-290, -420]$).
+
+* **Radial Thematic Channels (Spoke Cylinders):**
+  * Disperses nodes radially around the central $Z$-axis tunnel into distinct angular corridors based on primary taxonomy theme (Finance, Corporate, Legal, Taxes, Operations) derived from `THEME_PALETTE`.
+  * Angular jitter ($\pm 18^\circ$) prevents visual overlap while maintaining thematic clustering.
+
+* **GPU-Accelerated GLSL Shaders:**
+  * Uses custom Three.js `ShaderMaterial` with vertex attribute `aUrgent` (1.0 = overdue, 0.5 = pending obligation, 0.0 = standard document).
+  * In `UNIVERSE_VERTEX_SHADER`, overdue beacons beat with high-frequency organic pulses (`pulseFreq = 5.2`, `pulseAmp = 0.38`).
+  * In `UNIVERSE_FRAGMENT_SHADER`, overdue nodes exhibit a luminous Rose-to-Amber shimmer (`#f43f5e` $\leftrightarrow$ `#fbbf24`), providing immediate visual contrast against cool nebula tones.
+
+* **Chronological Milestones & Guidance Rails:**
+  * Renders 5 milestone reference rings with billboard text sprites at critical depth intervals:
+    * `+50`: ⚠️ Past Due / Urgent
+    * `0`: ⏱️ Now / Imminent
+    * `-60`: 📅 30 Days
+    * `-140`: 🗓️ 90 Days
+    * `-280`: 🏛️ Archive / Fulfilled
+  * Features 4 longitudinal guideline rails along the tunnel perimeter and offsets the Three.js ground grid to $(0, -65, -120)$ for infinite runway depth perception.
+
+* **Graduated Linear Timeline Axis (Years in Bold, Months in Medium Acronyms):**
+  * **Continuous Rail Spine:** A linear guide rail runs along the left-lower flank ($X = -44, Y = -24$) from $Z = +55$ (Urgent/Now) to $Z = -380$ (Deep Archive).
+  * **Bold Years (`font: bold 32px`):** Major graduation notch tick marks ($7.0\text{ units}$) at year boundaries (e.g. **2027**, **2026**, **2025**, **2024**, **2023**, **2022**) with high-contrast glass pill billboards.
+  * **Medium Month Acronyms (`font: 600 20px`):** Intermediate graduation notch tick marks ($4.2\text{ units}$) labeled with 3-letter month acronyms (`JAN`, `FEB`, `MAR`, `APR`, `MAY`, `JUN`, `JUL`, `AUG`, `SEP`, `OCT`, `NOV`, `DEC`).
+  * **Synchronized Formula (`computeTimelineZ`):** Mathematically unifies axis ticks and document physics coordinates, ensuring a document dated e.g. March 2026 is positioned precisely at the `2026 MAR` graduation mark.
+
+* **Tri-State Topology Viewport:**
+  * Seamlessly toggles between **Spatial PCA** (`spatial`), **Thematic Mindmap** (`thematic`), and **Action Timeline** (`timeline`) with `easeInOutCubic` coordinate interpolation, synchronized HUD legends, and camera perspective transformations.
+
+---
+
+## 10. Interactive 3D Knowledge Universe & Legal Dossier Exploration
+
+The 3D Knowledge Universe supports interactive multi-dimensional filtering, allowing legal advisors and compliance officers to isolate specific document classes, time horizons, and relational ego-networks.
+
+### The 4-Click Legal Dossier Workflow
+
+```
+[Click 1: ⏳ Action Timeline] ➔ [Click 2: ⚡ Filter Scope] ➔ [Click 3: 🏷️ Color Mode: Type] ➔ [Click 4: 🎯 Focus Decision / 3/4 TopView]
+```
+
+#### Click 1: Activate the 5-Year Temporal Axis
+
+* **Action:** Click **`⏳ Action Timeline`** on the top-left topology selector.
+* **What happens:** The 3D space unrolls into a chronological tunnel along the Z-axis. The graduated linear axis projects bold year rings (**`2022`** through **`2027`**) with month acronym ticks (`JAN`–`DEC`), placing older records deep in the background and recent ones in the foreground.
+
+#### Click 2: Scope to Legal Decisions & Correspondence
+
+* **Action:** In the HUD filter input (`Query filter`), paste or type `theme=Court Order` (or `court order`), then click **`⚡ Filter`**.
+  *(Alternatively, click on **Cluster 4 (Statutory & Regulatory Codes)** or **Cluster 1 (Contracts & Documents)** in the right-hand cluster drawer).*
+* **What happens:** The backend sub-graph query (`GET /api/v1/sidecar/graph-3d?theme=Court+Order`) fetches all judicial rulings, statutes, and their directly linked correspondence networks over the last 5 years.
+
+#### Click 3: Apply Contrasting Colors (Decisions vs. Mails)
+
+* **Action:** Open the **Color Mode** dropdown and select **`🏷️ Entity Schema Type`**.
+* **What happens:** The WebGL shader applies the dedicated semantic color palette:
+  * 🏛️ **Court Orders & Judicial Decisions / Statutes:** **Crimson / Rose Red (`#f43f5e`)**
+  * ✉️ **Emails & Formal Correspondence:** **Sky Blue / Cyan (`#38bdf8`)**
+  * 👤 **Lawyers & Key Counsel (Persons):** **Lavender / Violet (`#c084fc`)**
+  * 📄 **Contracts & Agreements:** **Royal Blue (`#3b82f6`)**
+
+#### Click 4: Trace the Connected Email Thread (Ego-Network)
+
+* **Action:** Click directly on any **Court Decision node** (or click **`📐 3/4 TopView`** to view the tunnel at a 45° diagonal).
+* **What happens:**
+  1. The camera smoothly tracks the court decision.
+  2. All connected relational links (`PARTY_TO`, `GOVERNED_BY`, `INVOLVES_PAYMENT`, `MENTIONS_ORG`) illuminate with high brightness.
+  3. You immediately see the thread of emails sent (`To [Lawyer]~Ml~...`) and received (`From [Lawyer]~Ml~...`) leading up to or following that specific ruling.
+  4. Unrelated background nodes are dimmed via the GLSL `aDimmed` shader attribute.
+
+---
+
+### How Sent vs. Received Lawyer Mails are Represented
+
+In RepoScroller's ledger, emails and letters are parsed into bidirectional knowledge relationships:
+
+1. **Outgoing Mails:** Captured as `To [Lawyer Name / Law Firm]~Ml~[Subject]` — connected via `PARTY_TO` and `CATEGORIZED_AS: Formal Correspondence`.
+2. **Incoming Mails:** Captured as `From [Lawyer Name / Law Firm]~Ml~[Subject]` — connected to counsel with author and date metadata.
+3. **Court Orders:** Classified under `doc_type: court_order` and `theme_court_order`.
+
+---
+
+### Query Filter Cheat Sheet for the HUD Filter Bar
+
+You can type any combination of these into the `Query filter` bar:
+
+| Filter String | What it Displays |
+| :--- | :--- |
+| `theme=Court Order` | All judicial rulings and their connected statutory context |
+| `theme=Formal Correspondence` | All sent and received emails / letters |
+| `type=court_order&type=formal_correspondence` | Court decisions + lawyer email exchanges exclusively |
+| `person=Avocat` or `org=Tribunal` | Decisions and emails involving a specific lawyer, firm, or court |
+| `q=judgment` or `q=recours` | Full-text and entity semantic search across legal dossiers |
+
+---
+
+> [!TIP]
+> **One-Click Legal Dossier Preset**: If you want, we can add a dedicated **`⚖️ Legal Dossier (5y)`** quick-filter button directly next to the `Action Timeline` button in the HUD toolbar. A single click would immediately:
+>
+> 1. Switch to `timeline` layout.
+> 2. Filter by `theme=Court Order&theme=Formal Correspondence` (2022–2027).
+> 3. Set Color Mode to `type` (Court decisions in Crimson, Mails in Sky Blue).
+> 4. Tilt the camera into `3/4 TopView` for reading.

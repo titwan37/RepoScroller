@@ -12,6 +12,16 @@ from backend.config import settings
 logger = logging.getLogger("analyzer")
 
 
+class ActionItemExtraction(BaseModel):
+    """Actionable requirement, obligation, or deadline extracted from a document."""
+    action_type: str = Field(default="payment", description="payment, signature, filing, reply, inspection, review")
+    description: str = Field(..., description="Concrete task description")
+    due_date: Optional[str] = Field(default=None, description="ISO YYYY-MM-DD deadline if stated")
+    counterparty: Optional[str] = Field(default=None, description="Payee, issuer, or requesting authority")
+    amount: Optional[float] = Field(default=None, description="Monetary sum if payment/invoice")
+    currency: Optional[str] = Field(default="CHF", description="CHF, EUR, USD")
+
+
 class DocumentAnalysisResult(BaseModel):
     """Structured document intelligence output."""
     document_category: str = Field(
@@ -20,10 +30,13 @@ class DocumentAnalysisResult(BaseModel):
     )
     title: str = Field(default="", description="Formal or inferred document title")
     governing_date: Optional[str] = Field(default=None, description="ISO Date YYYY-MM-DD")
+    reception_date: Optional[str] = Field(default=None, description="Formal arrival or issuance date (YYYY-MM-DD)")
+    due_date: Optional[str] = Field(default=None, description="Impending deadline, payment date, or expiration (YYYY-MM-DD)")
     parties_involved: List[str] = Field(default_factory=list, description="Entities, signers, or institutions")
     summary: str = Field(default="", description="Concise 1-2 sentence description")
     lifecycle_status: str = Field(default="final", description="draft, review, final, superseded")
     confidence_score: float = Field(default=0.7, description="Confidence score 0.0 - 1.0")
+    action_items: List[ActionItemExtraction] = Field(default_factory=list, description="Extracted actionable obligations / To-Dos")
     new_category_meta: Optional[Dict[str, Any]] = Field(default=None, description="Multilingual metadata if LLM discovered a novel category")
 
 
@@ -119,16 +132,30 @@ Text Snippet:
 Instructions:
 1. Choose the most specific matching `category_id` from the active taxonomy above.
 2. If the document represents a genuinely distinct topic NOT adequately covered, propose a new canonical slug for `document_category` and provide `new_category_meta` with 'name_en', 'name_fr', 'name_de', and 'parent_id' (or null).
+3. Extract `governing_date` (substantive document date), `reception_date` (date received/issued/postmarked), and `due_date` (action deadline/payment due/expiration date).
+4. If the document demands action (e.g. unpaid invoice, contract needing signature, court/tax response deadline), extract concrete `action_items`.
 
 Return ONLY a valid JSON object matching this schema:
 {{
   "document_category": "<category_id slug>",
   "title": "<inferred document title>",
   "governing_date": "<YYYY-MM-DD or null>",
+  "reception_date": "<YYYY-MM-DD or null>",
+  "due_date": "<YYYY-MM-DD or null>",
   "parties_involved": ["<party 1>", "<party 2>"],
   "summary": "<concise 1-2 sentence summary>",
   "lifecycle_status": "draft" | "review" | "final" | "superseded",
   "confidence_score": <float between 0.0 and 1.0>,
+  "action_items": [
+    {{
+      "action_type": "payment" | "signature" | "reply" | "review" | "submission",
+      "description": "<concise action description>",
+      "due_date": "<YYYY-MM-DD or null>",
+      "counterparty": "<counterparty name or null>",
+      "amount": <number or null>,
+      "currency": "CHF" | "EUR" | "USD"
+    }}
+  ],
   "new_category_meta": null | {{
      "parent_id": "<parent_slug_or_null>",
      "name_en": "...",
@@ -336,6 +363,34 @@ Return ONLY a valid JSON object matching this schema:
         elif "creation_date" in metadata and metadata["creation_date"]:
             gov_date = str(metadata["creation_date"])[:10]
 
+        # Reception Date (Arrival / Issuance date)
+        reception_date = None
+        rec_match = re.search(
+            r"(?:reçu|eingegangen|ricevuto|ausstellungsdatum|date d['’]émission|issued|date)\s+(?:le|am)?\s*[:\s]?\s*(\b20\d{2}[-_/.](?:0[1-9]|1[0-2])[-_/.](?:0[1-9]|[12]\d|3[01])\b|\b(?:0[1-9]|[12]\d|3[01])[./-](?:0[1-9]|1[0-2])[./-](?:20\d{2})\b)",
+            text[:3000],
+            flags=re.IGNORECASE
+        )
+        if rec_match:
+            raw_d = rec_match.group(1).replace(".", "-").replace("/", "-")
+            parts = raw_d.split("-")
+            if len(parts) == 3:
+                reception_date = f"{parts[2]}-{parts[1]}-{parts[0]}" if len(parts[0]) <= 2 else f"{parts[0]}-{parts[1]}-{parts[2]}"
+        if not reception_date:
+            reception_date = gov_date
+
+        # Due Date (Deadline, Payment due, Expiration)
+        due_date = None
+        due_match = re.search(
+            r"(?:échéance|payable avant le|date limite|fällig bis|zahlbar bis|due date|délai au|frist bis|deadline|pay by)\s*[:\s]?\s*(\b20\d{2}[-_/.](?:0[1-9]|1[0-2])[-_/.](?:0[1-9]|[12]\d|3[01])\b|\b(?:0[1-9]|[12]\d|3[01])[./-](?:0[1-9]|1[0-2])[./-](?:20\d{2})\b)",
+            text[:3000],
+            flags=re.IGNORECASE
+        )
+        if due_match:
+            raw_d = due_match.group(1).replace(".", "-").replace("/", "-")
+            parts = raw_d.split("-")
+            if len(parts) == 3:
+                due_date = f"{parts[2]}-{parts[1]}-{parts[0]}" if len(parts[0]) <= 2 else f"{parts[0]}-{parts[1]}-{parts[2]}"
+
         # Extract parties
         parties = []
         party_match = re.search(r"(?:between|zwischen|entre)\s+([A-Z][a-zA-Z\s]+?)\s+(?:and|und|et)\s+([A-Z][a-zA-Z\s]+?)(?:[.,\n]|$)", text[:1500])
@@ -351,6 +406,37 @@ Return ONLY a valid JSON object matching this schema:
             status = "draft"
         elif re.search(r"(\bpartial\b|truncated|\[cut\]|\[truncated\])", combined):
             status = "truncated"
+
+        # Heuristic Action Items Detection
+        action_items: List[ActionItemExtraction] = []
+        amt_match = re.search(r"(?:chf|eur|usd|total|montant|betrag)\s*[:\s]?\s*([0-9]{1,3}(?:['’\s][0-9]{3})*(?:\.[0-9]{2})?)", text[:2500], flags=re.IGNORECASE)
+        amount_val = None
+        if amt_match:
+            try:
+                raw_amt = amt_match.group(1).replace("'", "").replace("’", "").replace(" ", "")
+                amount_val = float(raw_amt)
+            except Exception:
+                pass
+
+        if any(k in combined for k in ["rechnung", "facture", "invoice", "steuern", "steuerveranlagung", "tax assessment", "bordereau"]) or "invoice" in category or "tax" in category:
+            if amount_val or due_date:
+                action_items.append(ActionItemExtraction(
+                    action_type="payment",
+                    description=f"Pay invoice/bill ({filename})" + (f": {amount_val} CHF" if amount_val else ""),
+                    due_date=due_date,
+                    counterparty=parties[0] if parties else None,
+                    amount=amount_val,
+                    currency="CHF"
+                ))
+        elif any(k in combined for k in ["unterschrift", "signature", "signez", "please sign", "sign and return", "unterzeichnen"]) and status != "final":
+            action_items.append(ActionItemExtraction(
+                action_type="signature",
+                description=f"Sign and return document ({filename})",
+                due_date=due_date,
+                counterparty=parties[0] if parties else None,
+                amount=None,
+                currency="CHF"
+            ))
 
         # Inferred Title (stripping previous category tags or chunk headers)
         cleaned_lines = []
@@ -371,8 +457,11 @@ Return ONLY a valid JSON object matching this schema:
             document_category=category,
             title=title,
             governing_date=gov_date,
+            reception_date=reception_date,
+            due_date=due_date,
             parties_involved=parties,
             summary=summary,
             lifecycle_status=status,
-            confidence_score=confidence
+            confidence_score=confidence,
+            action_items=action_items
         )

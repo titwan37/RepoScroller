@@ -44,7 +44,7 @@ def list_documents(
     category: Optional[str] = Query(None, description="Filter by doc_type / category"),
     only_duplicates: bool = Query(False, description="Filter to documents with >1 physical locations"),
     query: Optional[str] = Query(None, description="Search keyword across filename and text snippet"),
-    sort_by: str = Query("doc_date", description="Sort by column: doc_date, canonical_filename, doc_type, maturity_score, lifecycle_status, location_count"),
+    sort_by: str = Query("doc_date", description="Sort by column: doc_date, reception_date, due_date, canonical_filename, doc_type, maturity_score, lifecycle_status, location_count"),
     sort_order: str = Query("DESC", description="Sort direction: ASC or DESC")
 ) -> Dict[str, Any]:
     """Retrieve paginated document ledger records with optional query search, category, duplicate filter, and column sorting."""

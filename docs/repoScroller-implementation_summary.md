@@ -2535,7 +2535,108 @@ All objectives for __Phase 3__ have been implemented and validated across [index
 
 ---
 
+### What Was Built in Phase 4: 3D Knowledge Universe Optimization, Cinematic Camera Suite & Data Reconciliation
+
+1. __Viewport & Canvas Expansion (Full-Height Immersive Flexbox)__:
+   - __Eliminated Fixed Height__: Removed hardcoded `height: 650px` on `.universe-canvas-wrapper`, replacing it with an elastic container (`flex: 1; min-height: 0; height: 100%`).
+   - __Prevented Page Scroll Leaks__: Enforced `overflow: hidden; height: calc(100vh - 105px); height: calc(100dvh - 105px);` on `#ws-pane-universe` and `.glsl-universe-layout`, eliminating browser scrollbars and routing pointer/drag gestures cleanly to 3D OrbitControls.
+   - __Responsive Three.js Re-projection__: Bound a `ResizeObserver` in [app.js](file:///c:/Dev/RepoScroller/frontend/app.js) to `#glsl-3d-canvas-container` and its parent wrapper, dynamically updating `camera.aspect = width / height` and invoking `renderer.setSize(width, height)` without distortion or stretching.
+
+2. __Streamlined Header & Inline KPI Strip__:
+   - __Single-Row Compact Hero__: Collapsed `.universe-hero-bar` into a slim single-row glassmorphic HUD bar (`padding: 0.35rem 0.85rem`), recovering over 75px of vertical space for the 3D canvas.
+   - __Inline Monospace Metric Badges Strip__: Replaced the bulky 4-card grid with `.universe-badges-strip` containing high-contrast pill badges:
+     - `Dim`: `High-Dim → 3D PCA` (dynamically flips to `Thematic Gravitational Space` in thematic mode).
+     - `Algo`: `Unsupervised K-Means` (dynamically flips to `Thematic Solar Centroids (k=7)` in thematic mode).
+     - `Topology`: `1,000 Nodes • 3,000 Links`.
+     - `Renderer`: `Three.js WebGL GLSL`.
+
+3. __Docked Legend HUD & View Mode Synchronization__:
+   - __Docked HUD Overlay__: Anchored `.axes-legend-overlay` to top-left (`top: 0.75rem; left: 0.75rem; max-height: calc(100% - 1.5rem); overflow-y: auto; z-index: 15;`).
+   - __View Mode Synchronization__:
+     - When `🪐 Thematic Mindmap` is active, the cluster hierarchy drawer expands automatically (`−`).
+     - When `🌐 Spatial View` is active, it collapses into a minimal floating badge pill (`+`) to leave the PCA point cloud unblocked.
+   - __Manual Toggle__: `toggleLegendHUD()` allows instant one-click toggling between expanded drawer and compact HUD pill at any time.
+
+4. __Cinematic Camera Inspection Suite & Optical View Offsetting__:
+   - __Zenith View (`set3DZenithView()`)__: Top-down orthogonal planar projection (`camera.up.set(0, 0, -1)`) looking straight down at the cosmic plane to inspect the circular orbital distribution of documents and hubs.
+   - __Orbital Tour (`toggle3DOrbitalTour()`)__: Sequential fly-through of thematic solar hubs / high-degree clusters with automatic startup after layout stabilization.
+   - __Optical View Offsetting (`update3DViewOffset()`)__: Dynamically shifts Three.js optical center via `camera.setViewOffset()` based on the visibility of the left Legend HUD and right Node Inspector, ensuring the target node is centered in the visible screen gap without UI occlusion.
+   - __Auto-Spin with Camera-Node Lock__: Automatically rotates the cosmos; when a node is selected, camera position and target track the node's world coordinates in real-time.
+   - __Reset View (`reset3DCamera()`)__: Restores standard 3/4 isometric perspective and stops active tours.
+
+5. __Geographic Hub & Document Reconciliation (Steinhausen 8,256+ Docs)__:
+   - __Root Cause Resolution__: Resolved a schema disconnect where 52,437 geographic document links were recorded in `knowledge_edges` (`doc_<sha>` $\rightarrow$ `location_ch_zg_6312`) and `document_geo_links`, but not in `document_entity_links`.
+   - __Database Mirroring__: Mirrored 52,437 links in `reposcroller_ledger.db` and 1,032 links in `reposcroller_showcase.db`. Steinhausen (`location_ch_zg_6312`) now directly reflects __`doc_count = 8,256`__ and `location_steinhausen` reflects __`906`__ documents.
+   - __Permanent Engine & Endpoint__: Implemented `PropertyGraphStore.backfill_geo_entity_links()` and API route `POST /api/v1/sidecar/geo-links-backfill`.
+   - __Inspector Fix__: Replaced truthy fallback `node.doc_count || 1` with strict nullish check `node.doc_count ?? 0` in [app.js](file:///c:/Dev/RepoScroller/frontend/app.js), and ordered associated documents by `doc_date DESC`.
+   - __Showcase Integrity__: Updated `extract_showcase_ledger.py` to preserve `location` archetype nodes.
+
+---
+
 ### Verification
 
 - __Frontend Syntax Validation__: `node -c frontend/app.js` passed with zero errors.
-- __Backend Test Suite__: 15/15 tests in `backend/tests/` passed with 100% green status.
+- __Backend Test Suite__: 11/11 tests in `backend/tests/test_theme_graph.py` passed with 100% green status.
+- __Database Integrity Check__: Verified 8,256 documents linked to Steinhausen in ledger, 1,032 in showcase, and verified neighborhood expansion endpoint.
+
+---
+
+### ✅ In-DB Obligations & Date Backfill Completed Successfully
+
+The backfill engine processed all __26,503 documents__ in the ledger in __60.28 seconds__ without touching or re-indexing physical files.
+
+---
+
+### 📊 Final Telemetry & Action Items Scorecard
+
+| Metric | Count | Description |
+| :--- | :--- | :--- |
+| __⚡ Total Obligations__ | __2,516__ | Detected actionable obligations (invoices, contracts, tax items) |
+| __⏳ Pending Obligations__ | __504__ | Awaiting fulfillment / payment / signature |
+| __⚠️ Overdue Deadlines__ | __11__ | Past target due dates needing immediate attention |
+| __🎯 Auto-Struck (Fulfilled)__ | __2,012__ | ALCOA+ verified cross-matches (e.g. invoices matched with bank statements) |
+| __📄 Documents Enriched__ | __26,285__ | Added `reception_date` and `due_date` across SQLite ledger |
+
+---
+
+### 📡 Real-Time Monitoring & Telemetry Added
+
+1. __Live Progress Polling Endpoint__:
+   - `GET /api/v1/sidecar/obligations-backfill/progress`
+   - Returns live JSON status: percentage, elapsed time, docs/sec, and counts.
+2. __Background / Asynchronous Trigger__:
+   - `POST /api/v1/sidecar/obligations-backfill?async_mode=true`
+   - Allows triggering backfill passes on-demand from the UI or automation scripts without blocking the HTTP connection.
+3. __CLI Command__:
+   - `python -m backend.main backfill-obligations` (with real-time progress logging every 2,500 documents).
+
+---
+
+### ✅ In-DB Obligations & Date Backfill Completed Successfully
+
+The backfill engine processed all __26,503 documents__ in the ledger in __60.28 seconds__ without touching or re-indexing physical files.
+
+---
+
+### 📊 Final Telemetry & Action Items Scorecard
+
+| Metric | Count | Description |
+| :--- | :--- | :--- |
+| __⚡ Total Obligations__ | __2,516__ | Detected actionable obligations (invoices, contracts, tax items) |
+| __⏳ Pending Obligations__ | __504__ | Awaiting fulfillment / payment / signature |
+| __⚠️ Overdue Deadlines__ | __11__ | Past target due dates needing immediate attention |
+| __🎯 Auto-Struck (Fulfilled)__ | __2,012__ | ALCOA+ verified cross-matches (e.g. invoices matched with bank statements) |
+| __📄 Documents Enriched__ | __26,285__ | Added `reception_date` and `due_date` across SQLite ledger |
+
+---
+
+### 📡 Real-Time Monitoring & Telemetry Added
+
+1. __Live Progress Polling Endpoint__:
+   - `GET /api/v1/sidecar/obligations-backfill/progress`
+   - Returns live JSON status: percentage, elapsed time, docs/sec, and counts.
+2. __Background / Asynchronous Trigger__:
+   - `POST /api/v1/sidecar/obligations-backfill?async_mode=true`
+   - Allows triggering backfill passes on-demand from the UI or automation scripts without blocking the HTTP connection.
+3. __CLI Command__:
+   - `python -m backend.main backfill-obligations` (with real-time progress logging every 2,500 documents).

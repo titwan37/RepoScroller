@@ -34,6 +34,9 @@ def _is_valid_ledger_db(path: Optional[Path]) -> bool:
         return False
 
 
+_last_logged_resolved_path: Optional[Path] = None
+
+
 def resolve_ledger_db_path(configured_path: Path = None) -> Path:
     """Resolve the active database path.
     
@@ -44,6 +47,8 @@ def resolve_ledger_db_path(configured_path: Path = None) -> Path:
     checks if settings.DB_PATH exists and is a valid populated database.
     If not, it automatically falls back to reposcroller_showcase.db.
     """
+    global _last_logged_resolved_path
+
     if configured_path and configured_path != settings.DB_PATH:
         return Path(configured_path)
 
@@ -52,33 +57,45 @@ def resolve_ledger_db_path(configured_path: Path = None) -> Path:
         return target
 
     if _is_valid_ledger_db(target):
+        _last_logged_resolved_path = target
         return target
+
+    def _select_fallback(path: Path, msg: str) -> Path:
+        global _last_logged_resolved_path
+        if _last_logged_resolved_path != path:
+            logger.info(msg)
+            _last_logged_resolved_path = path
+        return path
 
     # Fallback 1: Look for showcase db in the same parent folder
     showcase_path = target.parent / "reposcroller_showcase.db"
     if _is_valid_ledger_db(showcase_path):
-        logger.info("Primary ledger not found or empty at %s. Falling back to showcase slice: %s", target, showcase_path)
-        return showcase_path
+        return _select_fallback(
+            showcase_path,
+            f"Primary ledger not found or empty at {target}. Falling back to showcase slice: {showcase_path}"
+        )
 
     # Fallback 2: Look in backend/data/ directory
     data_dir_showcase = target.parent / "data" / "reposcroller_showcase.db"
     if _is_valid_ledger_db(data_dir_showcase):
-        logger.info("Primary ledger not found. Using showcase database from backend/data: %s", data_dir_showcase)
-        return data_dir_showcase
+        return _select_fallback(
+            data_dir_showcase,
+            f"Primary ledger not found. Using showcase database from backend/data: {data_dir_showcase}"
+        )
 
     # Fallback 3: Look relative to current working directory
     cwd_showcase = Path("reposcroller_showcase.db").absolute()
     if _is_valid_ledger_db(cwd_showcase):
-        return cwd_showcase
+        return _select_fallback(cwd_showcase, f"Using showcase database from current working directory: {cwd_showcase}")
 
     cwd_data_showcase = Path("backend/data/reposcroller_showcase.db").absolute()
     if _is_valid_ledger_db(cwd_data_showcase):
-        return cwd_data_showcase
+        return _select_fallback(cwd_data_showcase, f"Using showcase database from backend/data: {cwd_data_showcase}")
 
     # Fallback 4: Look relative to project root
     root_data_showcase = Path(__file__).resolve().parent.parent / "data" / "reposcroller_showcase.db"
     if _is_valid_ledger_db(root_data_showcase):
-        return root_data_showcase
+        return _select_fallback(root_data_showcase, f"Using showcase database from project root: {root_data_showcase}")
 
     return target
 
@@ -116,6 +133,23 @@ def init_db(db_path: Path = None) -> None:
     """Execute DDL statements to ensure all schema tables, indices, and structures exist."""
     conn = get_db_connection(db_path)
     try:
+        cur = conn.cursor()
+        cur.execute("PRAGMA table_info(document_ledger)")
+        columns = [row["name"] for row in cur.fetchall()]
+        if columns:
+            if "reception_date" not in columns:
+                try:
+                    cur.execute("ALTER TABLE document_ledger ADD COLUMN reception_date TEXT;")
+                except sqlite3.OperationalError as e:
+                    if "duplicate column name" not in str(e).lower():
+                        raise
+            if "due_date" not in columns:
+                try:
+                    cur.execute("ALTER TABLE document_ledger ADD COLUMN due_date TEXT;")
+                except sqlite3.OperationalError as e:
+                    if "duplicate column name" not in str(e).lower():
+                        raise
+        
         conn.executescript(SCHEMA_SQL)
         conn.commit()
     finally:

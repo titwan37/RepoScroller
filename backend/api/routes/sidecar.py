@@ -144,7 +144,7 @@ def get_grouped_entities(limit_per_type: int = Query(default=200, ge=1, le=1000)
 @router.get("/3d-cluster")
 def get_3d_knowledge_universe(
     limit: int = Query(default=1000, ge=10, le=5000),
-    layout: Optional[str] = Query(default="spatial", description="Graph layout topology: 'spatial' or 'thematic'"),
+    layout: Optional[str] = Query(default="spatial", description="Graph layout topology: 'spatial', 'thematic', or 'timeline'"),
     location: Optional[str] = Query(default=None, description="Filter nodes matching or linked to location"),
     org: Optional[str] = Query(default=None, description="Filter nodes matching or linked to organization"),
     organization: Optional[str] = Query(default=None, description="Alias for org filter"),
@@ -218,6 +218,36 @@ def trigger_financial_pillars_backfill():
 def trigger_geo_links_backfill():
     """Synchronize geographic and edge document links into document_entity_links."""
     result = _graph_store.backfill_geo_entity_links()
+    return {
+        "status": "success",
+        **result
+    }
+
+
+@router.get("/obligations-backfill/progress")
+def get_obligations_backfill_progress():
+    """Retrieve real-time telemetry and progress of the obligations/date backfill engine."""
+    from backend.ledger.backfill_obligations import obligations_tracker
+    return obligations_tracker.get_status()
+
+
+@router.post("/obligations-backfill")
+def trigger_obligations_backfill(async_mode: bool = Query(False, description="Run in background thread without blocking")):
+    """Backfill reception_date, due_date, and action items/obligations across all existing documents."""
+    from backend.ledger.backfill_obligations import run_obligations_backfill, obligations_tracker
+    if async_mode:
+        import threading
+        if obligations_tracker.status == "running":
+            return {"status": "already_running", **obligations_tracker.get_status()}
+        
+        t = threading.Thread(target=run_obligations_backfill, kwargs={"verbose": True}, daemon=True)
+        t.start()
+        return {
+            "status": "started",
+            "message": "Obligations backfill started in background thread. Poll /api/v1/sidecar/obligations-backfill/progress for telemetry."
+        }
+    
+    result = run_obligations_backfill(verbose=True)
     return {
         "status": "success",
         **result

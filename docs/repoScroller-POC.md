@@ -100,3 +100,18 @@ The HTML block depicts a "Version Lineage & Document Evolution Explorer", displa
 Analyzing an "Evolution Explorer" HTML block, it presents a visual representation of document version lineage and status transitions. Each node represents a document version, connected by arrows signifying derivation relationships. Key metrics like SimHash scores and maturity levels are displayed for each version. The lineage view includes an option to filter relationships. Visual inspection reveals an evolutionary chain diagram to show change over time.
 
 Real-time telemetry and diagnostics are displayed in a stream format, including filter controls for specific components like crawler, chunker, and analyzer. The system uses a websocket endpoint to update the logs. Autoscroll functionality is enabled.
+
+# Concept Audeon.fr
+
+## 1. Context - Cerveau Statique
+
+Second Numerique. Digital Twin of our business processes.
+Focus on the data and information, and above all on the operationalization of the knowledge.
+
+## 2. Context - Cerveau Dynamique
+
+Base de données souveraine, que l'ia peut interroger lorsqu'on a la moindre question.
+
+## 3. Capacités - Skills
+
+Cerveau de plus en plus fuilde pour qu'une flotte d'agents puissent agir à ta place.

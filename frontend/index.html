@@ -34,8 +34,8 @@
     <div class="nav-brand">
       <div class="logo-icon">📜</div>
       <div class="brand-text">
-        <h1>Administrative Document Repository Scroller</h1>
-        <span class="alcoa-badge">ALCOA+ Compliant</span>
+        <h1>Inside AI Brain</h1>
+        <span class="alcoa-badge">ALCOA+ Compliant Knowledge Management System</span>
       </div>
     </div>
 
@@ -76,33 +76,37 @@
   <!-- Top Workspace Switcher Bar -->
   <nav class="workspace-nav-bar">
     <div class="workspace-tabs-group">
+      <button id="ws-btn-universe" class="ws-tab-btn" onclick="switchWorkspace('universe')">
+        <!-- <span class="ws-tab-icon">🌐</span> -->
+        <span class="ws-tab-title">🌐 3D Knowledge Universe</span>
+        <span class="ws-tab-pill pill-glsl">WebGL GLSL 3D</span>
+      </button>
       <button id="ws-btn-process" class="ws-tab-btn active" onclick="switchWorkspace('process')">
         <!-- <span class="ws-tab-icon">📊</span> -->
-        <span class="ws-tab-title">📊 Process Scroller</span>
-        <span class="ws-tab-pill">Digitalization Pipeline</span>
+        <span class="ws-tab-title">📊 Document Processor</span>
+        <span class="ws-tab-pill">Digitalization & Enrichment</span>
       </button>
       <button id="ws-btn-ledger" class="ws-tab-btn" onclick="switchWorkspace('ledger')">
         <!-- <span class="ws-tab-icon">🗄️</span> -->
         <span class="ws-tab-title">🗄️ Document Ledger</span>
         <span class="ws-tab-pill">Single Source of Truth</span>
       </button>
-      <button id="ws-btn-graphrag" class="ws-tab-btn" onclick="switchWorkspace('graphrag')">
-        <!-- <span class="ws-tab-icon">🧠</span> -->
-        <span class="ws-tab-title">🧠 GraphRAG Sovereign Studio</span>
-        <span class="ws-tab-pill pill-ai">CUDA Hybrid Search</span>
-      </button>
-      <button id="ws-btn-universe" class="ws-tab-btn" onclick="switchWorkspace('universe')">
-        <!-- <span class="ws-tab-icon">🌐</span> -->
-        <span class="ws-tab-title">🌐 3D Knowledge Universe</span>
-        <span class="ws-tab-pill pill-glsl">WebGL GLSL 3D</span>
+      <button id="ws-btn-actions" class="ws-tab-btn" onclick="switchWorkspace('actions')">
+        <span class="ws-tab-title">⚡ Operational To-Dos</span>
+        <span class="ws-tab-pill pill-ai" id="ws-pill-todos-count">To-Do Ledger</span>
       </button>
       <button id="ws-btn-authors" class="ws-tab-btn" onclick="switchWorkspace('authors')">
-        <span class="ws-tab-title">✍️ Author Review</span>
+        <span class="ws-tab-title">✍️ Entities & Authors Review</span>
         <span class="ws-tab-pill">Human approval queue</span>
+      </button>
+      <button id="ws-btn-graphrag" class="ws-tab-btn" onclick="switchWorkspace('graphrag')">
+        <!-- <span class="ws-tab-icon">🧠</span> -->
+        <span class="ws-tab-title">🧠 Sovereign Graph Search</span>
+        <span class="ws-tab-pill pill-ai">Hybrid GraphRAG Engine</span>
       </button>
       <button id="ws-btn-chat" class="ws-tab-btn" onclick="switchWorkspace('chat')">
         <!-- <span class="ws-tab-icon">💬</span> -->
-        <span class="ws-tab-title">💬 AI Interrogation Assistant</span>
+        <span class="ws-tab-title">💬 AI Interrogation Chat</span>
         <span class="ws-tab-pill pill-chat">Grounded Reasoning</span>
       </button>
     </div>
@@ -518,7 +522,7 @@
             <span class="pulse-chip-ext">↗</span>
           </a>
           <a href="http://127.0.0.1:8090/api/v1/diagnostics/logs" target="_blank" class="pulse-chip"
-            id="pulse-chip-diag" title="Unified Diagnostic Logs Buffer">
+            id="pulse-chip-diag" title="View System Telemetry & Logs">
             <span class="dot-pulse dot-amber"></span>
             <span class="pulse-chip-label">Diagnostics /logs</span>
             <strong id="pulse-diag-val" class="pulse-chip-val">Active Stream</strong>
@@ -1118,12 +1122,18 @@
                   title="Sort by document date (filename prefix, content, or last modified)">
                   <span>Doc Date</span> <span class="sort-indicator" id="sort-doc_date">↕</span>
                 </th>
+                <th class="th-sortable" onclick="setSort('reception_date')" title="Sort by formal reception / receipt date">
+                  <span>Reception</span> <span class="sort-indicator" id="sort-reception_date">↕</span>
+                </th>
+                <th class="th-sortable" onclick="setSort('due_date')" title="Sort by deadline, expiration, or payment due date">
+                  <span>Due Date</span> <span class="sort-indicator" id="sort-due_date">↕</span>
+                </th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody id="ledger-rows">
               <tr>
-                <td colspan="7" class="text-center loading-cell">Loading document ledger...</td>
+                <td colspan="9" class="text-center loading-cell">Loading document ledger...</td>
               </tr>
             </tbody>
           </table>
@@ -1401,12 +1411,23 @@
           <span class="universe-hero-desc">Topological Clustering &amp; Visual Analytics</span>
         </div>
         <div class="universe-badges-strip">
-          <span class="universe-badge-pill" id="badge-dim" title="Dimensionality Transformation"><span
-              class="badge-dot dot-cyan"></span><span class="badge-label">Dim:</span> <strong class="text-cyan"
-              id="badge-dim-val">High-Dim → 3D PCA</strong></span>
-          <span class="universe-badge-pill" id="badge-algo" title="Clustering Algorithm"><span
-              class="badge-dot dot-purple"></span><span class="badge-label">Algo:</span> <strong class="text-purple"
-              id="badge-algo-val">Unsupervised K-Means</strong></span>
+          <!-- <span class="universe-badge-pill" id="badge-dim" title="Dimensionality Transformation"><span
+                                                                                                                                                                                                                                                                                                                          class="badge-dot dot-cyan"></span><span class="badge-label">Dim:</span>
+                                                                                                                                                                                                                                                                                                                        <strong class="text-cyan" id="badge-dim-val">High-Dim → 3D PCA</strong>
+                                                                                                                                                                                                                                                                                                                  </span> -->
+          <span class="universe-badge-pill" id="badge-dim" title="Dimensionality Transformation">
+            <span class="badge-dot dot-cyan"></span><span class="badge-label">Dim:</span>
+            <strong class="text-cyan" id="badge-dim-val">Thematic Gravitational Space</strong>
+          </span>
+          
+          <span class="universe-badge-pill" id="badge-algo" title="Clustering Algorithm 1">
+            <span class="badge-dot dot-purple"></span><span class="badge-label">Algo:</span>
+            <strong class="text-purple" id="badge-algo-val">Thematic Solar Centroids (k=7)</strong>
+          </span>
+          <span class="universe-badge-pill" id="badge-algo" title="Clustering Algorithm 2">
+            <span class="badge-dot dot-purple"></span><span class="badge-label">Algo:</span>
+            <strong class="text-purple" id="badge-algo-val">Unsupervised K-Means</strong>
+          </span>
           <span class="universe-badge-pill" id="badge-topo" title="Active Topology Elements"><span
               class="badge-dot dot-emerald"></span><span class="badge-label">Topology:</span> <strong
               class="text-emerald"><span id="glsl-stat-nodes">1,000</span> Nodes • <span
@@ -1421,15 +1442,19 @@
     <!-- HUD Control Toolbar -->
     <div class="universe-toolbar">
       <div class="universe-toolbar-left">
-        <!-- View Topology Mode: Spatial PCA vs Thematic Mindmap -->
+        <!-- View Topology Mode: Spatial PCA vs Thematic Mindmap vs Action Timeline -->
         <div class="universe-view-segmented" role="group" aria-label="3D View Topology">
-          <button id="btn-view-spatial" class="hud-glsl-btn active" onclick="set3DUniverseLayout('spatial')"
+          <button id="btn-view-spatial" class="hud-glsl-btn" onclick="set3DUniverseLayout('spatial')"
             title="Spatial PCA View: Multivariate Latent Semantic Variance">
             <span>🌐</span> Spatial View
           </button>
-          <button id="btn-view-thematic" class="hud-glsl-btn" onclick="set3DUniverseLayout('thematic')"
+          <button id="btn-view-thematic" class="hud-glsl-btn active" onclick="set3DUniverseLayout('thematic')"
             title="Thematic Mindmap: Taxonomy Gravitational Suns & Planetary Orbits">
             <span>🪐</span> Thematic Mindmap
+          </button>
+          <button id="btn-view-timeline" class="hud-glsl-btn" onclick="set3DUniverseLayout('timeline')"
+            title="Action Timeline: Chronological Urgency Tunnel & Thematic Tracks">
+            <span>⏳</span> Action Timeline
           </button>
         </div>
         <div class="toolbar-sep"></div>
@@ -1513,6 +1538,10 @@
         <button id="btn-reset" class="hud-glsl-btn btn-reset" onclick="reset3DCamera()"
           title="Reset Camera Perspective">
           <span>↺</span> Reset View
+        </button>
+        <button id="btn-34-top" class="hud-glsl-btn" onclick="reset34TopCamera()"
+          title="3/4 Left-Top Perspective: Elevated lateral diagonal viewpoint">
+          <span>📐</span> 3/4 TopView
         </button>
       </div>
     </div>
@@ -1814,6 +1843,108 @@
     </section>
   </main>
 
+  <!-- =========================================================================
+             WORKSPACE: OPERATIONAL TO-DOS & THEMATIC GRAVITY
+             ========================================================================= -->
+  <main id="ws-pane-actions" class="workspace-pane hidden action-items-layout">
+    <!-- Action Items KPI Cards -->
+    <section class="metrics-grid">
+      <div class="metric-card">
+        <div class="metric-label">⚡ Total Obligations</div>
+        <div id="metric-actions-total" class="metric-value">--</div>
+        <div class="metric-sub">Detected actionable items</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">⏳ Pending Obligations</div>
+        <div id="metric-actions-pending" class="metric-value text-amber">--</div>
+        <div class="metric-sub">Awaiting payment / signature</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">⚠️ Overdue Deadlines</div>
+        <div id="metric-actions-overdue" class="metric-value text-rose">--</div>
+        <div class="metric-sub">Past target due dates</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">🎯 Auto-Struck (Cross-Matched)</div>
+        <div id="metric-actions-completed" class="metric-value text-emerald">--</div>
+        <div class="metric-sub">ALCOA+ verified fulfillments</div>
+      </div>
+    </section>
+  
+    <!-- Split Grid: To-Do Ledger (Left) & Thematic Gravity (Right) -->
+    <div class="actions-split-grid">
+      <!-- Left: To-Dos & Cross-Match Table -->
+      <section class="ledger-section" style="flex: 1; min-width: 0;">
+        <div class="section-header" style="flex-wrap: wrap; gap: 0.75rem;">
+          <div class="section-title">
+            <span>Operational To-Dos Ledger</span>
+          </div>
+          <div class="filter-controls" style="flex-wrap: wrap; gap: 0.5rem;">
+            <div class="todo-filter-pills" id="todo-filter-pills">
+              <button class="todo-filter-btn active" data-status="" onclick="setTodoStatusFilter('', this)">All</button>
+              <button class="todo-filter-btn" data-status="pending"
+                onclick="setTodoStatusFilter('pending', this)">Pending</button>
+              <button class="todo-filter-btn" data-status="overdue" onclick="setTodoStatusFilter('overdue', this)">⚠️
+                Overdue</button>
+              <button class="todo-filter-btn" data-status="completed"
+                onclick="setTodoStatusFilter('completed', this)">Completed</button>
+            </div>
+            <input type="text" id="action-search-box" placeholder="Filter tasks, counterparties, or hashes..."
+              oninput="handleActionSearch(event)">
+            <button class="btn btn-primary btn-sm" onclick="triggerCrossMatchScan()"
+              title="Trigger autonomous cross-matching scan across unfulfilled items against newly ingested receipts/contracts">
+              ⚡ Cross-Match Scan
+            </button>
+            <button class="btn btn-outline btn-sm" onclick="loadActionItems()">⟳ Refresh</button>
+          </div>
+        </div>
+  
+        <div class="table-container" style="max-height: calc(100vh - 290px); overflow-y: auto;">
+          <table class="ledger-table" id="action-items-table">
+            <thead>
+              <tr>
+                <th style="width: 45px; text-align: center;">Done</th>
+                <th>Task / Obligation</th>
+                <th>Type & Priority</th>
+                <th>Due Date</th>
+                <th>Amount</th>
+                <th>Source Document</th>
+                <th>Fulfillment / Cross-Match</th>
+                <th style="text-align: right;">Action</th>
+              </tr>
+            </thead>
+            <tbody id="action-items-rows">
+              <tr>
+                <td colspan="8" class="text-center loading-cell">Loading operational obligations...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+  
+      <!-- Right: Thematic Gravity HUD -->
+      <aside class="thematic-gravity-panel" style="width: 320px; flex-shrink: 0;">
+        <div class="panel-header"
+          style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+          <div class="panel-title"
+            style="font-weight: 600; font-size: 0.95rem; display: flex; align-items: center; gap: 0.4rem;">
+            <span>🪐 Thematic Gravity & Velocity</span>
+          </div>
+          <button class="btn btn-outline btn-sm" onclick="loadThematicGravity()"
+            title="Recalculate thematic gravity">⟳</button>
+        </div>
+        <p class="text-muted" style="font-size: 0.78rem; margin-bottom: 0.85rem; line-height: 1.4;">
+          Dynamically weights taxonomy domains by document accumulation, 7-day velocity, and unfulfilled obligations.
+          Scales 3D solar halos.
+        </p>
+        <div id="thematic-gravity-list" class="thematic-gravity-list">
+          <div class="text-center text-muted" style="padding: 1rem; font-size: 0.8rem;">Computing gravitational vectors...
+          </div>
+        </div>
+      </aside>
+    </div>
+  </main>
+
   <!-- Toast Notification Container -->
   <div id="toast-container" class="toast-container"></div>
 
@@ -1901,7 +2032,7 @@
     </div>
   </div>
 
-  <script src="app.js?v=36"></script>
+  <script src="app.js?v=41"></script>
 </body>
 
 </html>

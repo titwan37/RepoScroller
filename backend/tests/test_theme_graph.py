@@ -203,6 +203,15 @@ def test_sidecar_api_graph_3d_thematic_layout():
     assert res_default.status_code == 200
     assert res_default.json()["layout"] == "spatial"
 
+    # Query with layout=timeline
+    res_timeline = client.get("/api/v1/sidecar/graph-3d?layout=timeline&limit=50")
+    assert res_timeline.status_code == 200
+    data_tl = res_timeline.json()
+    assert data_tl["status"] == "success"
+    assert data_tl["layout"] == "timeline"
+    assert "Urgency" in data_tl["axes"]["z"]
+    assert "Track" in data_tl["axes"]["x"]
+
 
 def test_sidecar_api_theme_backfill():
     from fastapi.testclient import TestClient

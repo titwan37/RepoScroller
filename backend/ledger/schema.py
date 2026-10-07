@@ -18,6 +18,8 @@ CREATE TABLE IF NOT EXISTS document_ledger (
     text_snippet TEXT,
     doc_date TEXT,                  -- Substantive date of document (YYYY-MM-DD)
     doc_date_source TEXT,           -- filename, content, mtime
+    reception_date TEXT,            -- Formal arrival/reception/issuance timestamp (YYYY-MM-DD)
+    due_date TEXT,                  -- Actionable deadline/payment date/expiration (YYYY-MM-DD)
     taxonomy_version TEXT DEFAULT 'v0.9.0', -- Version of taxonomy applied (e.g. v1.0.0)
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     last_verified TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -95,6 +97,8 @@ CREATE INDEX IF NOT EXISTS idx_version_parent ON version_chains(parent_sha256);
 CREATE INDEX IF NOT EXISTS idx_version_child ON version_chains(child_sha256);
 CREATE INDEX IF NOT EXISTS idx_audit_sha256 ON audit_log(sha256_hash);
 CREATE INDEX IF NOT EXISTS idx_ledger_doc_date ON document_ledger(doc_date);
+CREATE INDEX IF NOT EXISTS idx_ledger_reception_date ON document_ledger(reception_date);
+CREATE INDEX IF NOT EXISTS idx_ledger_due_date ON document_ledger(due_date);
 
 -- Lexical Keyword Search Table (SQLite FTS5)
 CREATE VIRTUAL TABLE IF NOT EXISTS document_fts USING fts5(
@@ -240,6 +244,29 @@ CREATE TABLE IF NOT EXISTS organization_aliases (
     alias_pattern TEXT NOT NULL UNIQUE,
     org_id TEXT NOT NULL REFERENCES organization_entities(org_id) ON DELETE CASCADE
 );
+
+-- Operational Action Items (To-Do items derived from document requirements)
+CREATE TABLE IF NOT EXISTS action_items (
+    action_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sha256_hash TEXT NOT NULL REFERENCES document_ledger(sha256_hash) ON DELETE CASCADE,
+    theme_id TEXT,                          -- Canonical theme e.g. 'theme_tax_administration'
+    action_type TEXT NOT NULL,               -- 'payment', 'signature', 'reply', 'review', 'submission'
+    description TEXT NOT NULL,
+    counterparty TEXT,
+    amount REAL,
+    currency TEXT DEFAULT 'CHF',
+    due_date TEXT,                           -- ISO YYYY-MM-DD
+    status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'completed', 'dismissed', 'overdue')),
+    fulfilled_by_sha256 TEXT REFERENCES document_ledger(sha256_hash),
+    fulfilled_at TIMESTAMP,
+    fulfillment_evidence TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_action_status_due ON action_items(status, due_date ASC);
+CREATE INDEX IF NOT EXISTS idx_action_theme ON action_items(theme_id, status);
+CREATE INDEX IF NOT EXISTS idx_action_sha ON action_items(sha256_hash);
+CREATE INDEX IF NOT EXISTS idx_action_fulfilled ON action_items(fulfilled_by_sha256);
 """
 
 

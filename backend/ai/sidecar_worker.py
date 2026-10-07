@@ -104,6 +104,12 @@ class KnowledgeBaseSidecarWorker:
             )
             self.graph_store.save_document_graph(doc_graph)
 
+            # 3. Cross-match against open Action Items (Auto-Strikeout)
+            try:
+                self.repo.cross_match_and_strikeout_actions(doc_record, full_text)
+            except Exception as e_cross:
+                logger.debug(f"Sidecar action cross-matching non-critical issue for {sha}: {e_cross}")
+
             self.repo.mark_kb_queue_status(sha, "completed")
             from backend.ai.telemetry import workload_telemetry
             workload_telemetry.record_document_completed(count=1, chunks=indexed_count)

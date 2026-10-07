@@ -14,6 +14,7 @@ from backend.api.routes.taxonomy import router as taxonomy_router
 from backend.api.routes.sidecar import router as sidecar_router, rag_router    
 from backend.api.routes.authors import router as authors_router
 from backend.api.routes.diagnostics import router as diagnostics_router    
+from backend.api.routes.actions import router as actions_router
 from backend.api.diagnostics import setup_diagnostic_logging
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent.parent / "frontend"
@@ -55,11 +56,14 @@ def create_app() -> FastAPI:
     app.include_router(sidecar_router, prefix="/api/v1")
     app.include_router(authors_router, prefix="/api/v1")
     app.include_router(rag_router, prefix="/api/v1")
+    app.include_router(actions_router, prefix="/api/v1")
 
     @app.get("/")
     @app.get("/3d_knowledgegraph_universe")
     @app.get("/universe")
     @app.get("/ledger")
+    @app.get("/actions")
+    @app.get("/todos")
     @app.get("/graphrag")
     @app.get("/authors")
     @app.get("/chat")

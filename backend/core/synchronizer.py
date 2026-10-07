@@ -155,6 +155,8 @@ class DocumentSynchronizer:
                 doc_date=doc_date,
                 doc_date_source=doc_date_source,
                 full_text=text,
+                reception_date=analysis.reception_date,
+                due_date=analysis.due_date,
             )
 
             # Record physical location
@@ -167,6 +169,32 @@ class DocumentSynchronizer:
                 mtime=mtime,
                 is_primary=is_primary,
             )
+
+            # Step 6b: Record operational Action Items detected in document
+            theme_node_id = f"theme_{doc_type}" if doc_type else None
+            for item in (analysis.action_items or []):
+                self.repo.create_action_item(
+                    sha256_hash=sha256_hash,
+                    description=item.description,
+                    action_type=item.action_type,
+                    theme_id=theme_node_id,
+                    counterparty=item.counterparty,
+                    amount=item.amount,
+                    currency=item.currency or "CHF",
+                    due_date=item.due_date or analysis.due_date,
+                    status="pending"
+                )
+
+            # Step 6c: Cross-Match new document against open To-Dos (Auto-Strikeout)
+            doc_record_payload = {
+                "sha256_hash": sha256_hash,
+                "canonical_filename": file_path.name,
+                "doc_type": doc_type,
+                "doc_date": doc_date,
+                "reception_date": analysis.reception_date,
+                "due_date": analysis.due_date,
+            }
+            struck_out_ids = self.repo.cross_match_and_strikeout_actions(doc_record_payload, text)
 
 
         # Step 7: Check for near-duplicates and link version chains

@@ -255,6 +255,7 @@ async function initDashboard() {
   Promise.allSettled([
     loadWorkloadTelemetry(),
     loadSidecarStats(),
+    typeof loadActionItems === "function" ? loadActionItems() : Promise.resolve(),
     typeof loadProcessScrollerData === "function" ? loadProcessScrollerData() : Promise.resolve(),
     typeof pollOllamaProcessInspector === "function" ? pollOllamaProcessInspector() : Promise.resolve(),
     typeof loadLineageChains === "function" ? loadLineageChains() : Promise.resolve()
@@ -795,7 +796,7 @@ async function checkBackendHealth() {
   try {
     const res = await fetch("/api/v1/documents/stats");
     if (res.ok) {
-      document.getElementById("backend-status-text").textContent = "Online (ALCOA+ Ready)";
+      document.getElementById("backend-status-text").textContent = "Online (Ready)";
       document.querySelector(".pulse-dot").style.background = "#10b981";
     }
   } catch (err) {
@@ -1046,6 +1047,12 @@ function sortItemsLocally(items, sortBy, sortOrder) {
       const countB = b.location_count != null ? b.location_count : (b.locations ? b.locations.length : 0);
       valA = Number(countA);
       valB = Number(countB);
+    } else if (sortBy === "reception_date") {
+      valA = a.reception_date || "";
+      valB = b.reception_date || "";
+    } else if (sortBy === "due_date") {
+      valA = a.due_date || "";
+      valB = b.due_date || "";
     } else if (sortBy === "doc_date" || sortBy === "created_at" || sortBy === "date") {
       valA = getEffectiveDocDate(a);
       valB = getEffectiveDocDate(b);
@@ -1067,7 +1074,7 @@ function sortItemsLocally(items, sortBy, sortOrder) {
 }
 
 function updateSortIndicators() {
-  const cols = ["canonical_filename", "doc_type", "maturity_score", "lifecycle_status", "location_count", "doc_date", "created_at"];
+  const cols = ["canonical_filename", "doc_type", "maturity_score", "lifecycle_status", "location_count", "doc_date", "reception_date", "due_date", "created_at"];
   cols.forEach(col => {
     const indicator = document.getElementById(`sort-${col}`);
     const th = indicator ? indicator.closest("th") : null;
@@ -1371,7 +1378,7 @@ function renderLedgerRows(items) {
     const emptyMsg = filterOnlyDuplicates
       ? "No duplicate files found in the ledger. All files are currently unique."
       : "No documents matching the current filters.";
-    tbody.innerHTML = `<tr><td colspan="7" class="text-center loading-cell">${emptyMsg}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9" class="text-center loading-cell">${emptyMsg}</td></tr>`;
     return;
   }
 
@@ -1439,6 +1446,16 @@ function renderLedgerRows(items) {
           <span style="font-weight: 500;">${effectiveDate ? escapeHtml(effectiveDate) : '--'}</span>
           ${dateBadge}
         </div>
+      </td>
+      <td style="white-space: nowrap; font-family: var(--font-mono); font-size: 0.75rem;" title="Formal reception date: ${escapeHtml(doc.reception_date || 'None')}">
+        <span style="${doc.reception_date ? 'color: var(--accent-cyan); font-weight: 500;' : 'color: var(--text-muted);'}">
+          ${doc.reception_date ? escapeHtml(doc.reception_date) : '--'}
+        </span>
+      </td>
+      <td style="white-space: nowrap; font-family: var(--font-mono); font-size: 0.75rem;" title="Due date: ${escapeHtml(doc.due_date || 'None')}">
+        <span style="${doc.due_date ? 'color: var(--accent-rose); font-weight: 600;' : 'color: var(--text-muted);'}">
+          ${doc.due_date ? escapeHtml(doc.due_date) : '--'}
+        </span>
       </td>
       <td>
         <div style="display: flex; gap: 0.35rem; align-items: center;">
@@ -1532,6 +1549,11 @@ async function selectDocument(sha256) {
           📅 Document Date: <strong>${escapeHtml(detailDocDate)}</strong> <span style="opacity: 0.7;">(${escapeHtml(detailDateSrc)})</span>
           ${doc.doc_mtime ? ` • Modified: ${new Date(doc.doc_mtime * 1000).toLocaleDateString()}` : ''}
         </div>
+        ${doc.reception_date || doc.due_date ? `
+        <div class="hash-box" style="margin-top: 0.25rem; display: flex; gap: 1rem;">
+          ${doc.reception_date ? `<span>📥 Reception: <strong style="color: var(--accent-cyan);">${escapeHtml(doc.reception_date)}</strong></span>` : ''}
+          ${doc.due_date ? `<span>⚠️ Deadline: <strong style="color: var(--accent-rose);">${escapeHtml(doc.due_date)}</strong></span>` : ''}
+        </div>` : ''}
         <div class="hash-box" style="margin-top: 0.25rem;">
           SimHash: ${doc.simhash} • Maturity: ${doc.maturity_score} • Status: ${doc.lifecycle_status.toUpperCase()}
         </div>
@@ -1687,6 +1709,9 @@ const WORKSPACE_ROUTES = {
   "3d": "universe",
   "knowledgegraph": "universe",
   "ledger": "ledger",
+  "actions": "actions",
+  "todos": "actions",
+  "tasks": "actions",
   "graphrag": "graphrag",
   "authors": "authors",
   "author_review": "authors",
@@ -1698,6 +1723,7 @@ const WORKSPACE_ROUTES = {
 const WORKSPACE_SLUGS = {
   "universe": "3d_knowledgegraph_universe",
   "ledger": "ledger",
+  "actions": "actions",
   "graphrag": "graphrag",
   "authors": "authors",
   "chat": "chat",
@@ -1731,6 +1757,7 @@ function switchWorkspace(ws, updateUrl = true) {
 
   const btnProcess = document.getElementById("ws-btn-process");
   const btnLedger = document.getElementById("ws-btn-ledger");
+  const btnActions = document.getElementById("ws-btn-actions");
   const btnGraphrag = document.getElementById("ws-btn-graphrag");
   const btnUniverse = document.getElementById("ws-btn-universe");
   const btnAuthors = document.getElementById("ws-btn-authors");
@@ -1738,6 +1765,7 @@ function switchWorkspace(ws, updateUrl = true) {
 
   const paneProcess = document.getElementById("ws-pane-process");
   const paneLedger = document.getElementById("ws-pane-ledger");
+  const paneActions = document.getElementById("ws-pane-actions");
   const paneGraphrag = document.getElementById("ws-pane-graphrag");
   const paneUniverse = document.getElementById("ws-pane-universe");
   const paneAuthors = document.getElementById("ws-pane-authors");
@@ -1745,6 +1773,7 @@ function switchWorkspace(ws, updateUrl = true) {
 
   if (btnProcess) btnProcess.classList.toggle("active", ws === "process");
   if (btnLedger) btnLedger.classList.toggle("active", ws === "ledger");
+  if (btnActions) btnActions.classList.toggle("active", ws === "actions");
   if (btnGraphrag) btnGraphrag.classList.toggle("active", ws === "graphrag");
   if (btnUniverse) btnUniverse.classList.toggle("active", ws === "universe");
   if (btnAuthors) btnAuthors.classList.toggle("active", ws === "authors");
@@ -1752,6 +1781,7 @@ function switchWorkspace(ws, updateUrl = true) {
 
   if (paneProcess) paneProcess.classList.toggle("hidden", ws !== "process");
   if (paneLedger) paneLedger.classList.toggle("hidden", ws !== "ledger");
+  if (paneActions) paneActions.classList.toggle("hidden", ws !== "actions");
   if (paneGraphrag) paneGraphrag.classList.toggle("hidden", ws !== "graphrag");
   if (paneUniverse) paneUniverse.classList.toggle("hidden", ws !== "universe");
   if (paneAuthors) paneAuthors.classList.toggle("hidden", ws !== "authors");
@@ -1791,9 +1821,285 @@ function switchWorkspace(ws, updateUrl = true) {
     if (chatInput) chatInput.focus();
   } else if (ws === "ledger") {
     loadLedger();
+  } else if (ws === "actions") {
+    loadActionItems();
+    loadThematicGravity();
   }
 }
 window.switchWorkspace = switchWorkspace;
+
+// ==========================================
+// 12.5. Operational To-Dos & Thematic Gravity
+// ==========================================
+let currentTodoStatusFilter = "";
+let currentTodoSearchQuery = "";
+let cachedActionItems = [];
+
+async function loadActionItems(statusFilter = currentTodoStatusFilter) {
+  currentTodoStatusFilter = statusFilter;
+  const tbody = document.getElementById("action-items-rows");
+  if (!tbody) return;
+
+  try {
+    let url = `/api/v1/actions/todos?limit=100`;
+    if (currentTodoStatusFilter) {
+      url += `&status=${encodeURIComponent(currentTodoStatusFilter)}`;
+    }
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    cachedActionItems = data.todos || data.items || [];
+
+    updateActionMetrics(cachedActionItems, data.metrics);
+    renderActionItems(cachedActionItems);
+  } catch (err) {
+    console.error("Failed to load action items:", err);
+    if (tbody) {
+      tbody.innerHTML = `<tr><td colspan="8" class="text-center text-rose" style="padding: 1.5rem;">Failed to load obligations: ${escapeHtml(err.message)}</td></tr>`;
+    }
+  }
+}
+window.loadActionItems = loadActionItems;
+
+function updateActionMetrics(items, metrics) {
+  let total = 0;
+  let pending = 0;
+  let overdue = 0;
+  let completed = 0;
+
+  if (metrics) {
+    total = metrics.total_items ?? 0;
+    pending = metrics.pending_count ?? 0;
+    overdue = metrics.overdue_count ?? 0;
+    completed = metrics.completed_count ?? 0;
+  } else {
+    total = items.length;
+    items.forEach(item => {
+      if (item.status === "completed") {
+        completed++;
+      } else if (item.status === "pending") {
+        pending++;
+        if (item.is_overdue) overdue++;
+      }
+    });
+  }
+
+  const mTotal = document.getElementById("metric-actions-total");
+  const mPending = document.getElementById("metric-actions-pending");
+  const mOverdue = document.getElementById("metric-actions-overdue");
+  const mCompleted = document.getElementById("metric-actions-completed");
+  const pillCount = document.getElementById("ws-pill-todos-count");
+
+  if (mTotal) mTotal.textContent = Number(total).toLocaleString();
+  if (mPending) mPending.textContent = Number(pending).toLocaleString();
+  if (mOverdue) mOverdue.textContent = Number(overdue).toLocaleString();
+  if (mCompleted) mCompleted.textContent = Number(completed).toLocaleString();
+  if (pillCount) pillCount.textContent = pending > 0 ? `${Number(pending).toLocaleString()} Pending` : "To-Do Ledger";
+}
+
+function handleActionSearch(event) {
+  currentTodoSearchQuery = (event.target.value || "").trim().toLowerCase();
+  renderActionItems(cachedActionItems);
+}
+window.handleActionSearch = handleActionSearch;
+
+function setTodoStatusFilter(status, btn) {
+  currentTodoStatusFilter = status;
+  const container = document.getElementById("todo-filter-pills");
+  if (container) {
+    container.querySelectorAll(".todo-filter-btn").forEach(b => b.classList.remove("active"));
+  }
+  if (btn) btn.classList.add("active");
+  loadActionItems(status);
+}
+window.setTodoStatusFilter = setTodoStatusFilter;
+
+function renderActionItems(items) {
+  const tbody = document.getElementById("action-items-rows");
+  if (!tbody) return;
+  tbody.innerHTML = "";
+
+  let filtered = items;
+  if (currentTodoSearchQuery) {
+    filtered = filtered.filter(i => 
+      (i.title || "").toLowerCase().includes(currentTodoSearchQuery) ||
+      (i.description || "").toLowerCase().includes(currentTodoSearchQuery) ||
+      (i.target_entity || "").toLowerCase().includes(currentTodoSearchQuery) ||
+      (i.canonical_filename || "").toLowerCase().includes(currentTodoSearchQuery) ||
+      (i.document_sha256 || "").toLowerCase().includes(currentTodoSearchQuery)
+    );
+  }
+
+  if (filtered.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="8" class="text-center loading-cell" style="padding: 2rem;">No operational obligations found for current filter.</td></tr>`;
+    return;
+  }
+
+  filtered.forEach(todo => {
+    const todoId = todo.id ?? todo.action_id ?? "";
+    const isCompleted = todo.status === "completed";
+    const isOverdue = todo.is_overdue && !isCompleted;
+    const tr = document.createElement("tr");
+    if (isCompleted) tr.className = "todo-strikethrough";
+
+    const prioColor = todo.priority === "high" ? "#ef4444" : (todo.priority === "medium" ? "#f59e0b" : "#94a3b8");
+    const amountVal = todo.amount_due ?? todo.amount;
+    const amountStr = (amountVal != null) ? `${Number(amountVal).toLocaleString(undefined, { minimumFractionDigits: 2 })} ${escapeHtml(todo.currency || 'CHF')}` : "--";
+
+    const docSha = todo.document_sha256 || todo.sha256_hash || "";
+    const docName = todo.canonical_filename || todo.original_filename || (docSha ? docSha.substring(0, 12) : "Source Document");
+    const todoTitle = todo.title || todo.description || "Operational Action Item";
+    const todoDesc = (todo.title && todo.description && todo.title !== todo.description) ? todo.description : "";
+    const counterparty = todo.target_entity || todo.counterparty || "";
+
+    let fulfilledHtml = '<span class="text-muted">Pending</span>';
+    if (isCompleted) {
+      if (todo.fulfilled_by_sha256) {
+        fulfilledHtml = `<span class="todo-badge-fulfilled" title="Auto-struck by cross-matched document: ${escapeHtml(todo.fulfilled_by_sha256)}">⚡ Cross-Matched</span>`;
+      } else {
+        fulfilledHtml = `<span class="todo-badge-fulfilled">✓ Struck out</span>`;
+      }
+    }
+
+    tr.innerHTML = `
+      <td style="text-align: center;">
+        <input type="checkbox" class="todo-checkbox" ${isCompleted ? 'checked' : ''} onchange="toggleTodoComplete('${escapeHtml(String(todoId))}', this.checked)" title="Click to resolve/strikeout obligation">
+      </td>
+      <td>
+        <div style="font-weight: 600; color: ${isCompleted ? 'var(--text-muted)' : 'var(--text-main)'}; display: flex; align-items: center; gap: 0.4rem;">
+          ${escapeHtml(todoTitle)}
+          ${isOverdue ? '<span class="todo-badge-overdue">⚠️ OVERDUE</span>' : ''}
+        </div>
+        ${todoDesc ? `<div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 0.2rem;">${escapeHtml(todoDesc)}</div>` : ''}
+        ${counterparty ? `<div style="font-size: 0.72rem; color: var(--accent-cyan); margin-top: 0.2rem;">🏢 Counterparty: ${escapeHtml(counterparty)}</div>` : ''}
+      </td>
+      <td>
+        <div style="display: flex; flex-direction: column; gap: 0.25rem;">
+          <span class="badge" style="background: rgba(255,255,255,0.06); font-size: 0.72rem; text-transform: capitalize;">${escapeHtml(todo.action_type || 'task')}</span>
+          <span style="font-size: 0.7rem; font-weight: 600; color: ${prioColor}; text-transform: uppercase;">${escapeHtml(todo.priority || 'medium')}</span>
+        </div>
+      </td>
+      <td style="white-space: nowrap; font-family: var(--font-mono); font-size: 0.78rem;">
+        <span style="${isOverdue ? 'color: var(--accent-rose); font-weight: 700;' : (todo.due_date ? 'color: var(--accent-amber);' : 'color: var(--text-muted);')}">
+          ${todo.due_date ? escapeHtml(todo.due_date) : '--'}
+        </span>
+      </td>
+      <td style="white-space: nowrap; font-family: var(--font-mono); font-size: 0.78rem; font-weight: 500;">
+        ${amountStr}
+      </td>
+      <td>
+        <div style="max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+          ${docSha ? `
+            <a href="#" onclick="event.preventDefault(); selectDocument('${escapeHtml(docSha)}'); switchWorkspace('ledger');" style="color: var(--accent-primary); text-decoration: underline; font-size: 0.78rem;" title="View source document in ledger">
+              📄 ${escapeHtml(docName)}
+            </a>
+          ` : `📄 ${escapeHtml(docName)}`}
+        </div>
+      </td>
+      <td>
+        ${fulfilledHtml}
+      </td>
+      <td style="text-align: right; white-space: nowrap;">
+        <button class="btn btn-outline" style="padding: 0.2rem 0.5rem; font-size: 0.72rem;" onclick="toggleTodoComplete('${escapeHtml(String(todoId))}', ${!isCompleted})">
+          ${isCompleted ? 'Reopen' : 'Strikeout'}
+        </button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+async function toggleTodoComplete(actionId, isComplete) {
+  const newStatus = isComplete ? "completed" : "pending";
+  try {
+    const res = await fetch(`/api/v1/actions/${encodeURIComponent(actionId)}/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        status: newStatus,
+        notes: isComplete ? "Manually resolved via UI" : "Reopened via UI"
+      })
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    showToast(isComplete ? "Action item struck out & resolved!" : "Action item reopened", "info");
+    loadActionItems();
+    loadThematicGravity();
+  } catch (err) {
+    showToast(`Error updating item: ${err.message}`, "error");
+  }
+}
+window.toggleTodoComplete = toggleTodoComplete;
+
+async function triggerCrossMatchScan() {
+  showToast("Scanning pending obligations for cryptographic fulfillments...", "info");
+  try {
+    const res = await fetch("/api/v1/actions/cross-match-all", { method: "POST" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    showToast(`Scan complete: ${data.fulfilled_count} obligations auto-struck!`, "info");
+    loadActionItems();
+    loadThematicGravity();
+  } catch (err) {
+    showToast(`Cross-match failed: ${err.message}`, "error");
+  }
+}
+window.triggerCrossMatchScan = triggerCrossMatchScan;
+
+async function loadThematicGravity() {
+  const container = document.getElementById("thematic-gravity-list");
+  if (!container) return;
+
+  try {
+    const res = await fetch("/api/v1/actions/thematic-gravity");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const scores = data.gravity_scores || {};
+
+    const entries = Object.entries(scores).sort((a, b) => (b[1].gravity_score || 0) - (a[1].gravity_score || 0));
+    if (entries.length === 0) {
+      container.innerHTML = `<div class="text-center text-muted" style="padding: 1rem; font-size: 0.8rem;">No taxonomy categories registered yet.</div>`;
+      return;
+    }
+
+    container.innerHTML = "";
+    entries.forEach(([theme, stats]) => {
+      const gScore = stats.gravity_score || 1.0;
+      const isUrgent = (stats.overdue_todos || 0) > 0;
+      const pct = Math.min(100, Math.round((gScore / 5.0) * 100));
+
+      const card = document.createElement("div");
+      card.className = "thematic-gravity-card";
+      card.title = `Click to filter ledger by ${escapeHtml(theme)}`;
+      card.onclick = () => {
+        switchWorkspace("ledger");
+        setCategoryFilter(theme);
+      };
+
+      card.innerHTML = `
+        <div class="thematic-gravity-header">
+          <span>🪐 ${escapeHtml(theme)}</span>
+          <span class="gravity-multiplier-badge ${gScore > 2.5 ? 'high' : ''}">${gScore.toFixed(1)}x Mass</span>
+        </div>
+        <div class="thematic-gravity-meta">
+          <span>📁 ${stats.doc_count || 0} Docs (${stats.velocity_7d || 0} in 7d)</span>
+          <span style="${isUrgent ? 'color: var(--accent-rose); font-weight: 700;' : ''}">
+            ${stats.pending_todos || 0} Pending ${isUrgent ? `(⚠️ ${stats.overdue_todos} overdue!)` : ''}
+          </span>
+        </div>
+        <div class="gravity-track">
+          <div class="gravity-fill ${isUrgent ? 'urgent' : ''}" style="width: ${pct}%;"></div>
+        </div>
+      `;
+      container.appendChild(card);
+    });
+  } catch (err) {
+    console.error("Failed to load thematic gravity:", err);
+    if (container) {
+      container.innerHTML = `<div class="text-muted" style="font-size: 0.8rem; padding: 0.5rem;">Gravity unavailable: ${escapeHtml(err.message)}</div>`;
+    }
+  }
+}
+window.loadThematicGravity = loadThematicGravity;
 
 window.addEventListener("popstate", () => {
   const ws = getWorkspaceFromUrl();
@@ -3543,14 +3849,18 @@ const glsl3D = {
   showLabels: true,
   colorMode: "cluster",
   activeClusterFilter: "all",
-  layoutMode: "spatial", // "spatial" vs "thematic"
+  layoutMode: "thematic", // "spatial", "thematic", "timeline"
   thematicHubsGroup: null, // Three.js Group for solar halos and orbital visual rings
+  timelineHelperGroup: null, // Three.js Group for chronological milestone rings and Z-tunnel axis
+  actionItems: [],
+  actionItemsMap: new Map(),
   selectedNode: null,
   hoveredNodeIndex: -1,
   raycaster: null,
   mouse: null,
   animId: null,
   isUserInteracting: false,
+  initialTourStarted: false,
   cameraTransitionAnim: null,
   layoutTransitionAnim: null,
 };
@@ -3561,12 +3871,14 @@ const UNIVERSE_VERTEX_SHADER = `
   attribute float aDegree;
   attribute float aCluster;
   attribute float aDimmed;
+  attribute float aUrgent;
 
   varying vec3 vColor;
   varying float vCluster;
   varying float vDegree;
   varying float vDimmed;
   varying float vDist;
+  varying float vUrgent;
 
   uniform float uTime;
   uniform float uPointSize;
@@ -3576,9 +3888,12 @@ const UNIVERSE_VERTEX_SHADER = `
     vCluster = aCluster;
     vDegree = aDegree;
     vDimmed = aDimmed;
+    vUrgent = aUrgent;
 
-    // Organic temporal breathing pulse (frequency modulated by degree & cluster)
-    float pulse = sin(uTime * 2.4 + aCluster * 1.5 + position.x * 0.04) * 0.22 + 1.0;
+    // Organic temporal breathing pulse (faster rhythmic beacon beating for overdue/pending action items)
+    float pulseFreq = aUrgent > 0.6 ? 5.2 : (aUrgent > 0.2 ? 3.4 : 2.4);
+    float pulseAmp = aUrgent > 0.6 ? 0.38 : (aUrgent > 0.2 ? 0.26 : 0.22);
+    float pulse = sin(uTime * pulseFreq + aCluster * 1.5 + position.x * 0.04) * pulseAmp + 1.0;
     
     vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
     vDist = -mvPosition.z;
@@ -3602,6 +3917,7 @@ const UNIVERSE_FRAGMENT_SHADER = `
   varying float vDegree;
   varying float vDimmed;
   varying float vDist;
+  varying float vUrgent;
 
   uniform float uTime;
   uniform float uBrightness;
@@ -3622,7 +3938,13 @@ const UNIVERSE_FRAGMENT_SHADER = `
 
     // Dynamic luminescence shimmer scaled by uBrightness uniform
     float shimmer = 0.88 + 0.16 * sin(uTime * 3.2 + vCluster * 2.0);
-    vec3 finalColor = (vColor * shimmer + vec3(0.04, 0.08, 0.12) * halo) * uBrightness;
+    vec3 baseCol = vColor;
+    if (vUrgent > 0.6) {
+      // Overdue pulsing amber/rose beacon
+      float urgentBeating = sin(uTime * 5.2) * 0.5 + 0.5;
+      baseCol = mix(vec3(0.95, 0.24, 0.36), vec3(0.98, 0.55, 0.2), urgentBeating);
+    }
+    vec3 finalColor = (baseCol * shimmer + vec3(0.04, 0.08, 0.12) * halo) * uBrightness;
 
     gl_FragColor = vec4(finalColor, alpha * min(1.0, uBrightness + 0.2));
   }
@@ -3702,12 +4024,27 @@ function setCameraPosition() {
     glsl3D.camera.updateProjectionMatrix();
   }
 
-  // 3/4 top view: X: 240 (lateral angle), Y: 220 (top angle), Z: 160 (with -100 Z offset)
-  glsl3D.camera.position.set(240, 220, 160);
-
-  if (glsl3D.controls && glsl3D.controls.target) {
-    glsl3D.controls.target.set(0, 0, -100);
-    glsl3D.controls.update();
+  if (glsl3D.layoutMode === "timeline") {
+    // Frontal view looking straight down the chronological urgency tunnel
+    glsl3D.camera.position.set(0, 38, 210);
+    if (glsl3D.controls && glsl3D.controls.target) {
+      glsl3D.controls.target.set(0, 0, -120);
+      glsl3D.controls.update();
+    }
+  } else if (glsl3D.layoutMode === "thematic") {
+    // 3/4 top view centered on solar origin
+    glsl3D.camera.position.set(240, 220, 160);
+    if (glsl3D.controls && glsl3D.controls.target) {
+      glsl3D.controls.target.set(0, 0, 0);
+      glsl3D.controls.update();
+    }
+  } else {
+    // 3/4 top view: X: 240 (lateral angle), Y: 220 (top angle), Z: 160 (with -100 Z offset)
+    glsl3D.camera.position.set(240, 220, 160);
+    if (glsl3D.controls && glsl3D.controls.target) {
+      glsl3D.controls.target.set(0, 0, -100);
+      glsl3D.controls.update();
+    }
   }
 }
 
@@ -3794,6 +4131,9 @@ function init3DKnowledgeUniverse() {
 
   // Setup Axes of Importance 3D Visualizer
   setup3DAxesOfImportance();
+  // Instantly sync the Legend HUD and hide the XYZ axes
+  update3DAxesLegendForMode(glsl3D.layoutMode);
+
 
   // Raycaster & Mouse
   glsl3D.raycaster = new THREE.Raycaster();
@@ -3895,6 +4235,116 @@ function create3DTextSprite(text, borderColorHex, fontSize = 22) {
   return sprite;
 }
 
+/**
+ * Shared timeline projection formula converting a date to a 3D Z coordinate.
+ * Maps dates continuously along the chronological tunnel:
+ * Future / Overdue in front (Z in [+20, +75]), Now (Z = +20), Past extending back to Z = -380.
+ */
+function computeTimelineZ(dateInput, isOverdue = false, hashVal = 0) {
+  if (isOverdue) {
+    return 55.0 + (hashVal % 16 - 8);
+  }
+
+  const today = new Date();
+  const todayMs = today.getTime();
+  const DAY_MS = 1000 * 60 * 60 * 24;
+
+  let d = null;
+  if (dateInput instanceof Date) {
+    d = dateInput;
+  } else if (typeof dateInput === "string" && dateInput.trim()) {
+    d = new Date(dateInput);
+  }
+
+  if (!d || isNaN(d.getTime())) {
+    // Ambient undated documents
+    return -290.0 - (hashVal % 120);
+  }
+
+  const diffDays = Math.round((d.getTime() - todayMs) / DAY_MS);
+
+  if (diffDays >= 0) {
+    // Future deadlines (reaching toward camera)
+    return 20.0 + Math.min(35.0, diffDays * 0.35) + (hashVal % 6 - 3);
+  } else {
+    // Past dates (receding down the tunnel)
+    const pastDays = -diffDays;
+    return 20.0 - Math.pow(pastDays, 0.8) * 1.15 + (hashVal % 6 - 3);
+  }
+}
+window.computeTimelineZ = computeTimelineZ;
+
+/**
+ * Creates billboard text sprites for the Graduated Linear Axis.
+ * Bold font for Years, Medium font for Month acronyms.
+ */
+function createTimelineAxisLabel(text, isYear = false, isCurrentMonth = false) {
+  const canvas = document.createElement("canvas");
+  canvas.width = isYear ? 256 : 160;
+  canvas.height = 70;
+  const ctx = canvas.getContext("2d");
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  if (isYear) {
+    // Elegant dark glass pill with electric cyan border
+    ctx.fillStyle = "rgba(11, 18, 33, 0.94)";
+    ctx.strokeStyle = "#38bdf8";
+    ctx.lineWidth = 3;
+    if (ctx.roundRect) {
+      ctx.roundRect(6, 6, canvas.width - 12, canvas.height - 12, 14);
+    } else {
+      ctx.rect(6, 6, canvas.width - 12, canvas.height - 12);
+    }
+    ctx.fill();
+    ctx.stroke();
+
+    // BOLD FONT for Years
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 32px 'Inter', 'Outfit', sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+  } else {
+    // Medium font for Month acronyms
+    if (isCurrentMonth) {
+      ctx.fillStyle = "rgba(14, 165, 233, 0.32)";
+      ctx.strokeStyle = "#38bdf8";
+      ctx.lineWidth = 2.5;
+    } else {
+      ctx.fillStyle = "rgba(15, 23, 42, 0.8)";
+      ctx.strokeStyle = "rgba(148, 163, 184, 0.45)";
+      ctx.lineWidth = 1.5;
+    }
+    if (ctx.roundRect) {
+      ctx.roundRect(6, 8, canvas.width - 12, canvas.height - 16, 10);
+    } else {
+      ctx.rect(6, 8, canvas.width - 12, canvas.height - 16);
+    }
+    ctx.fill();
+    ctx.stroke();
+
+    // MEDIUM FONT for Month Acronyms
+    ctx.fillStyle = isCurrentMonth ? "#38bdf8" : "#cbd5e1";
+    ctx.font = "600 20px 'Inter', 'Outfit', sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.minFilter = THREE.LinearFilter;
+  const spriteMat = new THREE.SpriteMaterial({
+    map: texture,
+    transparent: true,
+    depthWrite: false,
+  });
+  const sprite = new THREE.Sprite(spriteMat);
+  sprite.scale.set(isYear ? 24 : 14, isYear ? 6.5 : 4.5, 1);
+  return sprite;
+}
+window.createTimelineAxisLabel = createTimelineAxisLabel;
+
 // function onWindowResize3D() {
 //   if (!glsl3D.renderer || !glsl3D.camera || !glsl3D.container) return;
 //   const width = glsl3D.container.clientWidth;
@@ -3925,6 +4375,70 @@ function onWindowResize3D() {
   // Sync the 3D scene offset with UI panel layout changes
   update3DViewOffset();
 }
+
+
+function buildActionItemsMap(actionItems) {
+  const map = new Map();
+  if (!Array.isArray(actionItems)) return map;
+
+  actionItems.forEach(it => {
+    const fullSha = it.document_sha256 || it.sha256_hash;
+    if (fullSha) {
+      const shaLower = fullSha.toLowerCase();
+      if (!map.has(shaLower)) map.set(shaLower, []);
+      map.get(shaLower).push(it);
+
+      const p16 = shaLower.substring(0, 16);
+      if (!map.has(`doc_${p16}`)) map.set(`doc_${p16}`, []);
+      map.get(`doc_${p16}`).push(it);
+
+      if (!map.has(p16)) map.set(p16, []);
+      map.get(p16).push(it);
+    }
+  });
+  return map;
+}
+
+function syncActionItemsTo3DNodes(nodes, actionItemsMap) {
+  if (!nodes || !actionItemsMap || actionItemsMap.size === 0) return;
+  const todayStr = new Date().toISOString().split("T")[0];
+
+  nodes.forEach(n => {
+    let matches = null;
+    const candidates = [
+      n.sha256,
+      n.raw_sha,
+      n.id,
+      n.id && n.id.startsWith("doc_") ? n.id.substring(4) : null
+    ].filter(Boolean);
+
+    for (const c of candidates) {
+      const key = String(c).toLowerCase();
+      if (actionItemsMap.has(key)) {
+        matches = actionItemsMap.get(key);
+        break;
+      }
+    }
+
+    if (matches && matches.length > 0) {
+      n.action_items = matches;
+      n.has_todo = true;
+      n.has_pending_todo = matches.some(m => m.status === "pending");
+      n.is_overdue = matches.some(m => m.status === "pending" && (m.is_overdue === 1 || m.is_overdue === true || (m.due_date && m.due_date < todayStr)));
+
+      const pendingItems = matches.filter(m => m.status === "pending");
+      const primaryItem = pendingItems[0] || matches[0];
+      if (primaryItem.due_date && !n.due_date) {
+        n.due_date = primaryItem.due_date;
+      }
+      n.action_title = primaryItem.title || primaryItem.description;
+      n.action_counterparty = primaryItem.target_entity || primaryItem.counterparty;
+      n.action_amount = primaryItem.amount_due || primaryItem.amount;
+    }
+  });
+}
+window.buildActionItemsMap = buildActionItemsMap;
+window.syncActionItemsTo3DNodes = syncActionItemsTo3DNodes;
 
 
 async function load3DUniverseData(forceReload = false, filterParams = null, transitionFromOldPositions = null) {
@@ -3981,9 +4495,28 @@ async function load3DUniverseData(forceReload = false, filterParams = null, tran
     glsl3D.focusNodeId = data.focus_node_id || null;
     glsl3D.totalNodesInDB = (data.stats && data.stats.total_nodes) || 18607;
 
-    // Apply client-side force-directed / grouped radial physics in Thematic Mindmap mode
+    // Sync Action Items (To-Dos) state into 3D Universe
+    if (!glsl3D.actionItems || glsl3D.actionItems.length === 0 || forceReload) {
+      try {
+        const todoRes = await fetch("/api/v1/actions/todos?limit=500");
+        if (todoRes.ok) {
+          const todoData = await todoRes.json();
+          glsl3D.actionItems = todoData.todos || todoData.items || [];
+          glsl3D.actionItemsMap = buildActionItemsMap(glsl3D.actionItems);
+        }
+      } catch (todoErr) {
+        console.warn("Could not fetch action items for 3D Universe:", todoErr);
+      }
+    }
+
+    // Merge action items into nodes
+    syncActionItemsTo3DNodes(glsl3D.nodes, glsl3D.actionItemsMap);
+
+    // Apply client-side physics based on layoutMode
     if (glsl3D.layoutMode === "thematic") {
       applyThematicMindmapPhysics(glsl3D.nodes, glsl3D.edges);
+    } else if (glsl3D.layoutMode === "timeline") {
+      applyTemporalTimelinePhysics(glsl3D.nodes, glsl3D.edges, glsl3D.actionItemsMap);
     }
 
     // Render Filter HUD Banner in Universe View
@@ -4082,6 +4615,18 @@ async function load3DUniverseData(forceReload = false, filterParams = null, tran
         open3DNodeInspector(target);
         emphasizeNodeLinks(target.id);
       }
+    } else if (!glsl3D.initialTourStarted) {
+      // ADDED: Auto-start the orbital tour on the very first load
+      glsl3D.initialTourStarted = true;
+
+      // Wait 1.2 seconds before starting the tour. 
+      // This perfectly matches the 1000ms layout transition, allowing the 
+      // nodes to glide into place before the camera starts flying.
+      setTimeout(() => {
+        if (activeWorkspace === "universe" && !glsl3D.isUserInteracting && !glsl3D.orbitalTourActive) {
+          toggle3DOrbitalTour();
+        }
+      }, 2000);
     }
 
   } catch (err) {
@@ -4169,6 +4714,10 @@ function build3DSceneObjects(transitionFromOldPositions = null) {
     glsl3D.worldGroup.remove(glsl3D.thematicHubsGroup);
     glsl3D.thematicHubsGroup = null;
   }
+  if (glsl3D.timelineHelperGroup) {
+    glsl3D.worldGroup.remove(glsl3D.timelineHelperGroup);
+    glsl3D.timelineHelperGroup = null;
+  }
   if (glsl3D.highlightedEdgesMesh) {
     glsl3D.worldGroup.remove(glsl3D.highlightedEdgesMesh);
     glsl3D.highlightedEdgesMesh = null;
@@ -4189,6 +4738,7 @@ function build3DSceneObjects(transitionFromOldPositions = null) {
   const degrees = new Float32Array(count);
   const clusters = new Float32Array(count);
   const dimmed = new Float32Array(count);
+  const urgents = new Float32Array(count);
 
   const nodeIndexMap = new Map();
 
@@ -4213,6 +4763,7 @@ function build3DSceneObjects(transitionFromOldPositions = null) {
     degrees[i] = n.degree || 0;
     clusters[i] = n.cluster !== undefined ? n.cluster : 0;
     dimmed[i] = 0.0;
+    urgents[i] = n.is_overdue ? 1.0 : (n.has_pending_todo ? 0.5 : 0.0);
 
     // Color by active color mode
     const c = getNodeColorForMode(n, glsl3D.colorMode);
@@ -4227,6 +4778,7 @@ function build3DSceneObjects(transitionFromOldPositions = null) {
   geometry.setAttribute("aDegree", new THREE.BufferAttribute(degrees, 1));
   geometry.setAttribute("aCluster", new THREE.BufferAttribute(clusters, 1));
   geometry.setAttribute("aDimmed", new THREE.BufferAttribute(dimmed, 1));
+  geometry.setAttribute("aUrgent", new THREE.BufferAttribute(urgents, 1));
 
   // Custom Shader Material with GLSL
   const shaderMaterial = new THREE.ShaderMaterial({
@@ -4313,18 +4865,21 @@ function build3DSceneObjects(transitionFromOldPositions = null) {
     const hubs = glsl3D.nodes.filter(n => n.type === "theme");
 
     hubs.forEach(th => {
-      // Celestial Orbit Guidance Ring
-      const orbitR = 38;
+      // Celestial Orbit Guidance Ring (scaled by Thematic Gravity)
+      const gFactor = Math.min(2.5, Math.max(0.8, Math.sqrt(th.gravity_score || 1.0)));
+      const orbitR = 38 * gFactor;
       const ringPts = [];
       for (let s = 0; s <= 64; s++) {
         const rad = (s / 64) * Math.PI * 2;
         ringPts.push(new THREE.Vector3(Math.cos(rad) * orbitR, Math.sin(rad) * orbitR, 0));
       }
       const ringGeo = new THREE.BufferGeometry().setFromPoints(ringPts);
+      const isUrgent = (th.overdue_todos || 0) > 0;
+      const ringColor = isUrgent ? "#ef4444" : (th.cluster_color || "#ec4899");
       const ringMat = new THREE.LineBasicMaterial({
-        color: new THREE.Color(th.cluster_color || "#ec4899"),
+        color: new THREE.Color(ringColor),
         transparent: true,
-        opacity: 0.16,
+        opacity: isUrgent ? 0.38 : 0.16,
         depthWrite: false,
         blending: THREE.AdditiveBlending,
       });
@@ -4336,14 +4891,15 @@ function build3DSceneObjects(transitionFromOldPositions = null) {
       ring._boundNode = th;
       glsl3D.thematicHubsGroup.add(ring);
 
-      // Radiant Solar Halo Sprite
+      // Radiant Solar Halo Sprite (modulated by Gravity & Overdue warning)
       const haloCanvas = document.createElement("canvas");
       haloCanvas.width = 128;
       haloCanvas.height = 128;
       const hCtx = haloCanvas.getContext("2d");
       const grad = hCtx.createRadialGradient(64, 64, 0, 64, 64, 64);
-      grad.addColorStop(0, th.cluster_color || "#ec4899");
-      grad.addColorStop(0.35, th.cluster_color || "#ec4899");
+      const haloColor = isUrgent ? "#f43f5e" : (th.cluster_color || "#ec4899");
+      grad.addColorStop(0, haloColor);
+      grad.addColorStop(0.35, haloColor);
       grad.addColorStop(0.7, "rgba(0,0,0,0.12)");
       grad.addColorStop(1, "rgba(0,0,0,0)");
       hCtx.fillStyle = grad;
@@ -4355,16 +4911,185 @@ function build3DSceneObjects(transitionFromOldPositions = null) {
         transparent: true,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
-        opacity: 0.55,
+        opacity: isUrgent ? 0.75 : 0.55,
       });
       const haloSprite = new THREE.Sprite(haloMat);
       haloSprite.position.set(startX, startY, startZ);
-      haloSprite.scale.set(40, 40, 1);
+      const baseScale = 40 * gFactor;
+      haloSprite.scale.set(baseScale, baseScale, 1);
+      haloSprite._baseScale = baseScale;
+      haloSprite._pulseFreq = isUrgent ? 4.5 : (2.0 + Math.min(3.0, (th.velocity_7d || 0) * 0.4));
+      haloSprite._pulseAmp = isUrgent ? 0.22 : 0.10;
       haloSprite._boundNode = th;
       glsl3D.thematicHubsGroup.add(haloSprite);
     });
 
     glsl3D.worldGroup.add(glsl3D.thematicHubsGroup);
+  }
+
+  // 5. Timeline Milestone Rings & Tunnel Guidance (when in Timeline mode)
+  if (glsl3D.layoutMode === "timeline") {
+    glsl3D.timelineHelperGroup = new THREE.Group();
+
+    // Milestone depth rings: +50 (Urgent / Past Due), 0 (Now / Imminent), -60 (30 Days), -140 (90 Days), -280 (Archive / Fulfilled)
+    const milestones = [
+      { z: 50, label: "⚠️ PAST DUE / URGENT (Z: +50)", color: "#f43f5e", r: 52 },
+      { z: 0, label: "⏱️ NOW / IMMINENT (Z: 0)", color: "#fbbf24", r: 48 },
+      { z: -60, label: "📅 30 DAYS (Z: -60)", color: "#38bdf8", r: 45 },
+      { z: -140, label: "🗓️ 90 DAYS (Z: -140)", color: "#818cf8", r: 42 },
+      { z: -280, label: "🏛️ ARCHIVE / FULFILLED (Z: -280)", color: "#10b981", r: 40 },
+    ];
+
+    milestones.forEach(ms => {
+      // Circle Ring Loop
+      const ringPts = [];
+      const segs = 64;
+      for (let s = 0; s <= segs; s++) {
+        const rad = (s / segs) * Math.PI * 2;
+        ringPts.push(new THREE.Vector3(Math.cos(rad) * ms.r, Math.sin(rad) * ms.r, ms.z));
+      }
+      const ringGeo = new THREE.BufferGeometry().setFromPoints(ringPts);
+      const ringMat = new THREE.LineBasicMaterial({
+        color: new THREE.Color(ms.color),
+        transparent: true,
+        opacity: 0.35,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      });
+      const ring = new THREE.LineLoop(ringGeo, ringMat);
+      glsl3D.timelineHelperGroup.add(ring);
+
+      // Milestone billboard sprite
+      const sprite = create3DTextSprite(ms.label, ms.color, 16);
+      sprite.position.set(0, ms.r + 5.0, ms.z);
+      sprite.scale.set(38, 7.5, 1);
+      glsl3D.timelineHelperGroup.add(sprite);
+    });
+
+    // 4 Longitudinal Guide Rails down the Z-tunnel (at Top, Bottom, Left, Right)
+    const railAngles = [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2];
+    railAngles.forEach(ang => {
+      const railPts = [
+        new THREE.Vector3(Math.cos(ang) * 52, Math.sin(ang) * 52, 60),
+        new THREE.Vector3(Math.cos(ang) * 40, Math.sin(ang) * 40, -320)
+      ];
+      const railGeo = new THREE.BufferGeometry().setFromPoints(railPts);
+      const railMat = new THREE.LineBasicMaterial({
+        color: new THREE.Color("#475569"),
+        transparent: true,
+        opacity: 0.18,
+        depthWrite: false,
+      });
+      glsl3D.timelineHelperGroup.add(new THREE.Line(railGeo, railMat));
+    });
+
+    // 6. Graduated Linear Timeline Axis (Bold Years, Medium Month Acronyms)
+    const axisX = -44.0;
+    const axisY = -24.0;
+    const zStart = 55.0;
+    const zEnd = -380.0;
+
+    // Continuous linear axis rail spine
+    const spinePts = [
+      new THREE.Vector3(axisX, axisY, zStart),
+      new THREE.Vector3(axisX, axisY, zEnd)
+    ];
+    const spineGeo = new THREE.BufferGeometry().setFromPoints(spinePts);
+    const spineMat = new THREE.LineBasicMaterial({
+      color: new THREE.Color("#38bdf8"),
+      transparent: true,
+      opacity: 0.65,
+      depthWrite: false,
+    });
+    glsl3D.timelineHelperGroup.add(new THREE.Line(spineGeo, spineMat));
+
+    // Axis Header Billboard
+    const axisHeaderSprite = create3DTextSprite("⏱️ TIMELINE AXIS (YEARS / MONTHS)", "#38bdf8", 15);
+    axisHeaderSprite.position.set(axisX - 8.0, axisY + 8.5, zStart + 4.0);
+    axisHeaderSprite.scale.set(40, 7.0, 1);
+    glsl3D.timelineHelperGroup.add(axisHeaderSprite);
+
+    // Graduation tick notch lines
+    const tickPositions = [];
+    const tickColors = [];
+    const monthAcronyms = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+
+    // Populate Year and Month Graduations from 2027 down to 2022
+    for (let yr = 2027; yr >= 2022; yr--) {
+      // 1. Major Year Mark at Jan 1
+      const yrDate = new Date(`${yr}-01-01T00:00:00Z`);
+      const yrZ = computeTimelineZ(yrDate);
+
+      // Major Year Tick Notch (length = 7.0 units)
+      tickPositions.push(axisX, axisY, yrZ);
+      tickPositions.push(axisX - 7.0, axisY, yrZ);
+      const cYear = new THREE.Color("#38bdf8");
+      tickColors.push(cYear.r, cYear.g, cYear.b, cYear.r, cYear.g, cYear.b);
+
+      // BOLD FONT Year Billboard Sprite
+      const yrSprite = createTimelineAxisLabel(String(yr), true);
+      yrSprite.position.set(axisX - 18.0, axisY + 1.2, yrZ);
+      glsl3D.timelineHelperGroup.add(yrSprite);
+
+      // 2. Month Acronym Graduations
+      for (let m = 0; m < 12; m++) {
+        // Month date (1st of month)
+        const mDate = new Date(Date.UTC(yr, m, 1));
+        if (m === 0) continue; // Skip Jan since Jan 1 is the Year mark
+
+        const mZ = computeTimelineZ(mDate);
+        if (mZ > zStart || mZ < zEnd) continue;
+
+        const isDenseYear = yr <= 2023;
+        const isQuarter = (m === 3 || m === 6 || m === 9); // APR, JUL, OCT
+        if (isDenseYear && !isQuarter) {
+          // Minor tick mark in dense distant years
+          tickPositions.push(axisX, axisY, mZ);
+          tickPositions.push(axisX - 2.5, axisY, mZ);
+          const cMuted = new THREE.Color("#475569");
+          tickColors.push(cMuted.r, cMuted.g, cMuted.b, cMuted.r, cMuted.g, cMuted.b);
+          continue;
+        }
+
+        // Medium Month Tick Notch (length = 4.2 units)
+        tickPositions.push(axisX, axisY, mZ);
+        tickPositions.push(axisX - 4.2, axisY, mZ);
+        const cMonth = new THREE.Color("#64748b");
+        tickColors.push(cMonth.r, cMonth.g, cMonth.b, cMonth.r, cMonth.g, cMonth.b);
+
+        // MEDIUM FONT Month Acronym Billboard Sprite
+        const isCurrent = (yr === 2026 && m === 9); // OCT 2026 (current month)
+        const mSprite = createTimelineAxisLabel(monthAcronyms[m], false, isCurrent);
+        mSprite.position.set(axisX - 10.5, axisY, mZ);
+        glsl3D.timelineHelperGroup.add(mSprite);
+      }
+    }
+
+    // Single batched LineSegments for all graduation notches
+    if (tickPositions.length > 0) {
+      const ticksGeo = new THREE.BufferGeometry();
+      ticksGeo.setAttribute("position", new THREE.Float32BufferAttribute(tickPositions, 3));
+      ticksGeo.setAttribute("color", new THREE.Float32BufferAttribute(tickColors, 3));
+      const ticksMat = new THREE.LineBasicMaterial({
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.85,
+        depthWrite: false,
+      });
+      glsl3D.timelineHelperGroup.add(new THREE.LineSegments(ticksGeo, ticksMat));
+    }
+
+    glsl3D.worldGroup.add(glsl3D.timelineHelperGroup);
+
+    // Shift bottom grid floor down the tunnel in timeline mode
+    if (glsl3D.gridHelper) {
+      glsl3D.gridHelper.position.set(0, -65, -120);
+    }
+  } else {
+    // Reset grid floor for spatial / thematic
+    if (glsl3D.gridHelper) {
+      glsl3D.gridHelper.position.set(0, -65, 0);
+    }
   }
 
   // If a node is currently selected, re-emphasize its links and beacon
@@ -4412,6 +5137,16 @@ function getNodeColor(nodeType) {
 * Supports centrality heatmap, categorical type palette, and K-Means topological clusters.
 */
 function getNodeColorForMode(node, mode = "type") {
+  // In timeline mode or if node has an active obligation, prioritize urgency coloring
+  if (glsl3D.layoutMode === "timeline") {
+    if (node.is_overdue) {
+      return new THREE.Color("#f43f5e"); // Glowing Rose / Crimson
+    }
+    if (node.has_pending_todo) {
+      return new THREE.Color("#fbbf24"); // Amber Gold
+    }
+  }
+
   if (mode === "centrality") {
     // Heatmap: Cold dark blue (hue ~0.65) -> Cyan -> Green -> Amber -> Hot Red (hue 0.0)
     const deg = Number(node.degree) || 0;
@@ -4442,7 +5177,31 @@ function animate3DUniverse() {
 
   // Auto-Spin orbital rotation
   if (glsl3D.autoSpin && !glsl3D.isUserInteracting && glsl3D.worldGroup) {
+    // 1. Check if we need to lock the camera to a selected node
+    const lockedNode = glsl3D.selectedNode;
+    const isCameraTracking = lockedNode && !glsl3D.cameraTransitionAnim;
+
+    let oldWorldPos = new THREE.Vector3();
+    if (isCameraTracking) {
+      oldWorldPos.set(lockedNode.x, lockedNode.y, lockedNode.z);
+      glsl3D.worldGroup.updateMatrixWorld();
+      glsl3D.worldGroup.localToWorld(oldWorldPos);
+    }
+
+    // 2. Rotate the universe
     glsl3D.worldGroup.rotation.y += 0.0015;
+    glsl3D.worldGroup.updateMatrixWorld(); // Critical: Update matrix after rotation
+
+    // 3. Move the camera perfectly in sync with the node's new position
+    if (isCameraTracking && glsl3D.camera && glsl3D.controls) {
+      let newWorldPos = new THREE.Vector3(lockedNode.x, lockedNode.y, lockedNode.z);
+      glsl3D.worldGroup.localToWorld(newWorldPos);
+
+      let delta = new THREE.Vector3().subVectors(newWorldPos, oldWorldPos);
+
+      glsl3D.camera.position.add(delta);
+      glsl3D.controls.target.add(delta);
+    }
   }
 
   // Animate Selection Beacon pulse and face camera
@@ -4454,6 +5213,18 @@ function animate3DUniverse() {
     glsl3D.selectionBeaconGroup.scale.set(pulseScale, pulseScale, pulseScale);
   }
 
+  // Animate Thematic Solar Halo pulsing based on velocity & gravity
+  if (glsl3D.thematicHubsGroup) {
+    const t = glsl3D.uniforms.uTime.value;
+    glsl3D.thematicHubsGroup.children.forEach(obj => {
+      if (obj.isSprite && obj._baseScale) {
+        const pulse = 1.0 + (obj._pulseAmp || 0.1) * Math.sin(t * (obj._pulseFreq || 2.5));
+        const s = obj._baseScale * pulse;
+        obj.scale.set(s, s, 1);
+      }
+    });
+  }
+
   if (glsl3D.controls) {
     glsl3D.controls.update();
   }
@@ -4462,7 +5233,6 @@ function animate3DUniverse() {
   if (glsl3D.pointsMesh && glsl3D.raycaster && glsl3D.camera) {
     glsl3D.raycaster.setFromCamera(glsl3D.mouse, glsl3D.camera);
     const intersects = glsl3D.raycaster.intersectObject(glsl3D.pointsMesh);
-
     const tooltip = document.getElementById("glsl-hover-tooltip");
 
     if (intersects.length > 0) {
@@ -4549,13 +5319,30 @@ function show3DHoverTooltip(node, hitPoint) {
 
   if (node.type === "theme") {
     if (type) type.textContent = "🪐 Thematic Sun (Taxonomy Hub)";
-    if (cluster) cluster.textContent = "Life-Style Domains";
-    if (docs) docs.textContent = `${node.doc_count || node.degree || 0} Categorized Docs`;
+    const grav = node.gravity_score ? `${Number(node.gravity_score).toFixed(1)}x Mass` : "1.0x Mass";
+    const pending = node.pending_todos || 0;
+    const overdue = node.overdue_todos ? ` (⚠️ ${node.overdue_todos} OVERDUE!)` : "";
+    if (cluster) cluster.textContent = `Gravity: ${grav} • Obligations: ${pending} pending${overdue}`;
+    if (docs) docs.textContent = `${node.doc_count || node.degree || 0} Docs (${node.velocity_7d || 0} in 7d)`;
   } else if (node.type === "document") {
-    if (type) type.textContent = "📄 Document Planet";
+    if (node.is_overdue) {
+      if (type) type.textContent = "⚠️ OVERDUE ACTION OBLIGATION";
+    } else if (node.has_pending_todo) {
+      if (type) type.textContent = "⏳ PENDING ACTION OBLIGATION";
+    } else {
+      if (type) type.textContent = "📄 Document Planet";
+    }
     const themeLabel = node.theme_id ? node.theme_id.replace("theme_", "").replace(/_/g, " ") : "Thematic Orbit";
-    if (cluster) cluster.textContent = `Orbiting: ${themeLabel}`;
-    if (docs) docs.textContent = "Document Entity";
+    const dueInfo = node.due_date ? `Due: ${node.due_date}` : (node.reception_date ? `Recv: ${node.reception_date}` : "");
+    const titleInfo = node.action_title ? ` • ${node.action_title.slice(0, 32)}` : "";
+    if (cluster) cluster.textContent = `${dueInfo ? dueInfo + titleInfo : 'Orbiting: ' + themeLabel}`;
+    if (docs) {
+      if (node.action_counterparty) {
+        docs.textContent = `Party: ${node.action_counterparty}${node.action_amount ? ' • ' + node.action_amount : ''}`;
+      } else {
+        docs.textContent = "Document Entity";
+      }
+    }
   } else {
     if (type) type.textContent = node.type;
     if (cluster) cluster.textContent = node.cluster_name || "Cluster " + node.cluster;
@@ -4695,60 +5482,49 @@ function smoothTransitionTo3DNode(targetNode, duration = 900) {
   glsl3D.autoSpin = false;
 
   const startTarget = glsl3D.controls.target.clone();
-  const endTarget = new THREE.Vector3(targetNode.x, targetNode.y, targetNode.z);
   const startCamPos = glsl3D.camera.position.clone();
 
-  // 1. Determine the True Center
-  // In Thematic mode, the absolute center of the solar systems is exactly (0,0,0).
-  // In Spatial mode, we continue to use the dynamic cloud centroid.
-  const universeCenter = (glsl3D.layoutMode === "thematic")
+  // Convert local coordinates to true rotated WORLD coordinates
+  const endTarget = new THREE.Vector3(targetNode.x, targetNode.y, targetNode.z);
+  let universeCenter = (glsl3D.layoutMode === "thematic")
     ? new THREE.Vector3(0, 0, 0)
     : (typeof get3DUniverseCentroid === "function" ? get3DUniverseCentroid() : new THREE.Vector3(0, 0, -100));
 
-  // 2. Determine outward direction vector into the void: D = (Node - Center)
+  if (glsl3D.worldGroup) {
+    glsl3D.worldGroup.updateMatrixWorld();
+    glsl3D.worldGroup.localToWorld(endTarget);
+    glsl3D.worldGroup.localToWorld(universeCenter);
+  }
+
   let dir = new THREE.Vector3().subVectors(endTarget, universeCenter);
 
   if (dir.lengthSq() < 0.0001) {
-    // If node is at the centroid or graph is single-node, default to elevated 3/4 vector
     dir.set(1.0, 0.15, 1.0).normalize();
   } else {
-    // CRITICAL: In thematic mode, flatten the Y-axis calculation.
-    // This prevents the camera from diving under or flying over the node based on its bobbing trajectory.
-    // We want a pure horizontal push outward into the void.
-    if (glsl3D.layoutMode === "thematic") {
-      dir.y = 0;
-    }
+    if (glsl3D.layoutMode === "thematic") dir.y = 0;
     dir.normalize();
   }
 
-  // 3. Distance padding (90–140 units) scaled smoothly based on node degree/neighborhood density
   const deg = Number(targetNode.degree) || 1;
   const distancePadding = Math.min(150, Math.max(90, 100 + Math.log2(deg + 1) * 6));
-
-  // 4. Elevation offset: Ensure a strict 3/4 top-down perspective
-  // 4. Subtle elevation offset (+Y) ensuring elevated 3/4 perspective looking through node toward cloud
   const elevationY = Math.max(35, distancePadding * 0.45);
   const elevation = new THREE.Vector3(0, elevationY, 0);
 
-  // 5. Frustum-optimized camera position:
-  // Positioned on the "outer" side along the ray from centroid through N,
-  // guaranteeing the point cloud remains fully in the background frustum rather than empty void
   const endCamPos = endTarget.clone()
     .add(dir.clone().multiplyScalar(distancePadding))
     .add(elevation);
 
   const startTime = performance.now();
-
   if (glsl3D.cameraTransitionAnim) {
     cancelAnimationFrame(glsl3D.cameraTransitionAnim);
     glsl3D.cameraTransitionAnim = null;
   }
 
+  update3DViewOffset();
+
   function step(now) {
     const elapsed = now - startTime;
     const progress = Math.min(1.0, elapsed / duration);
-
-    // Smooth easeInOutCubic: soft launch and cushioned deceleration without abrupt snapping
     const ease = progress < 0.5
       ? 4 * progress * progress * progress
       : 1 - Math.pow(-2 * progress + 2, 3) / 2;
@@ -4758,10 +5534,8 @@ function smoothTransitionTo3DNode(targetNode, duration = 900) {
     glsl3D.controls.update();
 
     if (progress < 1.0) {
-      // Request the next frame of the animation loop.
       glsl3D.cameraTransitionAnim = requestAnimationFrame(step);
     } else {
-      // Ensure final values are snapped exactly (prevents oscillation or overshooting)
       glsl3D.controls.target.copy(endTarget);
       glsl3D.camera.position.copy(endCamPos);
       glsl3D.controls.update();
@@ -4769,7 +5543,6 @@ function smoothTransitionTo3DNode(targetNode, duration = 900) {
       glsl3D.autoSpin = prevAutoSpin;
     }
   }
-  // Request the first frame of the animation loop.
   glsl3D.cameraTransitionAnim = requestAnimationFrame(step);
 }
 window.smoothTransitionTo3DNode = smoothTransitionTo3DNode;
@@ -4977,6 +5750,124 @@ function applyThematicMindmapPhysics(nodes, edges) {
 window.applyThematicMindmapPhysics = applyThematicMindmapPhysics;
 
 /**
+ * Projects documents and entities into a 3D Chronological Urgency Tunnel (Timeline Mode).
+ * Z-Axis: Due Date / Reception Date mapping (Overdue in front near camera, future down the tunnel, archive in deep back).
+ * X/Y-Plane: Radial spoke channels grouped by theme / cluster.
+ */
+function applyTemporalTimelinePhysics(nodes, edges, actionItemsMap) {
+  if (!nodes || nodes.length === 0) return;
+
+  const today = new Date();
+  const todayMs = today.getTime();
+  const DAY_MS = 1000 * 60 * 60 * 24;
+
+  // 1. Identify Themes and assign distinct radial angles
+  const themeNodes = nodes.filter(n => n.type === "theme");
+  const numThemes = Math.max(themeNodes.length, 1);
+  const themeAngleMap = new Map();
+
+  themeNodes.forEach((th, idx) => {
+    const angle = (idx / numThemes) * Math.PI * 2;
+    themeAngleMap.set(th.id, angle);
+    // Position theme suns along the perimeter of the tunnel mouth
+    const r = 58.0;
+    th.x = Math.cos(angle) * r;
+    th.y = Math.sin(angle) * r;
+    th.z = 25.0; // gateway entrance
+    th.size = Math.max(6.5, Math.min(10.0, 6.5 + Math.sqrt((th.degree || 0) + 1) * 0.3));
+  });
+
+  // Default theme angle fallback if not matched
+  const getThemeAngle = (themeId, fallbackHash) => {
+    if (themeId && themeAngleMap.has(themeId)) {
+      return themeAngleMap.get(themeId);
+    }
+    return ((fallbackHash % 360) / 180.0) * Math.PI;
+  };
+
+  const docNodes = nodes.filter(n => n.type === "document" || n.id.startsWith("doc_"));
+  const entNodes = nodes.filter(n => n.type !== "theme" && n.type !== "document" && !n.id.startsWith("doc_"));
+
+  // Build edge connection lookup
+  const nodeConnections = new Map();
+  edges.forEach(e => {
+    if (!nodeConnections.has(e.source)) nodeConnections.set(e.source, []);
+    if (!nodeConnections.has(e.target)) nodeConnections.set(e.target, []);
+    nodeConnections.get(e.source).push(e);
+    nodeConnections.get(e.target).push(e);
+  });
+
+  // 2. Position Document Nodes along the Z-Tunnel (aligned with Graduated Linear Axis)
+  docNodes.forEach(doc => {
+    const h = hashStr(doc.id);
+    let dateStr = doc.due_date || doc.reception_date || doc.latest_date;
+    const z = computeTimelineZ(dateStr, doc.is_overdue, h);
+
+    if (doc.is_overdue) {
+      doc.size = 5.5 + Math.min(2.5, (doc.degree || 0) * 0.15);
+    } else if (doc.has_pending_todo) {
+      doc.size = 4.2 + Math.min(2.0, (doc.degree || 0) * 0.1);
+    } else if (dateStr) {
+      doc.size = 3.0;
+    } else {
+      doc.size = 2.4;
+    }
+
+    // Determine radial spoke channel (angle) & radius
+    const baseAngle = getThemeAngle(doc.theme_id, h);
+    // Angular dispersion jitter around theme spoke (+/- 18 degrees)
+    const angleJitter = ((h % 36) - 18) * (Math.PI / 180.0);
+    const angle = baseAngle + angleJitter;
+
+    // Radius from Z axis: Overdue/pending items brought tighter or placed in focused band (r in [20, 48])
+    let r = 26.0 + (h % 22);
+    if (doc.is_overdue) {
+      r = 20.0 + (h % 18); // tighter focus for urgent items
+    }
+
+    doc.x = Math.cos(angle) * r;
+    doc.y = Math.sin(angle) * r;
+    doc.z = z;
+  });
+
+  // 3. Position Connected Entities near their linked documents or ambient shell
+  const docPosMap = new Map(docNodes.map(d => [d.id, { x: d.x, y: d.y, z: d.z }]));
+  entNodes.forEach(ent => {
+    const conns = nodeConnections.get(ent.id) || [];
+    const linkedDocs = [];
+    conns.forEach(e => {
+      const neighbor = e.source === ent.id ? e.target : e.source;
+      if (docPosMap.has(neighbor)) {
+        linkedDocs.push(docPosMap.get(neighbor));
+      }
+    });
+
+    const h = hashStr(ent.id);
+    if (linkedDocs.length > 0) {
+      let sumX = 0, sumY = 0, sumZ = 0;
+      linkedDocs.forEach(dp => {
+        sumX += dp.x; sumY += dp.y; sumZ += dp.z;
+      });
+      const cx = sumX / linkedDocs.length;
+      const cy = sumY / linkedDocs.length;
+      const cz = sumZ / linkedDocs.length;
+      ent.x = cx * 1.08 + (h % 10 - 5);
+      ent.y = cy * 1.08 + (h % 10 - 5);
+      ent.z = cz + (h % 12 - 6);
+    } else {
+      // Outer concentric ring
+      const angle = ((h % 360) / 180.0) * Math.PI;
+      const r = 52.0 + (h % 25);
+      ent.x = Math.cos(angle) * r;
+      ent.y = Math.sin(angle) * r;
+      ent.z = -80.0 + (h % 180 - 90);
+    }
+    ent.size = Math.max(1.0, Math.min(3.8, 1.0 + Math.sqrt((ent.degree || 0) + 1) * 0.22));
+  });
+}
+window.applyTemporalTimelinePhysics = applyTemporalTimelinePhysics;
+
+/**
  * Smoothly interpolates node, edge, and label coordinates between layouts using easeInOutCubic.
  */
 function animateLayoutTransition(duration = 1000) {
@@ -5083,7 +5974,33 @@ function update3DAxesLegendForMode(mode) {
   const axesGroupEl = document.querySelector("#axes-legend-overlay .axes-group");
   if (!axesGroupEl) return;
 
-  if (mode === "thematic") {
+  if (mode === "timeline") {
+    if (titleEl) titleEl.textContent = "Temporal Action Timeline (Z-Tunnel)";
+    axesGroupEl.innerHTML = `
+      <div class="axis-item">
+        <span class="axis-badge" style="background: rgba(244, 63, 94, 0.25); color: #f43f5e; border: 1px solid rgba(244, 63, 94, 0.5);">Urgency</span>
+        <div class="axis-info">
+          <span class="axis-name">Z-Tunnel Depth: Overdue &amp; Pending Obligations</span>
+          <span class="axis-pca">Front (Z ≈ +50) → Deep Past/Archive (Z ≈ -350)</span>
+        </div>
+      </div>
+      <div class="axis-item">
+        <span class="axis-badge" style="background: rgba(245, 158, 11, 0.25); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.5);">Channels</span>
+        <div class="axis-info">
+          <span class="axis-name">Radial Thematic Dispersion (Angle θ)</span>
+          <span class="axis-pca">Finance, Legal, Taxes, Operations Spoke Corridors</span>
+        </div>
+      </div>
+      <div class="axis-item">
+        <span class="axis-badge" style="background: rgba(16, 185, 129, 0.25); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.5);">Pulse</span>
+        <div class="axis-info">
+          <span class="axis-name">GLSL Beacon Shimmer</span>
+          <span class="axis-pca">Pulsing Amber/Rose for Overdue Target Items</span>
+        </div>
+      </div>
+    `;
+    if (glsl3D.axesGroup) glsl3D.axesGroup.visible = false;
+  } else if (mode === "thematic") {
     if (titleEl) titleEl.textContent = "Thematic Mindmap Topology";
     axesGroupEl.innerHTML = `
       <div class="axis-item">
@@ -5140,7 +6057,7 @@ function update3DAxesLegendForMode(mode) {
 window.update3DAxesLegendForMode = update3DAxesLegendForMode;
 
 /**
- * Toggles or sets the 3D Universe layout mode ("spatial" vs "thematic").
+ * Toggles or sets the 3D Universe layout mode ("spatial", "thematic", "timeline").
  */
 async function set3DUniverseLayout(mode) {
   if (mode === glsl3D.layoutMode) return;
@@ -5149,22 +6066,17 @@ async function set3DUniverseLayout(mode) {
   // 1. Update Segmented Button UI
   const btnSpatial = document.getElementById("btn-view-spatial");
   const btnThematic = document.getElementById("btn-view-thematic");
-  if (btnSpatial && btnThematic) {
-    if (mode === "thematic") {
-      btnSpatial.classList.remove("active");
-      btnThematic.classList.add("active");
-    } else {
-      btnSpatial.classList.add("active");
-      btnThematic.classList.remove("active");
-    }
-  }
+  const btnTimeline = document.getElementById("btn-view-timeline");
+  if (btnSpatial) btnSpatial.classList.toggle("active", mode === "spatial");
+  if (btnThematic) btnThematic.classList.toggle("active", mode === "thematic");
+  if (btnTimeline) btnTimeline.classList.toggle("active", mode === "timeline");
 
   // 2. Synchronize Docked Legend HUD Visibility & Hero Badges
   const legendOverlay = document.getElementById("axes-legend-overlay");
   const legendBody = document.getElementById("axes-legend-body");
   const legendBtn = document.querySelector(".btn-legend-collapse");
   if (legendOverlay) {
-    if (mode === "thematic") {
+    if (mode === "thematic" || mode === "timeline") {
       // Automatically expand and display cluster hierarchy drawer
       legendOverlay.classList.remove("collapsed");
       if (legendBody) legendBody.style.display = "flex";
@@ -5180,19 +6092,21 @@ async function set3DUniverseLayout(mode) {
   const badgeDimVal = document.getElementById("badge-dim-val");
   const badgeAlgoVal = document.getElementById("badge-algo-val");
   if (badgeDimVal) {
-    badgeDimVal.textContent = mode === "thematic" ? "Thematic Gravitational Space" : "High-Dim → 3D PCA";
+    badgeDimVal.textContent = mode === "timeline"
+      ? "Chronological Urgency Tunnel"
+      : (mode === "thematic" ? "Thematic Gravitational Space" : "High-Dim → 3D PCA");
   }
   if (badgeAlgoVal) {
-    badgeAlgoVal.textContent = mode === "thematic" ? "Thematic Solar Centroids (k=7)" : "Unsupervised K-Means";
+    badgeAlgoVal.textContent = mode === "timeline"
+      ? "Temporal Obligations (Z-Axis)"
+      : (mode === "thematic" ? "Thematic Solar Centroids (k=7)" : "Unsupervised K-Means");
   }
 
   // 3. Update HUD Legend text
   update3DAxesLegendForMode(mode);
 
   // 4. Smooth Camera Refocus
-  if (glsl3D.controls && glsl3D.controls.target) {
-    glsl3D.controls.target.set(0, 0, mode === "thematic" ? 0 : -100);
-  }
+  setCameraPosition();
 
   // 5. Capture current node positions for animated ease transition
   const oldPositions = new Map();
@@ -5201,7 +6115,9 @@ async function set3DUniverseLayout(mode) {
   });
 
   // 6. Diagnostics & Toast Feedback on layout switch
-  const modeTitle = mode === "thematic" ? "Thematic Mindmap" : "Spatial View";
+  const modeTitle = mode === "timeline"
+    ? "Action Timeline"
+    : (mode === "thematic" ? "Thematic Mindmap" : "Spatial View");
   pushDiagnosticLog(
     "info",
     `Switching 3D Universe topology to ${modeTitle}...`,
@@ -5211,13 +6127,12 @@ async function set3DUniverseLayout(mode) {
   );
 
   // Announce the heavy computation instantly
-  showToast(
-    mode === "thematic"
+  const toastMsg = mode === "timeline"
+    ? "⏳ Projecting Action Items along Chronological Z-Tunnel..."
+    : (mode === "thematic"
       ? "⏳ Computing Thematic Topology... applying force-directed physics (this may take a few seconds)."
-      : "⏳ Computing Spatial PCA... recalculating latent variance (this may take a few seconds).",
-    "info",
-    8000
-  );
+      : "⏳ Computing Spatial PCA... recalculating latent variance (this may take a few seconds).");
+  showToast(toastMsg, "info", 8000);
 
   // CRITICAL: Yield to the browser's main thread for 150ms. 
   // This allows the DOM to actually render the toast animation and CSS changes 
@@ -5228,13 +6143,12 @@ async function set3DUniverseLayout(mode) {
   await load3DUniverseData(true, { layout: mode }, oldPositions);
 
   // 8. Post-transition Success Toast
-  showToast(
-    mode === "thematic"
+  const successMsg = mode === "timeline"
+    ? "⏳ Action Timeline successfully generated!"
+    : (mode === "thematic"
       ? "🪐 Thematic Mindmap successfully generated!"
-      : "🌐 Spatial View successfully generated!",
-    "success",
-    3500
-  );
+      : "🌐 Spatial View successfully generated!");
+  showToast(successMsg, "success", 3500);
 
   // 9. Post-transition Diagnostic telemetry
   const themeCluster = glsl3D.clusters ? glsl3D.clusters.find(c => c.id === 6) : null;
@@ -5250,7 +6164,9 @@ async function set3DUniverseLayout(mode) {
 window.set3DUniverseLayout = set3DUniverseLayout;
 
 function toggle3DUniverseLayout() {
-  const nextMode = glsl3D.layoutMode === "thematic" ? "spatial" : "thematic";
+  const modes = ["spatial", "thematic", "timeline"];
+  const currentIdx = modes.indexOf(glsl3D.layoutMode);
+  const nextMode = modes[(currentIdx + 1) % modes.length];
   set3DUniverseLayout(nextMode);
 }
 window.toggle3DUniverseLayout = toggle3DUniverseLayout;
@@ -5948,43 +6864,46 @@ window.toggle3DOrbitalTour = toggle3DOrbitalTour;
 
 /**
  * Orbital Tour camera transition:
- * Positions camera on the outer rim looking through target hub straight into the center of the orbit.
+ * Positions the camera on the outer rim of the current node, looking directly at the node, 
+ * with the center of the universe fading into the distant background.
  */
 function transitionOrbitalTourCamera(targetNode, orbitCenter, duration = 1400) {
   if (!glsl3D.camera || !glsl3D.controls || !targetNode) return;
 
   const startTarget = glsl3D.controls.target.clone();
-  // Camera always points into the center of the orbit!
-  const endTarget = orbitCenter.clone();
   const startCamPos = glsl3D.camera.position.clone();
 
-  const vec = new THREE.Vector3(
-    targetNode.x - orbitCenter.x,
-    targetNode.y - orbitCenter.y,
-    targetNode.z - orbitCenter.z
-  );
-  const dist = vec.length();
-  let dir = vec.clone();
-  if (dist < 1.0) {
-    dir.set(1.0, 0.0, 1.0).normalize();
-  } else {
-    dir.normalize();
+  // Convert local coordinates to true rotated WORLD coordinates
+  const endTarget = new THREE.Vector3(targetNode.x, targetNode.y, targetNode.z);
+  const trueOrbitCenter = orbitCenter.clone();
+
+  if (glsl3D.worldGroup) {
+    glsl3D.worldGroup.updateMatrixWorld();
+    glsl3D.worldGroup.localToWorld(endTarget);
+    glsl3D.worldGroup.localToWorld(trueOrbitCenter);
   }
 
-  // Camera placed on outer rim looking through the hub towards the center
-  const camDist = Math.max(dist * 1.35, dist + 60);
-  const elevationY = 40;
-  const endCamPos = new THREE.Vector3(
-    orbitCenter.x + dir.x * camDist,
-    orbitCenter.y + dir.y * camDist + elevationY,
-    orbitCenter.z + dir.z * camDist
-  );
+  const outwardVec = new THREE.Vector3().subVectors(endTarget, trueOrbitCenter);
+  if (outwardVec.lengthSq() < 0.0001) outwardVec.set(1.0, 0.0, 1.0);
+
+  outwardVec.y = 0;
+  outwardVec.normalize();
+
+  const deg = Number(targetNode.degree) || 1;
+  const distancePadding = Math.min(130, Math.max(80, 90 + Math.log2(deg + 1) * 5));
+  const elevationY = Math.max(30, distancePadding * 0.35);
+
+  const endCamPos = endTarget.clone()
+    .add(outwardVec.multiplyScalar(distancePadding))
+    .add(new THREE.Vector3(0, elevationY, 0));
 
   const startTime = performance.now();
   if (glsl3D.cameraTransitionAnim) {
     cancelAnimationFrame(glsl3D.cameraTransitionAnim);
     glsl3D.cameraTransitionAnim = null;
   }
+
+  update3DViewOffset();
 
   function step(now) {
     const elapsed = now - startTime;
@@ -6019,8 +6938,10 @@ function reset3DCamera() {
 
   const btnZenith = document.getElementById("btn-glsl-zenith");
   const btnOrbital = document.getElementById("btn-glsl-orbital");
+  const btn34Top = document.getElementById("btn-34-top");
   if (btnZenith) btnZenith.classList.remove("active");
   if (btnOrbital) btnOrbital.classList.remove("active");
+  if (btn34Top) btn34Top.classList.remove("active");
 
   if (glsl3D.camera && glsl3D.controls) {
     glsl3D.camera.up.set(0, 1, 0);
@@ -6046,6 +6967,90 @@ function reset3DCamera() {
   pushDiagnosticLog("info", "Reset 3D Knowledge Universe camera perspective", "frontend", "GLSL3D");
 }
 window.reset3DCamera = reset3DCamera;
+
+/**
+ * 3/4 Left-Top Perspective Quickview:
+ * Elevates camera to a diagonal high-angle perspective from the upper left,
+ * offering optimal visibility of the lateral timeline axis and relational clusters.
+ */
+function reset34TopCamera(duration = 800) {
+  if (!glsl3D.camera || !glsl3D.controls) return;
+
+  // Stop running orbital tour if active
+  if (glsl3D.orbitalTourActive) {
+    stop3DOrbitalTour(false);
+  }
+
+  const btnZenith = document.getElementById("btn-glsl-zenith");
+  const btnOrbital = document.getElementById("btn-glsl-orbital");
+  const btn34Top = document.getElementById("btn-34-top");
+  if (btnZenith) btnZenith.classList.remove("active");
+  if (btnOrbital) btnOrbital.classList.remove("active");
+  if (btn34Top) btn34Top.classList.add("active");
+
+  let endCamPos, endTarget;
+  if (glsl3D.layoutMode === "timeline") {
+    // 3/4 Left-Top view looking down the chronological urgency tunnel
+    endTarget = new THREE.Vector3(0, 0, -120);
+    endCamPos = new THREE.Vector3(-180, 160, 140);
+  } else if (glsl3D.layoutMode === "thematic") {
+    // 3/4 Left-Top view centered on solar origin
+    endTarget = new THREE.Vector3(0, 0, 0);
+    endCamPos = new THREE.Vector3(-240, 220, 160);
+  } else {
+    // 3/4 Left-Top view for Spatial PCA
+    endTarget = new THREE.Vector3(0, 0, -100);
+    endCamPos = new THREE.Vector3(-240, 220, 160);
+  }
+
+  const startTarget = glsl3D.controls.target.clone();
+  const startCamPos = glsl3D.camera.position.clone();
+  const startUp = glsl3D.camera.up.clone();
+  const endUp = new THREE.Vector3(0, 1, 0);
+
+  const prevAutoSpin = glsl3D.autoSpin;
+  glsl3D.autoSpin = false;
+
+  const startTime = performance.now();
+  if (glsl3D.cameraTransitionAnim) {
+    cancelAnimationFrame(glsl3D.cameraTransitionAnim);
+    glsl3D.cameraTransitionAnim = null;
+  }
+
+  function step(now) {
+    const elapsed = now - startTime;
+    const progress = Math.min(1.0, elapsed / duration);
+    const ease = progress < 0.5
+      ? 4 * progress * progress * progress
+      : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+
+    glsl3D.controls.target.lerpVectors(startTarget, endTarget, ease);
+    glsl3D.camera.position.lerpVectors(startCamPos, endCamPos, ease);
+    glsl3D.camera.up.lerpVectors(startUp, endUp, ease).normalize();
+    glsl3D.controls.update();
+
+    if (progress < 1.0) {
+      glsl3D.cameraTransitionAnim = requestAnimationFrame(step);
+    } else {
+      glsl3D.controls.target.copy(endTarget);
+      glsl3D.camera.position.copy(endCamPos);
+      glsl3D.camera.up.copy(endUp);
+      glsl3D.controls.update();
+      glsl3D.cameraTransitionAnim = null;
+      glsl3D.autoSpin = prevAutoSpin;
+    }
+  }
+
+  glsl3D.cameraTransitionAnim = requestAnimationFrame(step);
+
+  showToast("📐 3/4 Left-Top Perspective: Diagonal elevated viewpoint activated", "info", 2500);
+  pushDiagnosticLog("info", "Activated 3/4 Left-Top Camera Perspective", "frontend", "GLSL3D", {
+    layout: glsl3D.layoutMode,
+    camera_pos: { x: endCamPos.x, y: endCamPos.y, z: endCamPos.z }
+  });
+}
+window.reset34TopCamera = reset34TopCamera;
+window.set3DLeftTopView = reset34TopCamera;
 
 function toggleLegendHUD() {
   const overlay = document.getElementById("axes-legend-overlay");

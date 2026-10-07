@@ -70,6 +70,9 @@ def main():
     # Command: reindex-career
     subparsers.add_parser("reindex-career", help="Re-index and backfill misclassified career cover letters, application letters, and profiles")
 
+    # Command: backfill-obligations
+    subparsers.add_parser("backfill-obligations", help="Backfill reception_date, due_date, and actionable obligations using existing DB records and chunks")
+
     args = parser.parse_args()
 
     if args.command == "reset":
@@ -249,6 +252,10 @@ def main():
     elif args.command == "reindex-career":
         from backend.ledger.reindex_career_documents import reindex_career_documents
         reindex_career_documents()
+
+    elif args.command == "backfill-obligations":
+        from backend.ledger.backfill_obligations import run_obligations_backfill
+        run_obligations_backfill()
 
     else:
         parser.print_help()
