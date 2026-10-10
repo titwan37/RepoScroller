@@ -15,10 +15,11 @@ param (
     [string]$Order = "antichronological"
 )
 
-$devPath = $PSScriptRoot
-if ([string]::IsNullOrWhiteSpace($devPath)) {
-    $devPath = "C:\Dev\RepoScroller"
+$scriptDir = $PSScriptRoot
+if ([string]::IsNullOrWhiteSpace($scriptDir)) {
+    $scriptDir = "C:\Dev\RepoScroller\scripts"
 }
+$devPath = (Get-Item $scriptDir).Parent.FullName
 
 Write-Host "================================================================" -ForegroundColor Cyan
 Write-Host "   RepoScroller Sovereign Studio - Orchestrateur de Services" -ForegroundColor Cyan
@@ -115,26 +116,26 @@ Write-Host ""
 if ($UseWindowsTerminal -and (Get-Command wt.exe -ErrorAction SilentlyContinue)) {
     Write-Host "[Mode Windows Terminal Multi-Onglets]" -ForegroundColor Green
 
-    $wtArgs = @("-w", "0", "new-tab", "--title", "RepoScroller Backend", "-d", "$devPath", "cmd.exe", "/k", "start_backend.bat")
+    $wtArgs = @("-w", "0", "new-tab", "--title", "RepoScroller Backend", "-d", "$devPath", "cmd.exe", "/k", "scripts\start_backend.bat")
 
     if ($StartScanner) {
-        $wtArgs += @(";", "new-tab", "--title", "Parallel Scanner (x$Workers)", "-d", "$devPath", "cmd.exe", "/k", "start_scanner.bat")
+        $wtArgs += @(";", "new-tab", "--title", "Parallel Scanner (x$Workers)", "-d", "$devPath", "cmd.exe", "/k", "scripts\start_scanner.bat")
     }
 
     if ($StartWatcher) {
-        $wtArgs += @(";", "new-tab", "--title", "Watcher Daemon", "-d", "$devPath", "cmd.exe", "/k", "start_watcher.bat")
+        $wtArgs += @(";", "new-tab", "--title", "Watcher Daemon", "-d", "$devPath", "cmd.exe", "/k", "scripts\start_watcher.bat")
     }
 
     if ($StartSidecar) {
-        $wtArgs += @(";", "new-tab", "--title", "KB Sidecar (GraphRAG)", "-d", "$devPath", "cmd.exe", "/k", "start_sidecar.bat")
+        $wtArgs += @(";", "new-tab", "--title", "KB Sidecar (GraphRAG)", "-d", "$devPath", "cmd.exe", "/k", "scripts\start_sidecar.bat")
     }
 
     # Always open Localhost Ollama Live Activity tab
-    $wtArgs += @(";", "new-tab", "--title", "Ollama Localhost Activity", "-d", "$devPath", "cmd.exe", "/k", "start_ollama.bat")
+    $wtArgs += @(";", "new-tab", "--title", "Ollama Localhost Activity", "-d", "$devPath", "cmd.exe", "/k", "scripts\start_ollama.bat")
 
     # Open MemoryBlast CLI tab if requested and available
     if ($StartMemoryBlast -and (Test-Path (Join-Path $devPath "start_memoryblast.bat"))) {
-        $wtArgs += @(";", "new-tab", "--title", "MemoryBlast CLI", "-d", "$devPath", "cmd.exe", "/k", "start_memoryblast.bat")
+        $wtArgs += @(";", "new-tab", "--title", "MemoryBlast CLI", "-d", "$devPath", "cmd.exe", "/k", "scripts\start_memoryblast.bat")
     }
 
     & wt.exe @wtArgs
@@ -144,40 +145,40 @@ else {
 
     # 1. Console Backend FastAPI
     Write-Host "[1/4] Lancement du Backend RepoScroller (FastAPI :$Port)..." -ForegroundColor Cyan
-    Start-Process -FilePath "cmd.exe" -WorkingDirectory $devPath -ArgumentList "/k", "start_backend.bat"
+    Start-Process -FilePath "cmd.exe" -WorkingDirectory $devPath -ArgumentList "/k", "scripts\start_backend.bat"
     Start-Sleep -Seconds 2
 
     # 2. Console Scanner Parallele
     if ($StartScanner) {
         Write-Host "[2/4] Lancement du Scanner Parallele ($Workers threads)..." -ForegroundColor Cyan
-        Start-Process -FilePath "cmd.exe" -WorkingDirectory $devPath -ArgumentList "/k", "start_scanner.bat"
+        Start-Process -FilePath "cmd.exe" -WorkingDirectory $devPath -ArgumentList "/k", "scripts\start_scanner.bat"
         Start-Sleep -Seconds 1
     }
 
     # 3. Console Watcher Daemon
     if ($StartWatcher) {
         Write-Host "[3/4] Lancement du Watcher Daemon continu..." -ForegroundColor Cyan
-        Start-Process -FilePath "cmd.exe" -WorkingDirectory $devPath -ArgumentList "/k", "start_watcher.bat"
+        Start-Process -FilePath "cmd.exe" -WorkingDirectory $devPath -ArgumentList "/k", "scripts\start_watcher.bat"
         Start-Sleep -Seconds 1
     }
 
     # 4. Console Knowledge Base Sidecar (Vectors & Graph)
     if ($StartSidecar) {
         Write-Host "[4/4] Lancement du Knowledge Base Sidecar (Vectors & Graph)..." -ForegroundColor Cyan
-        Start-Process -FilePath "cmd.exe" -WorkingDirectory $devPath -ArgumentList "/k", "start_sidecar.bat"
+        Start-Process -FilePath "cmd.exe" -WorkingDirectory $devPath -ArgumentList "/k", "scripts\start_sidecar.bat"
         Start-Sleep -Seconds 1
     }
 
     # 5. Console Ollama (si necessaire)
     if ($needStartOllama) {
         Write-Host "[+] Lancement du Serveur Ollama..." -ForegroundColor DarkCyan
-        Start-Process -FilePath "cmd.exe" -WorkingDirectory $devPath -ArgumentList "/k", "start_ollama.bat"
+        Start-Process -FilePath "cmd.exe" -WorkingDirectory $devPath -ArgumentList "/k", "scripts\start_ollama.bat"
     }
 
     # 6. Console MemoryBlast CLI (si demande)
     if ($StartMemoryBlast -and (Test-Path (Join-Path $devPath "start_memoryblast.bat"))) {
         Write-Host "[+] Lancement de MemoryBlast CLI..." -ForegroundColor Magenta
-        Start-Process -FilePath "cmd.exe" -WorkingDirectory $devPath -ArgumentList "/k", "start_memoryblast.bat"
+        Start-Process -FilePath "cmd.exe" -WorkingDirectory $devPath -ArgumentList "/k", "scripts\start_memoryblast.bat"
     }
 }
 

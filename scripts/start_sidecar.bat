@@ -11,9 +11,9 @@ echo ================================================================
 
 echo.
 
-cd /d "%~dp0"
+cd /d "%~dp0.."
 echo [%TIME%] Demarrage du worker Knowledge Base Sidecar...
-uv run python -m main sidecar --poll-interval 3.0 %*
+uv run python backend/main.py sidecar --poll-interval 3.0 %*
 
 if %ERRORLEVEL% neq 0 (
     echo.

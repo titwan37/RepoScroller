@@ -15,10 +15,11 @@ param (
     [string]$Order = "antichronological"
 )
 
-$devPath = $PSScriptRoot
-if ([string]::IsNullOrWhiteSpace($devPath)) {
-    $devPath = "C:\Dev\RepoScroller"
+$scriptDir = $PSScriptRoot
+if ([string]::IsNullOrWhiteSpace($scriptDir)) {
+    $scriptDir = "C:\Dev\RepoScroller\scripts"
 }
+$devPath = (Get-Item $scriptDir).Parent.FullName
 
 Write-Host "================================================================" -ForegroundColor Cyan
 Write-Host "   RepoScroller Sovereign Studio - PC1 Host Launcher" -ForegroundColor Cyan
@@ -140,7 +141,7 @@ Write-Host ""
 Write-Host "[3/3] Orchestrating RepoScroller Services..." -ForegroundColor Cyan
 
 # Delegate to start_all.ps1 with parameters
-& (Join-Path $devPath "start_all.ps1") `
+& (Join-Path $scriptDir "start_all.ps1") `
     -UseWindowsTerminal:$UseWindowsTerminal `
     -OpenBrowser:$OpenBrowser `
     -StartScanner:$StartScanner `

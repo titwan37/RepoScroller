@@ -1,4 +1,4 @@
-@echo off
+@echo on
 chcp 65001 >nul
 title RepoScroller - Localhost Ollama Live Activity Console
 

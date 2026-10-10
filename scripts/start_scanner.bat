@@ -10,9 +10,9 @@ echo  Ordre Traversale:    Anti-chronologique (fichiers recents d'abord)
 echo ================================================================
 echo.
 
-cd /d "%~dp0"
+cd /d "%~dp0.."
 echo [%TIME%] Lancement du scan batch parallele...
-uv run python -m main scan --workers 6 --order antichronological
+uv run python backend/main.py scan --workers 6 --order antichronological
 
 echo.
 echo [%TIME%] Scan termine.

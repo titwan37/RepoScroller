@@ -1,4 +1,4 @@
-@echo off
+@echo on
 chcp 65001 >nul
 title RepoScroller - Backend API and Web Dashboard (:8090)
 
@@ -13,8 +13,9 @@ echo ================================================================
 echo.
 
 cd /d "%~dp0"
+cd ..
 echo [%TIME%] Demarrage du serveur FastAPI / Uvicorn sur 127.0.0.1:8090...
-uv run python -m main serve --host 127.0.0.1 --port 8090 --reload
+uv run python backend/main.py serve --host 127.0.0.1 --port 8090 --reload
 
 if %ERRORLEVEL% neq 0 (
     echo.

@@ -6,10 +6,11 @@ param (
     [string]$Order = "antichronological"
 )
 
-$devPath = $PSScriptRoot
-if ([string]::IsNullOrWhiteSpace($devPath)) {
-    $devPath = "C:\Dev\RepoScroller"
+$scriptDir = $PSScriptRoot
+if ([string]::IsNullOrWhiteSpace($scriptDir)) {
+    $scriptDir = "C:\Dev\RepoScroller\scripts"
 }
+$devPath = (Get-Item $scriptDir).Parent.FullName
 
 Set-Location $devPath
 

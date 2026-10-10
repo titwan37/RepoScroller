@@ -10,9 +10,9 @@ echo  Appuyez sur Ctrl+C pour arreter le watcher
 echo ================================================================
 echo.
 
-cd /d "%~dp0"
+cd /d "%~dp0.."
 echo [%TIME%] Demarrage du watcher continu...
-uv run python -m main watch
+uv run python backend/main.py watch
 
 if %ERRORLEVEL% neq 0 (
     echo.
