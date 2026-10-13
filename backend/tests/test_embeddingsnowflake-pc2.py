@@ -3,7 +3,7 @@
 import time
 import httpx
 import pytest
-from reposcroller.config import settings
+from backend.config import settings
 
 
 def test_pc2_lan_connectivity():

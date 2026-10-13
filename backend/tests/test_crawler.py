@@ -1,9 +1,9 @@
 """Unit tests for MultiRootCrawler and DocumentSynchronizer."""
 
 from pathlib import Path
-from reposcroller.core.crawler import MultiRootCrawler
-from reposcroller.core.synchronizer import DocumentSynchronizer
-from reposcroller.ledger.repository import DocumentRepository
+from backend.core.crawler import MultiRootCrawler
+from backend.core.synchronizer import DocumentSynchronizer
+from backend.ledger.repository import DocumentRepository
 
 
 def test_synchronizer_ingestion_and_duplicate(synchronizer: DocumentSynchronizer, sample_files, repo: DocumentRepository):

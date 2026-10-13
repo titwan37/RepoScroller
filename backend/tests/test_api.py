@@ -182,6 +182,15 @@ def test_open_file_endpoint(client: TestClient, monkeypatch):
     assert data["status"] == "success"
     assert data["path"] == unc_path
 
+    # Test open file with file:// scheme and %20 spaces (Google Drive format)
+    encoded_gdrive_url = "file:///H:/My%20Drive/Gestion/test_doc.pdf"
+    monkeypatch.setattr(os.path, "exists", lambda p: True)
+    resp_encoded = client.post("/api/v1/documents/open-file", json={"file_path": encoded_gdrive_url, "reveal": False})
+    assert resp_encoded.status_code == 200
+    assert resp_encoded.json()["status"] == "success"
+    # Ensure the unencoded, sanitized path was passed to startfile
+    assert any("H:\\My Drive\\Gestion\\test_doc.pdf" in p for p in opened_paths)
+
     # Test reveal in explorer
     monkeypatch.setattr(subprocess, "Popen", mock_popen)
     resp_reveal = client.post("/api/v1/documents/open-file", json={"file_path": unc_path, "reveal": True})
@@ -240,4 +249,35 @@ def test_sidecar_entities_endpoint(client: TestClient):
     assert "entities_by_type" in data
 
 
+def test_view_document_inline_sovereign_preview(client: TestClient):
+    from backend.ledger.repository import DocumentRepository
+    repo = DocumentRepository()
+    test_sha = "3333333333333333333333333333333333333333333333333333333333333333"
+    repo.upsert_document(
+        sha256_hash=test_sha,
+        simhash="55555",
+        canonical_filename="2025-05-27_Betreibungsamt.pdf",
+        doc_type="court_order",
+        lifecycle_status="final",
+        completeness_score=1.0,
+        maturity_score=0.95,
+        page_count=1,
+        text_snippet="Zahlungsbefehl und Rechtsöffnung"
+    )
+    repo.record_location(
+        sha256_hash=test_sha,
+        storage_root=r"\\SyNAS\xcloud\docs",
+        relative_path="2025-05-27_Betreibungsamt.pdf",
+        absolute_path=r"\\SyNAS\xcloud\docs\2025-05-27_Betreibungsamt.pdf",
+        file_size=2048,
+        mtime=1000.0,
+        is_primary=True
+    )
 
+    # When file does not exist on server disk and client requests HTML (browser tab)
+    resp = client.get(f"/api/v1/documents/{test_sha}/view", headers={"Accept": "text/html,application/xhtml+xml"})
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+    assert "Sovereign Local Storage" in resp.text
+    assert "2025-05-27_Betreibungsamt.pdf" in resp.text
+    assert "Copy Local Path" in resp.text

@@ -1,7 +1,7 @@
 """Unit tests for the EmbeddingAdapter and cosine similarity."""
 
 import pytest
-from reposcroller.ai.embeddings import EmbeddingAdapter, cosine_similarity
+from backend.ai.embeddings import EmbeddingAdapter, cosine_similarity
 
 
 def test_cosine_similarity():

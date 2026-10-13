@@ -15,6 +15,7 @@ from backend.api.routes.sidecar import router as sidecar_router, rag_router
 from backend.api.routes.authors import router as authors_router
 from backend.api.routes.diagnostics import router as diagnostics_router    
 from backend.api.routes.actions import router as actions_router
+from backend.api.routes.dossier import router as dossier_router
 from backend.api.diagnostics import setup_diagnostic_logging
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent.parent / "frontend"
@@ -57,6 +58,7 @@ def create_app() -> FastAPI:
     app.include_router(authors_router, prefix="/api/v1")
     app.include_router(rag_router, prefix="/api/v1")
     app.include_router(actions_router, prefix="/api/v1")
+    app.include_router(dossier_router, prefix="/api/v1")
 
     @app.get("/")
     @app.get("/3d_knowledgegraph_universe")

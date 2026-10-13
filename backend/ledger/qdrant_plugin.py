@@ -131,6 +131,12 @@ class QdrantVectorStorePlugin:
                 "doc_date": meta.get("doc_date", c.get("doc_date", "")),
                 "maturity_score": meta.get("maturity_score", c.get("maturity_score", 0.0)),
                 "lifecycle_status": meta.get("lifecycle_status", c.get("lifecycle_status", "draft")),
+                "sr_code": c.get("sr_code", meta.get("sr_code", "")),
+                "article_num": c.get("article_num", meta.get("article_num", "")),
+                "binding_key": c.get("binding_key", meta.get("binding_key", "")),
+                "lang": c.get("lang", meta.get("lang", "")),
+                "short_form": c.get("short_form", meta.get("short_form", "")),
+                "pdf_reference_path": c.get("pdf_reference_path", meta.get("pdf_reference_path", "")),
             }
 
             points.append(self._models.PointStruct(

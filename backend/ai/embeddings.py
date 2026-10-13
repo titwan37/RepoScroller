@@ -78,6 +78,18 @@ class EmbeddingAdapter:
         if norm > 0:
             vec = [v / norm for v in vec]
         return vec
+    def _build_embed_payload(self, model: str, input_data: Union[str, List[str]]) -> dict:
+        """Construct Ollama embedding payload, clamping num_ctx for 512-token models to prevent warnings."""
+        payload = {
+            "model": model,
+            "input": input_data,
+            "keep_alive": self.keep_alive
+        }
+        # Avoid Ollama context allocation warning/error for 512-token models (snowflake-arctic-embed v1)
+        if "snowflake-arctic-embed" in model and "embed2" not in model:
+            local_ctx = getattr(settings, "OLLAMA_LOCAL_EMBED_NUM_CTX", 512) or 512
+            payload["options"] = {"num_ctx": local_ctx}
+        return payload
 
     def _try_single_ollama(self, url: str, model: str, text: str, max_retries: int = 3) -> Tuple[Optional[List[float]], Optional[str]]:
         """Attempt single text embedding on a specific Ollama node with transient retry on HTTP 503 (server busy)."""
@@ -87,14 +99,8 @@ class EmbeddingAdapter:
         # 1. Try modern Ollama /api/embed with 503 backoff
         for attempt in range(max_retries + 1):
             try:
-                resp = self._client.post(
-                    f"{url}/api/embed",
-                    json={
-                        "model": model,
-                        "input": text,
-                        "keep_alive": self.keep_alive
-                    }
-                )
+                payload = self._build_embed_payload(model, text)
+                resp = self._client.post(f"{url}/api/embed", json=payload)
                 if resp.status_code == 200:
                     data = resp.json()
                     embeddings = data.get("embeddings", [])
@@ -109,6 +115,9 @@ class EmbeddingAdapter:
                 if resp.status_code == 404:
                     last_err = "404"
                     break
+                if "llama-server binary not found" in resp.text:
+                    last_err = "Ollama runtime error: llama-server.exe is missing from Ollama installation."
+                    return None, last_err
                 last_err = f"HTTP {resp.status_code}: {resp.text[:120]}"
                 return None, last_err
             except httpx.TimeoutException:
@@ -155,13 +164,10 @@ class EmbeddingAdapter:
 
         for attempt in range(max_retries + 1):
             try:
+                payload = self._build_embed_payload(model, texts)
                 resp = self._client.post(
                     f"{url}/api/embed",
-                    json={
-                        "model": model,
-                        "input": texts,
-                        "keep_alive": self.keep_alive
-                    }
+                    json=payload
                 )
                 if resp.status_code == 200:
                     data = resp.json()
@@ -180,6 +186,9 @@ class EmbeddingAdapter:
                         logger.info(f"Ollama node {url} busy (HTTP 503). Retrying batch attempt {attempt + 1}/{max_retries} in {delay:.2f}s...")
                         time.sleep(delay)
                         continue
+
+                if "llama-server binary not found" in resp.text:
+                    return None, 0, "Ollama runtime error: llama-server.exe is missing from Ollama installation."
 
                 return None, 0, f"HTTP {resp.status_code}: {resp.text[:120]}"
             except httpx.TimeoutException:

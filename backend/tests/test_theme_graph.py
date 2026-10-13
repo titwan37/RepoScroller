@@ -39,17 +39,28 @@ def _theme_links(repo, sha):
 
 def test_resolver_walks_to_taxonomy_root():
     r = ThemeResolver()
-    assert r.resolve("lease_contract") == ("legal_contract", "Contracts & Legal Agreements")
-    assert r.resolve("Lease Contract")[0] == "legal_contract"          # normalized
-    assert r.resolve("financial_banking")[0] == "financial_banking"    # root maps to itself
-    assert r.resolve("career_cv")[0] == "career_research"
+    assert r.resolve("lease_contract") == ("theme_real_estate_housing", "Real Estate & Housing")
+    assert r.resolve("Lease Contract")[0] == "theme_real_estate_housing"          # normalized
+    assert r.resolve("financial_banking")[0] == "theme_banking_finance"            # root maps to macro theme
+    assert r.resolve("career_cv")[0] == "theme_career_employment"
     assert r.resolve("technical_manual") == ("unclassified", "Unclassified")
     assert r.resolve("") is None and r.resolve(None) is None and r.resolve("other") is None
 
 
 def test_resolver_survives_cyclic_hierarchy():
     r = ThemeResolver(loader=lambda: {"a": ("b", "A"), "b": ("a", "B")})
-    assert r.resolve("a")[0] in {"a", "b"}
+    # Non-canonical dummy cycle safely resolves to unclassified instead of spawning rogue theme
+    assert r.resolve("a") == ("unclassified", "Unclassified")
+
+
+def test_resolver_guards_against_rogue_themes():
+    # Self-referential loop with domain keyword maps to canonical macro theme
+    r_self = ThemeResolver(loader=lambda: {"household-violence": ("household-violence", "Household Violence")})
+    assert r_self.resolve("household-violence") == ("theme_legal_justice", "Legal, Justice & Judicial Proceedings")
+
+    # Unmapped arbitrary category safely defaults to unclassified
+    r_orphan = ThemeResolver(loader=lambda: {"rogue_node": (None, "Rogue Sun")})
+    assert r_orphan.resolve("rogue_node") == ("unclassified", "Unclassified")
 
 
 def test_extractor_attaches_theme_without_breaking_entities():
@@ -57,12 +68,12 @@ def test_extractor_attaches_theme_without_breaking_entities():
         text=LEASE_TEXT, sha256_hash="sha_lease", filename="lease.pdf", doc_type="lease_contract",
     )
     themes = [n for n in g.nodes if n.node_type == THEME_NODE_TYPE]
-    assert [t.node_id for t in themes] == ["theme_legal_contract"]
-    assert themes[0].properties["taxonomy_root"] == "legal_contract"
+    assert [t.node_id for t in themes] == ["theme_real_estate_housing"]
+    assert themes[0].properties["taxonomy_root"] == "theme_real_estate_housing"
 
-    assert any(l.node_id == "theme_legal_contract" and l.role == THEME_RELATION for l in g.links)
+    assert any(l.node_id == "theme_real_estate_housing" and l.role == THEME_RELATION for l in g.links)
     assert any(
-        e.source_id == "contract_type_lease_contract" and e.target_id == "theme_legal_contract"
+        e.source_id == "contract_type_lease_contract" and e.target_id == "theme_real_estate_housing"
         and e.relation_type == THEME_RELATION for e in g.edges
     )
     # Existing entity extraction is intact
@@ -95,16 +106,16 @@ def test_persist_and_reclassify_keeps_single_theme(tmp_path):
 
     # FK-safe persistence (edge endpoints are both knowledge_nodes)
     store.save_document_graph(ext.extract_knowledge_graph(LEASE_TEXT, sha, "a.pdf", "lease_contract"))
-    assert _theme_links(repo, sha) == ["theme_legal_contract"]
+    assert _theme_links(repo, sha) == ["theme_real_estate_housing"]
 
     # Taxonomy evolution re-enqueues the doc with a new doc_type -> theme moves, no stale link
     store.save_document_graph(ext.extract_knowledge_graph(LEASE_TEXT, sha, "a.pdf", "financial_banking"))
-    assert _theme_links(repo, sha) == ["theme_financial_banking"]
+    assert _theme_links(repo, sha) == ["theme_banking_finance"]
 
     cur = repo.conn.cursor()
     cur.execute(
         "SELECT COUNT(*) FROM knowledge_edges WHERE source_id = ? AND target_id = ? AND relation_type = ?;",
-        ("document_category_financial_banking", "theme_financial_banking", THEME_RELATION),
+        ("document_category_financial_banking", "theme_banking_finance", THEME_RELATION),
     )
     assert cur.fetchone()[0] == 1
 
@@ -121,13 +132,13 @@ def test_backfill_themes_existing_documents(tmp_path):
 
     assert result["documents_examined"] == 4
     assert result["documents_themed"] == 3
-    assert result["theme_distribution"] == {"theme_legal_contract": 2, "theme_career_research": 1}
-    assert _theme_links(repo, "sha_b2") == ["theme_legal_contract"]
+    assert result["theme_distribution"] == {"theme_real_estate_housing": 1, "theme_legal_justice": 1, "theme_career_employment": 1}
+    assert _theme_links(repo, "sha_b2") == ["theme_legal_justice"]
     assert _theme_links(repo, "sha_b4") == []
 
     # Re-running is a no-op (idempotent)
     store.backfill_theme_links()
-    assert _theme_links(repo, "sha_b1") == ["theme_legal_contract"]
+    assert _theme_links(repo, "sha_b1") == ["theme_real_estate_housing"]
 
 
 def test_3d_knowledge_universe_thematic_layout(tmp_path):
@@ -153,10 +164,10 @@ def test_3d_knowledge_universe_thematic_layout(tmp_path):
     assert cluster_6["color"] == "#ec4899"
 
     node_ids = {n["id"] for n in thematic_res["nodes"]}
-    assert "theme_legal_contract" in node_ids
+    assert "theme_real_estate_housing" in node_ids
 
     # Theme node check
-    theme_node = next(n for n in thematic_res["nodes"] if n["id"] == "theme_legal_contract")
+    theme_node = next(n for n in thematic_res["nodes"] if n["id"] == "theme_real_estate_housing")
     assert theme_node["cluster"] == 6
     assert theme_node["is_hub"] is True
     assert theme_node["type"] == "theme"
@@ -166,13 +177,13 @@ def test_3d_knowledge_universe_thematic_layout(tmp_path):
     doc_nodes = [n for n in thematic_res["nodes"] if n["type"] == "document"]
     assert len(doc_nodes) >= 1
     doc_node = doc_nodes[0]
-    assert doc_node["theme_id"] == "theme_legal_contract"
+    assert doc_node["theme_id"] == "theme_real_estate_housing"
 
     # Edge check: CATEGORIZED_AS edge connects document to theme
     edges = thematic_res["edges"]
     cat_edges = [
         e for e in edges
-        if e["relation"] == THEME_RELATION and e["target"] == "theme_legal_contract"
+        if e["relation"] == THEME_RELATION and e["target"] == "theme_real_estate_housing"
     ]
     assert len(cat_edges) >= 1
 

@@ -19,7 +19,10 @@ def canonicalize_node_id(node_type: str, name: str) -> str:
     """Normalize node ID into a clean canonical slug."""
     clean_name = re.sub(r'[^\w\s-]', '', name.strip().lower())
     clean_name = re.sub(r'[-\s]+', '_', clean_name)
-    return f"{node_type}_{clean_name}"
+    prefix = f"{node_type}_"
+    if clean_name.startswith(prefix):
+        return clean_name
+    return f"{prefix}{clean_name}"
 
 
 # --- Thematic Mindmap: taxonomy root domains as graph hubs -------------------
@@ -29,6 +32,36 @@ TaxonomyHierarchy = Dict[str, Tuple[Optional[str], str]]
 
 UNCLASSIFIED_THEME_ID = "unclassified"
 NON_THEMATIC_DOC_TYPES = {"", "none", "null", "other", "unknown", "unclassified"}
+
+# Canonical 11 Level-0 Macro Themes (The only allowed Thematic Sun Hubs)
+CANONICAL_MACRO_THEMES: Dict[str, str] = {
+    "theme_real_estate_housing": "Real Estate & Housing",
+    "theme_banking_finance": "Banking & Financial Wealth",
+    "theme_taxation_accounting": "Taxation, Invoices & Accounting",
+    "theme_legal_justice": "Legal, Justice & Judicial Proceedings",
+    "theme_career_employment": "Career, Employment & Job Search",
+    "theme_education_training": "Education, Training & Qualifications",
+    "theme_insurance_social_security": "Insurance & Social Security",
+    "theme_public_administration": "Public Administration & Civic Notices",
+    "theme_family_civil_status": "Family, Civil Status & Household",
+    "theme_technical_architecture": "Technical Architecture & Engineering Systems",
+    "theme_corporate_business": "Corporate Governance & Business Ventures",
+}
+
+# Domain keyword heuristics for unmapped, self-looped, or orphan categories
+CATEGORY_DOMAIN_FALLBACKS: List[Tuple[re.Pattern, str]] = [
+    (re.compile(r"violence|police|polizei|straf|delikt|incident|crime|investigation|einvernahme|sachbesch|klage|urteil|gericht|anwalt|tribunal|proced", re.I), "theme_legal_justice"),
+    (re.compile(r"famil|zivilstand|marriage|mariage|scheidung|divorce|ehe|kind|child|custody|haushalt|household|menage", re.I), "theme_family_civil_status"),
+    (re.compile(r"miet|wohn|immo|real.?estate|housing|bail|loyer|locat|liegenschaft", re.I), "theme_real_estate_housing"),
+    (re.compile(r"steuer|tax|fisc|impot|rechnung|invoice|factur|beleg|quittung|accounting|buchhalt", re.I), "theme_taxation_accounting"),
+    (re.compile(r"bank|konto|depot|hypo|credit|debit|finance|patrimoine|saldo|zkb|postfinance", re.I), "theme_banking_finance"),
+    (re.compile(r"job|career|cv|lebenslauf|bewerbung|emploi|candidature|stellen|work|arbeit|rav", re.I), "theme_career_employment"),
+    (re.compile(r"ausbildung|diplom|degree|certif|training|bildung|lehrgang|school|universit|cours", re.I), "theme_education_training"),
+    (re.compile(r"versicher|assuran|krankenkasse|suva|ahv|avs|social.?security|prevoyance", re.I), "theme_insurance_social_security"),
+    (re.compile(r"verwalt|behorde|administr|gemeinde|einwohner|strassenverkehr|canton|official", re.I), "theme_public_administration"),
+    (re.compile(r"architect|system|softw|enginer|specif|code|api|cloud|data.?eng|develop", re.I), "theme_technical_architecture"),
+    (re.compile(r"corporat|statut|handelsregister|business|shareholder|unternehm|assembl", re.I), "theme_corporate_business"),
+]
 
 
 def default_taxonomy_hierarchy() -> TaxonomyHierarchy:
@@ -54,8 +87,8 @@ def make_db_taxonomy_loader(conn: Any, lock: Optional[Any] = None) -> Callable[[
 class ThemeResolver:
     """Resolves a (leaf) taxonomy doc_type to its root life-domain theme.
 
-    The root of the global_taxonomy parent chain is the theme, e.g.
-    lease_contract -> legal_contract -> theme 'theme_legal_contract'.
+    Guards against rogue / hallucinated theme suns: only the 11 canonical macro themes
+    (or unclassified) are ever allowed to become Level-0 theme hubs.
     """
 
     def __init__(self,
@@ -83,22 +116,70 @@ class ThemeResolver:
         return self._hierarchy
 
     def resolve(self, doc_type: Optional[str]) -> Optional[Tuple[str, str]]:
-        """Return (root_category_id, display_name), or None if the doc_type is non-thematic."""
-        key = (doc_type or "").strip().lower().replace(" ", "_")
+        """Return (root_category_id, display_name), or None if the doc_type is non-thematic.
+
+        Enforces that only the 11 canonical macro themes can be returned as root themes.
+        Any unmapped, self-looped, or orphan category defaults to its parent domain
+        via keyword fallback, or to (UNCLASSIFIED_THEME_ID, 'Unclassified').
+        """
+        raw = (doc_type or "").strip()
+        key = raw.lower().replace(" ", "_").replace("-", "_")
         if key in NON_THEMATIC_DOC_TYPES:
             return None
 
-        hierarchy = self._get_hierarchy()
-        if key not in hierarchy:
-            return UNCLASSIFIED_THEME_ID, "Unclassified"
+        # Direct match against canonical macro themes
+        if key in CANONICAL_MACRO_THEMES:
+            return key, CANONICAL_MACRO_THEMES[key]
+        if f"theme_{key}" in CANONICAL_MACRO_THEMES:
+            canon_id = f"theme_{key}"
+            return canon_id, CANONICAL_MACRO_THEMES[canon_id]
 
-        seen = {key}
-        while True:
-            parent_id, name = hierarchy[key]
-            if not parent_id or parent_id not in hierarchy or parent_id in seen:
-                return key, name  # root reached (or broken/cyclic chain: stop safely)
-            seen.add(parent_id)
-            key = parent_id
+        hierarchy = self._get_hierarchy()
+        curr = key
+        chain = [curr]
+        seen = {curr}
+        matched_canonical: Optional[str] = None
+
+        if curr in hierarchy:
+            while True:
+                parent_id, name = hierarchy.get(curr, (None, curr))
+                norm_parent = (parent_id or "").strip().lower().replace(" ", "_").replace("-", "_") if parent_id else None
+
+                # Check if current node is a canonical theme
+                if curr in CANONICAL_MACRO_THEMES:
+                    matched_canonical = curr
+                    break
+                if f"theme_{curr}" in CANONICAL_MACRO_THEMES:
+                    matched_canonical = f"theme_{curr}"
+                    break
+
+                # Check if parent node is a canonical theme
+                if norm_parent:
+                    if norm_parent in CANONICAL_MACRO_THEMES:
+                        matched_canonical = norm_parent
+                        break
+                    if f"theme_{norm_parent}" in CANONICAL_MACRO_THEMES:
+                        matched_canonical = f"theme_{norm_parent}"
+                        break
+
+                # Stop conditions: no parent, orphan parent, self-loop, or cycle
+                if not norm_parent or norm_parent not in hierarchy or norm_parent in seen:
+                    break
+
+                seen.add(norm_parent)
+                chain.append(norm_parent)
+                curr = norm_parent
+
+        if matched_canonical and matched_canonical in CANONICAL_MACRO_THEMES:
+            return matched_canonical, CANONICAL_MACRO_THEMES[matched_canonical]
+
+        # Domain keyword heuristics for unmapped, self-looped, or orphan categories
+        search_haystack = f"{raw} {' '.join(chain)}"
+        for pattern, fallback_theme in CATEGORY_DOMAIN_FALLBACKS:
+            if pattern.search(search_haystack):
+                return fallback_theme, CANONICAL_MACRO_THEMES[fallback_theme]
+
+        return UNCLASSIFIED_THEME_ID, "Unclassified"
 
 
 KNOWN_BANKING_ORGANIZATIONS: Dict[str, Dict[str, Any]] = {
@@ -452,13 +533,148 @@ class KnowledgeGraphExtractor:
             links.append(DocumentEntityLink(sha256_hash=sha256_hash, node_id=node_id, role=role))
 
 
-        # 4. Extract Legal Statutes (e.g. OR 253, Art. 320 OR, ZGB, StGB)
-        statute_matches = re.findall(r'\b(?:Art\.?\s*\d+\w*|\b[A-Z]{2,4}\b\s+Art\.?\s*\d+)', text, re.IGNORECASE)
-        for stat in set(statute_matches[:5]):
-            st_id = canonicalize_node_id("statute", stat)
-            if st_id not in nodes:
-                nodes[st_id] = EntityNode(node_id=st_id, node_type="statute", name=stat.upper())
-            links.append(DocumentEntityLink(sha256_hash=sha256_hash, node_id=st_id, role="governing_law"))
+        # 4. Extract Legal Statutes & Articles (Hierarchical Swiss Law + Generic Fallback)
+        from backend.extraction.fedlex_parser import SWISS_LAW_CATALOG
+
+        # 4a. Check if the document itself is a Fedlex Law file
+        is_statute_doc = (doc_type == "statute_legislation" or "passage: " in text[:60] or "fedlex" in filename.lower())
+        if is_statute_doc:
+            m_sr = re.search(r'SR\s*(\d+(?:\.\d+)?)', f"{filename} {text[:500]}")
+            if m_sr:
+                sr_code = m_sr.group(1)
+                cat = SWISS_LAW_CATALOG.get(sr_code, {})
+                title = cat.get("title_fr") or cat.get("title_de") or f"SR {sr_code}"
+                short = cat.get("short_fr") or cat.get("short_de") or ""
+                macro_id = f"statute_sr_{sr_code.replace('.', '_')}"
+                if macro_id not in nodes:
+                    nodes[macro_id] = EntityNode(
+                        node_id=macro_id,
+                        node_type="statute",
+                        name=f"SR {sr_code} - {title}" + (f" ({short})" if short else ""),
+                        properties={"sr_code": sr_code, "short_form": short, "title": title}
+                    )
+                links.append(DocumentEntityLink(sha256_hash=sha256_hash, node_id=macro_id, role="governing_law", confidence=1.0))
+
+                art_matches = re.finditer(r'passage:[^,]+,\s*(Art\.?\s*(\d+[a-z]?))(?:\s*—\s*([^:]+))?:', text)
+                for am in art_matches:
+                    art_raw = am.group(1).strip()
+                    art_num = am.group(2).strip()
+                    heading = (am.group(3) or "").strip()
+                    art_id = f"statute_sr_{sr_code.replace('.', '_')}_art_{art_num.lower()}"
+                    if art_id not in nodes:
+                        nodes[art_id] = EntityNode(
+                            node_id=art_id,
+                            node_type="statute",
+                            name=f"{art_raw} (SR {sr_code})",
+                            properties={"sr_code": sr_code, "article_num": art_num, "heading": heading}
+                        )
+                        edges.append(EntityEdge(
+                            source_id=art_id,
+                            target_id=macro_id,
+                            relation_type="PART_OF",
+                            weight=1.0,
+                            properties={"context": f"Statute article of SR {sr_code}"}
+                        ))
+                    links.append(DocumentEntityLink(sha256_hash=sha256_hash, node_id=art_id, role="contains_article", confidence=1.0))
+
+        # 4b. Cross-Document Statute Citation Extraction (e.g. contracts citing 'Art. 320 CO' or 'Art. 253 OR')
+        swiss_law_map = getattr(settings, "SWISS_LAW_MAP", {})
+        pattern_art_law = re.compile(
+            r'\b(?:Art\.?|Article)?\s*(\d+[a-z]?)\s*(?:al\.?\s*\d+)?\s*(?:let\.?\s*[a-z])?\s*(CO|OR|CC|ZGB|CP|StGB|CPC|ZPO|LP|SchKG|LCR|SVG|LEI|AIG|LPGA|ATSG|LAVS|AHVG)\b',
+            re.IGNORECASE
+        )
+        pattern_law_art = re.compile(
+            r'\b(CO|OR|CC|ZGB|CP|StGB|CPC|ZPO|LP|SchKG|LCR|SVG|LEI|AIG|LPGA)\s*(?:Art\.?|Article)?\s*(\d+[a-z]?)\b',
+            re.IGNORECASE
+        )
+
+        statutes_linked = set()
+        for m in pattern_art_law.finditer(text):
+            art_num = m.group(1).strip()
+            law_abbrev = m.group(2).strip().upper()
+            sr_code = swiss_law_map.get(law_abbrev)
+            if not sr_code:
+                continue
+
+            macro_id = f"statute_sr_{sr_code.replace('.', '_')}"
+            art_id = f"statute_sr_{sr_code.replace('.', '_')}_art_{art_num.lower()}"
+
+            if macro_id not in nodes:
+                cat = SWISS_LAW_CATALOG.get(sr_code, {})
+                title = cat.get("title_fr") or cat.get("title_de") or f"SR {sr_code}"
+                nodes[macro_id] = EntityNode(
+                    node_id=macro_id,
+                    node_type="statute",
+                    name=f"SR {sr_code} - {title} ({law_abbrev})",
+                    properties={"sr_code": sr_code, "short_form": law_abbrev}
+                )
+
+            if art_id not in nodes:
+                nodes[art_id] = EntityNode(
+                    node_id=art_id,
+                    node_type="statute",
+                    name=f"Art. {art_num} ({law_abbrev} SR {sr_code})",
+                    properties={"sr_code": sr_code, "article_num": art_num, "short_form": law_abbrev}
+                )
+                edges.append(EntityEdge(
+                    source_id=art_id,
+                    target_id=macro_id,
+                    relation_type="PART_OF",
+                    weight=1.0,
+                    properties={"context": f"Citing statutory article of SR {sr_code}"}
+                ))
+
+            if art_id not in statutes_linked:
+                statutes_linked.add(art_id)
+                links.append(DocumentEntityLink(sha256_hash=sha256_hash, node_id=art_id, role="governing_law", confidence=0.95))
+
+        for m in pattern_law_art.finditer(text):
+            law_abbrev = m.group(1).strip().upper()
+            art_num = m.group(2).strip()
+            sr_code = swiss_law_map.get(law_abbrev)
+            if not sr_code:
+                continue
+
+            macro_id = f"statute_sr_{sr_code.replace('.', '_')}"
+            art_id = f"statute_sr_{sr_code.replace('.', '_')}_art_{art_num.lower()}"
+
+            if macro_id not in nodes:
+                cat = SWISS_LAW_CATALOG.get(sr_code, {})
+                title = cat.get("title_fr") or cat.get("title_de") or f"SR {sr_code}"
+                nodes[macro_id] = EntityNode(
+                    node_id=macro_id,
+                    node_type="statute",
+                    name=f"SR {sr_code} - {title} ({law_abbrev})",
+                    properties={"sr_code": sr_code, "short_form": law_abbrev}
+                )
+
+            if art_id not in nodes:
+                nodes[art_id] = EntityNode(
+                    node_id=art_id,
+                    node_type="statute",
+                    name=f"Art. {art_num} ({law_abbrev} SR {sr_code})",
+                    properties={"sr_code": sr_code, "article_num": art_num, "short_form": law_abbrev}
+                )
+                edges.append(EntityEdge(
+                    source_id=art_id,
+                    target_id=macro_id,
+                    relation_type="PART_OF",
+                    weight=1.0,
+                    properties={"context": f"Citing statutory article of SR {sr_code}"}
+                ))
+
+            if art_id not in statutes_linked:
+                statutes_linked.add(art_id)
+                links.append(DocumentEntityLink(sha256_hash=sha256_hash, node_id=art_id, role="governing_law", confidence=0.95))
+
+        # Generic non-Swiss statute fallback (capped at 5)
+        if not statutes_linked and not is_statute_doc:
+            generic_statute_matches = re.findall(r'\b(?:Art\.?\s*\d+\w*|\b[A-Z]{2,4}\b\s+Art\.?\s*\d+)', text, re.IGNORECASE)
+            for stat in set(generic_statute_matches[:5]):
+                st_id = canonicalize_node_id("statute", stat)
+                if st_id not in nodes:
+                    nodes[st_id] = EntityNode(node_id=st_id, node_type="statute", name=stat.upper())
+                links.append(DocumentEntityLink(sha256_hash=sha256_hash, node_id=st_id, role="governing_law"))
 
         # 5. Extract Locations (Comprehensive Swiss cantons/communes + international hubs)
         location_patterns = {

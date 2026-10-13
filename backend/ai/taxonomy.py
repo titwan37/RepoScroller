@@ -3,6 +3,8 @@
 import json
 import logging
 import re
+import sqlite3
+from collections import defaultdict
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 from pydantic import BaseModel, Field
@@ -28,7 +30,7 @@ class TaxonomyCategory(BaseModel):
 DEFAULT_TAXONOMY: List[Dict[str, Any]] = [
     {
         "category_id": "career_research",
-        "parent_id": None,
+        "parent_id": "theme_career_employment",
         "name_en": "Job Search & Career Dossiers",
         "name_fr": "Recherche d'emploi & Dossiers de candidature",
         "name_de": "Stellensuche & Bewerbungsdossiers",
@@ -93,7 +95,7 @@ DEFAULT_TAXONOMY: List[Dict[str, Any]] = [
     },
     {
         "category_id": "legal_contract",
-        "parent_id": None,
+        "parent_id": "theme_legal_justice",
         "name_en": "Contracts & Legal Agreements",
         "name_fr": "Contrats & Conventions juridiques",
         "name_de": "Verträge & Rechtliche Vereinbarungen",
@@ -111,7 +113,7 @@ DEFAULT_TAXONOMY: List[Dict[str, Any]] = [
     },
     {
         "category_id": "lease_contract",
-        "parent_id": "legal_contract",
+        "parent_id": "theme_real_estate_housing",
         "name_en": "Lease & Real Estate Rental",
         "name_fr": "Bail d'habitation & Location immobilière",
         "name_de": "Mietverträge & Immobilienpacht",
@@ -120,7 +122,7 @@ DEFAULT_TAXONOMY: List[Dict[str, Any]] = [
     },
     {
         "category_id": "court_order",
-        "parent_id": None,
+        "parent_id": "theme_legal_justice",
         "name_en": "Court Judgments & Judicial Orders",
         "name_fr": "Décisions de justice & Ordonnances",
         "name_de": "Gerichtsentscheide & Verfügungen",
@@ -129,7 +131,7 @@ DEFAULT_TAXONOMY: List[Dict[str, Any]] = [
     },
     {
         "category_id": "tax_assessment",
-        "parent_id": None,
+        "parent_id": "theme_taxation_accounting",
         "name_en": "Tax Assessments & Rulings",
         "name_fr": "Bordereaux fiscaux & Décisions d'imposition",
         "name_de": "Steuerveranlagungen & Rulings",
@@ -138,7 +140,7 @@ DEFAULT_TAXONOMY: List[Dict[str, Any]] = [
     },
     {
         "category_id": "corporate_governance",
-        "parent_id": None,
+        "parent_id": "theme_corporate_business",
         "name_en": "Corporate Resolutions & Governance",
         "name_fr": "Gouvernance & Procès-verbaux de société",
         "name_de": "Unternehmensführung & Generalversammlungsprotokolle",
@@ -151,7 +153,7 @@ DEFAULT_TAXONOMY: List[Dict[str, Any]] = [
     },
     {
         "category_id": "financial_invoice",
-        "parent_id": None,
+        "parent_id": "theme_taxation_accounting",
         "name_en": "Invoices & Accounting Records",
         "name_fr": "Factures & Pièces comptables",
         "name_de": "Rechnungen & Buchhaltungsbelege",
@@ -159,8 +161,22 @@ DEFAULT_TAXONOMY: List[Dict[str, Any]] = [
         "keywords": ["invoice", "bill", "payment", "facture", "quittance", "honoraire", "rechnung", "beleg", "zahlung"]
     },
     {
+        "category_id": "statute_legislation",
+        "parent_id": "theme_legal_justice",
+        "name_en": "Legislation, Codes & Official Gazettes",
+        "name_fr": "Législation, Codes & Recueils officiels",
+        "name_de": "Gesetze, Erlasse & Amtliche Sammlungen",
+        "description": "Federal and cantonal acts, decrees, official gazettes, systematic compilations (Fedlex, RO, RS, ZGB, OR, CC, CO).",
+        "keywords": [
+            "federal act", "statute", "legislation", "official compilation", "systematic collection of laws",
+            "recueil officiel", "recueil systématique", "loi fédérale", "ordonnance fédérale", "code civil", "code des obligations",
+            "bundesgesetz", "amtliche sammlung", "systematische rechtssammlung", "zivilgesetzbuch", "obligationenrecht", "verordnung",
+            "fedlex", "ro-20", "rs-", "sr "
+        ]
+    },
+    {
         "category_id": "financial_banking",
-        "parent_id": None,
+        "parent_id": "theme_banking_finance",
         "name_en": "Bank Statements & Financial Accounts",
         "name_fr": "Relevés bancaires & Comptes financiers",
         "name_de": "Bankauszüge & Finanzkonten",
@@ -169,12 +185,40 @@ DEFAULT_TAXONOMY: List[Dict[str, Any]] = [
             "bank statement", "account statement", "mortgage statement", "interest certificate",
             "relevé bancaire", "extrait de compte", "attestation d'intérêts", "prêt hypothécaire",
             "kontoauszug", "bankauszug", "zinsausweis", "schuldzinsen", "hypothekarauszug",
-            "zuger kantonalbank", "postfinance", "kantonalbank", "banking", "iban", "saldo", "zkb"
+            "zuger kantonalbank", "postfinance", "kantonalbank", "banking", "iban", "saldo", "zkb", "cre_p_"
+        ]
+    },
+    {
+        "category_id": "insurance_policy",
+        "parent_id": "theme_insurance_social_security",
+        "name_en": "Insurance Policies & Coverage",
+        "name_fr": "Polices d'assurance & Couvertures",
+        "name_de": "Versicherungspolicen & Deckungsnachweise",
+        "description": "Health, household, accident, and liability insurance policies, general conditions (AVB/CGA), and coverage statements.",
+        "keywords": [
+            "insurance policy", "policy schedule", "certificate of insurance", "general conditions of insurance",
+            "police d'assurance", "certificat d'assurance", "conditions générales d'assurance", "assurance maladie", "assurance ménage",
+            "versicherungspolice", "versicherungsschein", "allgemeine versicherungsbedingungen", "deckungsausweis", "krankenkasse",
+            "helsana", "axa", "allianz", "swica", "suva", "groupe mutuel", "zurich versicherung"
+        ]
+    },
+    {
+        "category_id": "administrative_order",
+        "parent_id": "theme_public_administration",
+        "name_en": "Administrative Decisions & Official Notices",
+        "name_fr": "Décisions administratives & Notifications",
+        "name_de": "Verwaltungsentscheide & Behördenverfügungen",
+        "description": "Decisions and notices from executive public bodies (road traffic offices, police, RAV/unemployment, resident registers).",
+        "keywords": [
+            "administrative order", "official ruling", "vehicle registration", "driving license notice", "unemployment ruling",
+            "décision administrative", "immatriculation", "permis de conduire", "décision orp", "contrôle des habitants",
+            "verwaltungsentscheid", "behördliche verfügung", "fahrzeugausweis", "führerausweis", "rav entscheid", "einwohnerkontrolle",
+            "strassenverkehrsamt", "kantonspolizei"
         ]
     },
     {
         "category_id": "technical_architecture",
-        "parent_id": None,
+        "parent_id": "theme_technical_architecture",
         "name_en": "Technical Architecture & Specifications",
         "name_fr": "Architecture technique & Spécifications",
         "name_de": "Technische Architektur & Spezifikationen",
@@ -182,8 +226,21 @@ DEFAULT_TAXONOMY: List[Dict[str, Any]] = [
         "keywords": ["architecture", "spec", "blueprint", "poc", "spécification", "cahier des charges", "pflichtenheft", "entwurf"]
     },
     {
+        "category_id": "technical_reference",
+        "parent_id": "theme_education_training",
+        "name_en": "Technical Reference, Books & Manuals",
+        "name_fr": "Ouvrages techniques & Documentation",
+        "name_de": "Fachliteratur, Handbücher & Lernmaterialien",
+        "description": "Comprehensive engineering books, whitepapers, study modules, language course units, and technical documentation.",
+        "keywords": [
+            "technical manual", "handbook", "whitepaper", "textbook", "reference guide", "study guide", "training module",
+            "manuel technique", "guide de référence", "livre blanc", "support de cours", "module de formation",
+            "handbuch", "fachbuch", "referenzhandbuch", "schulungsunterlagen", "lernmodul", "vocabulary"
+        ]
+    },
+    {
         "category_id": "formal_correspondence",
-        "parent_id": None,
+        "parent_id": "theme_legal_justice",
         "name_en": "Formal Correspondence & Notices",
         "name_fr": "Correspondance formelle & Courriers officiels",
         "name_de": "Formelle Korrespondenz & Behördenbriefe",
@@ -192,12 +249,112 @@ DEFAULT_TAXONOMY: List[Dict[str, Any]] = [
     },
     {
         "category_id": "identity_credentials",
-        "parent_id": None,
+        "parent_id": "theme_education_training",
         "name_en": "Diplomas, Certificates & References",
         "name_fr": "Diplômes, Certificats de travail & ID",
         "name_de": "Zeugnisse, Arbeitsbestätigungen & Nachweise",
         "description": "Official diplomas, employer reference letters (Arbeitszeugnisse), certifications, ID cards.",
         "keywords": ["diploma", "degree certificate", "reference letter", "employment certificate", "certification", "transcript", "diplôme", "certificat de travail", "lettre de recommandation", "attestation", "diplom", "arbeitszeugnis", "arbeitsbestätigung", "abschlusszeugnis"]
+    },
+    # --- Level 0 Foundational Macro Themes (3D Knowledge Universe Solar Hubs) ---
+    {
+        "category_id": "theme_real_estate_housing",
+        "parent_id": None,
+        "name_en": "Real Estate & Housing",
+        "name_fr": "Immobilier & Logement",
+        "name_de": "Immobilien & Wohnen",
+        "description": "Property ownership, residential tenancy contracts, property management, maintenance invoices, and housing operating costs.",
+        "keywords": ["real estate", "housing", "tenancy", "property", "lease", "immobilier", "bail à loyer", "locataire", "loyer", "mietvertrag", "wohnen"]
+    },
+    {
+        "category_id": "theme_banking_finance",
+        "parent_id": None,
+        "name_en": "Banking & Financial Wealth",
+        "name_fr": "Banque & Patrimoine financier",
+        "name_de": "Banken & Finanzvermögen",
+        "description": "Bank account statements, mortgage agreements, wealth assets, credit/debit transaction notices, and banking correspondence.",
+        "keywords": ["banking", "finance", "bank statement", "mortgage", "assets", "banque", "relevé bancaire", "compte", "patrimoine", "postfinance", "bankauszug"]
+    },
+    {
+        "category_id": "theme_taxation_accounting",
+        "parent_id": None,
+        "name_en": "Taxation, Invoices & Accounting",
+        "name_fr": "Fiscalité, Factures & Comptabilité",
+        "name_de": "Steuern, Rechnungen & Buchhaltung",
+        "description": "Cantonal and federal tax assessments, declaration dossiers, vendor invoices, payment vouchers, and accounting receipts.",
+        "keywords": ["taxes", "tax assessment", "invoice", "accounting", "bill", "receipt", "impôts", "factures", "steuern", "rechnung"]
+    },
+    {
+        "category_id": "theme_legal_justice",
+        "parent_id": None,
+        "name_en": "Legal, Justice & Judicial Proceedings",
+        "name_fr": "Affaires juridiques, Justice & Procédures",
+        "name_de": "Recht, Justiz & Gerichtsverfahren",
+        "description": "Judicial rulings, court pleadings, lawyer correspondence, bilateral contracts, NDAs, and debt collection notifications.",
+        "keywords": ["legal", "law", "court order", "attorney", "litigation", "contract", "juridique", "droit", "avocat", "tribunal", "recht", "gericht"]
+    },
+    {
+        "category_id": "theme_career_employment",
+        "parent_id": None,
+        "name_en": "Career, Employment & Job Search",
+        "name_fr": "Carrière, Emploi & Recherche de poste",
+        "name_de": "Karriere, Arbeit & Stellensuche",
+        "description": "Curriculum vitae, tailored application letters, employment agreements, employer references, job descriptions, and unemployment dossiers.",
+        "keywords": ["career", "employment", "resume", "cv", "cover letter", "job vacancy", "portfolio", "emploi", "candidature", "lebenslauf", "bewerbung"]
+    },
+    {
+        "category_id": "theme_education_training",
+        "parent_id": None,
+        "name_en": "Education, Training & Qualifications",
+        "name_fr": "Éducation, Formation & Qualifications",
+        "name_de": "Bildung, Ausbildung & Qualifikationen",
+        "description": "Academic degrees, engineering diplomas, professional certifications, e-learning modules, language course units, and technical reference books.",
+        "keywords": ["education", "degree", "diploma", "certification", "training", "course", "formation", "diplôme", "ausbildung", "weiterbildung"]
+    },
+    {
+        "category_id": "theme_insurance_social_security",
+        "parent_id": None,
+        "name_en": "Insurance & Social Security",
+        "name_fr": "Assurances & Sécurité sociale",
+        "name_de": "Versicherungen & Sozialvorsorge",
+        "description": "Health, household, vehicle, and accident insurance policies, general terms, claims dossiers, and state social security benefits.",
+        "keywords": ["insurance", "policy", "health insurance", "social security", "coverage", "assurance", "caisse maladie", "versicherung", "krankenkasse"]
+    },
+    {
+        "category_id": "theme_public_administration",
+        "parent_id": None,
+        "name_en": "Public Administration & Civic Notices",
+        "name_fr": "Administration publique & Notifications officielles",
+        "name_de": "Öffentliche Verwaltung & Behörden",
+        "description": "Municipal and cantonal notices, road traffic vehicle registrations, driving license files, and resident control registers.",
+        "keywords": ["administration", "government", "official notice", "vehicle registration", "municipality", "administration publique", "verwaltung", "behörden"]
+    },
+    {
+        "category_id": "theme_family_civil_status",
+        "parent_id": None,
+        "name_en": "Family, Civil Status & Household",
+        "name_fr": "Famille, État civil & Vie privée",
+        "name_de": "Familie, Zivilstand & Haushalt",
+        "description": "Civil status certificates, birth and marriage records, family identity documents, and domestic household management.",
+        "keywords": ["family", "civil status", "household", "marriage", "identity", "famille", "état civil", "familie", "zivilstand"]
+    },
+    {
+        "category_id": "theme_technical_architecture",
+        "parent_id": None,
+        "name_en": "Technical Architecture & Engineering Systems",
+        "name_fr": "Architecture technique & Ingénierie logicielle",
+        "name_de": "Technische Architektur & Softwaresysteme",
+        "description": "System architecture blueprints, API schemas, engineering POC documentation, quality compliance standards, and code specifications.",
+        "keywords": ["architecture", "engineering", "specification", "blueprint", "systems", "software", "spécification", "cahier des charges"]
+    },
+    {
+        "category_id": "theme_corporate_business",
+        "parent_id": None,
+        "name_en": "Corporate Governance & Business Ventures",
+        "name_fr": "Gouvernance d'entreprise & Affaires",
+        "name_de": "Unternehmensführung & Geschäftstätigkeit",
+        "description": "Commercial register records, shareholder resolutions, general assembly minutes, corporate statutes, and business agreements.",
+        "keywords": ["corporate", "business", "governance", "shareholder", "commercial register", "minutes", "entreprise", "gesellschaft", "handelsregister"]
     }
 ]
 
@@ -262,29 +419,54 @@ class TaxonomyManager:
         cur.execute("SELECT COUNT(*) FROM global_taxonomy")
         count = cur.fetchone()[0]
         if count == 0:
+            # Pass 1: Seed all categories with parent_id=None to guarantee every category_id exists
             for item in DEFAULT_TAXONOMY:
-                self.upsert_category(TaxonomyCategory(**item))
+                temp_item = dict(item)
+                temp_item["parent_id"] = None
+                self.upsert_category(TaxonomyCategory(**temp_item))
+            # Pass 2: Set actual parent_id relationships
+            for item in DEFAULT_TAXONOMY:
+                if item.get("parent_id"):
+                    self.upsert_category(TaxonomyCategory(**item))
         else:
-            # Ensure the career_research categories (including career_job_description) are seeded even if prior taxonomy existed
-            cur.execute("SELECT category_id FROM global_taxonomy WHERE category_id = 'career_job_description'")
-            if not cur.fetchone():
-                for item in DEFAULT_TAXONOMY:
-                    if item["category_id"].startswith("career_"):
-                        self.upsert_category(TaxonomyCategory(**item))
+            # Ensure all categories from DEFAULT_TAXONOMY (including newly added domains) are seeded
+            for item in DEFAULT_TAXONOMY:
+                cur.execute("SELECT category_id FROM global_taxonomy WHERE category_id = ?", (item["category_id"],))
+                if not cur.fetchone():
+                    temp_item = dict(item)
+                    temp_item["parent_id"] = None
+                    self.upsert_category(TaxonomyCategory(**temp_item))
+            for item in DEFAULT_TAXONOMY:
+                if item.get("parent_id"):
+                    self.upsert_category(TaxonomyCategory(**item))
 
     def sync_from_skill(self, skill_path: Optional[Any] = None) -> Dict[str, Any]:
         """Parse YAML frontmatter and categories from taxonomy skill file and sync to database."""
         from pathlib import Path
         if skill_path is None:
-            p = Path("taxonomy/taxonomy-v1.0.0.skill.md")
-            if not p.exists():
-                p = Path(settings.BASE_DIR if hasattr(settings, "BASE_DIR") else ".") / "taxonomy" / "taxonomy-v1.0.0.skill.md"
+            backend_dir = Path(__file__).resolve().parent.parent
+            project_root = backend_dir.parent
+            candidate_paths = [
+                backend_dir / "taxonomy" / "taxonomy-v1.2.0.skill.md",
+                project_root / "backend" / "taxonomy" / "taxonomy-v1.2.0.skill.md",
+                Path("backend/taxonomy/taxonomy-v1.2.0.skill.md"),
+                Path("taxonomy/taxonomy-v1.2.0.skill.md"),
+                backend_dir / "taxonomy" / "taxonomy-v1.1.0.skill.md",
+                project_root / "backend" / "taxonomy" / "taxonomy-v1.1.0.skill.md",
+                Path("backend/taxonomy/taxonomy-v1.1.0.skill.md"),
+                Path("taxonomy/taxonomy-v1.1.0.skill.md"),
+                backend_dir / "taxonomy" / "taxonomy-v1.0.0.skill.md",
+                project_root / "backend" / "taxonomy" / "taxonomy-v1.0.0.skill.md",
+                Path("backend/taxonomy/taxonomy-v1.0.0.skill.md"),
+                Path("taxonomy/taxonomy-v1.0.0.skill.md"),
+            ]
+            p = next((cp for cp in candidate_paths if cp.exists()), candidate_paths[0])
             skill_path = p
 
         skill_file_str = str(skill_path)
-        version = "v1.0.0"
-        name = "RepoScroller Baseline Multilingual Taxonomy (with Career Research Axis)"
-        desc = "ALCOA+ Multilingual Taxonomy & Classification Rules (EN, FR, DE) for Legal, Financial, Corporate, Technical, and Career Research Document Intelligence."
+        version = "v1.2.0"
+        name = "RepoScroller 3D Cosmos & Dual-Core Institutional Taxonomy"
+        desc = "ALCOA+ Multilingual Taxonomy, 3D Cosmos Macro Themes & Classification Rules (EN, FR, DE) for Dual-Core Institutional & Career Research Document Intelligence."
         status = "active"
 
         if Path(skill_path).exists():
@@ -297,6 +479,9 @@ class TaxonomyManager:
                             if ":" in line:
                                 k, v = line.split(":", 1)
                                 k = k.strip()
+                                # Strip trailing inline comments (e.g. # candidate | active)
+                                if "#" in v:
+                                    v = v.split("#", 1)[0]
                                 v = v.strip().strip('"').strip("'")
                                 if k == "taxonomy_version":
                                     version = v
@@ -508,6 +693,183 @@ class TaxonomyRefiner:
     def __init__(self, taxonomy_manager: Optional[TaxonomyManager] = None):
         self.taxonomy = taxonomy_manager or TaxonomyManager()
 
+    def bootstrap_macro_themes(self):
+        """Extracts topology, synthesizes Macro Themes with keywords/weights, and seeds the DB."""
+        print(f"📂 Extracting topology from {settings.DB_PATH}...")
+        
+        with sqlite3.connect(settings.DB_PATH) as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT fl.relative_path 
+                FROM file_locations fl
+                JOIN document_ledger dl ON fl.sha256_hash = dl.sha256_hash
+            """)
+            rows = cur.fetchall()
+            
+            if not rows:
+                print("⚠️ No data found. Run a crawler scan first.")
+                return
+
+            # Build weighted folder topology
+            topology = defaultdict(int)
+            for (rel_path,) in rows:
+                parts = Path(rel_path).parts
+                if len(parts) > 1:
+                    macro_folder = "/".join(parts[:2])
+                    topology[macro_folder] += 1
+                    
+            sorted_topology = dict(sorted(topology.items(), key=lambda item: item[1], reverse=True))
+            topology_str = "\n".join([f"- {f} ({c} docs)" for f, c in list(sorted_topology.items())[:100]])
+
+        print(f"🧠 Synthesizing Macro Themes using {settings.chat_model}...")
+
+        prompt = f"""You are a Chief Information Architect. 
+Analyze the following physical folder topology and document counts from a digital repository.
+Deduce exactly 10 to 15 "Macro Life Domains" (Themes) that logically group these folders.
+
+Requirements:
+1. Assign a short machine-readable slug starting with 'theme_' (e.g., "theme_real_estate").
+2. Generate a multilingual array of 8-16 relevant search keywords.
+3. Aggregate the document counts of the constituent folders into a total "weight" integer.
+4. Output STRICTLY in JSON format.
+
+Folder Topology:
+{topology_str}
+
+Output JSON format:
+{{
+  "macro_themes": [
+    {{
+      "slug": "theme_name",
+      "name_en": "English Name",
+      "name_fr": "French Name",
+      "name_de": "German Name",
+      "description": "Short description",
+      "keywords": ["keyword1", "keyword2", "keyword3", "keyword4"],
+      "weight": 150
+    }}
+  ]
+}}"""
+
+        result_text = self._call_llm(prompt)
+        
+        try:
+            clean_json = result_text.strip().removeprefix("```json").removesuffix("```").strip()
+            themes = json.loads(clean_json).get("macro_themes", [])
+            
+            inserted_nodes = 0
+            
+            for t in themes:
+                # 1. Upsert into the formal global_taxonomy ledger
+                cat = TaxonomyCategory(
+                    category_id=t["slug"],
+                    parent_id=None,  # These are root macro domains
+                    name_en=t.get("name_en", t["slug"]),
+                    name_fr=t.get("name_fr", ""),
+                    name_de=t.get("name_de", ""),
+                    description=t.get("description", ""),
+                    keywords=t.get("keywords", []),
+                    document_count=t.get("weight", 0)
+                )
+                self.taxonomy.upsert_category(cat)
+
+                # 2. Insert into the 3D Knowledge Graph as solar hubs
+                properties = json.dumps({
+                    "name_en": t.get("name_en"),
+                    "name_fr": t.get("name_fr"),
+                    "name_de": t.get("name_de"),
+                    "description": t.get("description"),
+                    "keywords": t.get("keywords", []),
+                    "aggregated_weight": t.get("weight", 0)
+                }, ensure_ascii=False)
+                
+                with sqlite3.connect(settings.DB_PATH) as conn:
+                    cur = conn.cursor()
+                    cur.execute("""
+                        INSERT OR IGNORE INTO knowledge_nodes (node_id, node_type, name, properties_json)
+                        VALUES (?, 'theme', ?, ?)
+                    """, (t["slug"], t.get("name_en", t["slug"]), properties))
+                    if cur.rowcount > 0:
+                        inserted_nodes += 1
+                        
+            print(f"🎉 Successfully seeded {len(themes)} taxonomy roots and {inserted_nodes} 3D graph hubs!")
+            
+        except Exception as e:
+            print(f"❌ Failed to parse or save themes.\nError: {e}")
+
+
+    def ingest_reviewed_themes(self, json_path: str):
+        """Reads a human-reviewed foundational themes JSON and seeds the taxonomy and Knowledge Graph."""
+        import json
+        import sqlite3
+        from pathlib import Path
+        from backend.config import settings
+        from backend.ai.taxonomy import TaxonomyCategory
+
+        path = Path(json_path)
+        if not path.exists():
+            print(f"❌ File not found: {json_path}")
+            return
+
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        
+        themes = data.get("macro_themes", [])
+        if not themes:
+            print("⚠️ No themes found under the 'macro_themes' key.")
+            return
+
+        inserted_nodes = 0
+        updated_nodes = 0
+        
+        for t in themes:
+            # Safely format the slug (e.g., "Real Estate" -> "theme_real_estate")
+            raw_slug = t.get("slug", "unknown").lower().strip()
+            slug = raw_slug if raw_slug.startswith("theme_") else f"theme_{raw_slug.replace(' & ', '_').replace(' ', '_')}"
+
+            # 1. Upsert into the formal global_taxonomy ledger
+            cat = TaxonomyCategory(
+                category_id=slug,
+                parent_id=None,
+                name_en=t.get("name_en", slug),
+                name_fr=t.get("name_fr", ""),
+                name_de=t.get("name_de", ""),
+                description=t.get("description", ""),
+                keywords=t.get("keywords", []),
+                document_count=t.get("weight", 0)
+            )
+            self.taxonomy.upsert_category(cat)
+
+            # 2. Insert into the 3D Knowledge Graph as solar hubs
+            properties = json.dumps({
+                "name_en": t.get("name_en"),
+                "name_fr": t.get("name_fr"),
+                "name_de": t.get("name_de"),
+                "description": t.get("description"),
+                "keywords": t.get("keywords", []),
+                "aggregated_weight": t.get("weight", 0)
+            }, ensure_ascii=False)
+            
+            with sqlite3.connect(settings.DB_PATH) as conn:
+                cur = conn.cursor()
+                cur.execute("""
+                    INSERT OR IGNORE INTO knowledge_nodes (node_id, node_type, name, properties_json)
+                    VALUES (?, 'theme', ?, ?)
+                """, (slug, t.get("name_en", slug), properties))
+                
+                # If the hub already exists, update it with your manual JSON reviews
+                if cur.rowcount > 0:
+                    inserted_nodes += 1
+                else:
+                    cur.execute("""
+                        UPDATE knowledge_nodes 
+                        SET name = ?, properties_json = ? 
+                        WHERE node_id = ? AND node_type = 'theme'
+                    """, (t.get("name_en", slug), properties, slug))
+                    updated_nodes += 1
+                    
+        print(f"🎉 Successfully ingested {len(themes)} taxonomy roots! ({inserted_nodes} new, {updated_nodes} updated 3D graph hubs)")
+
     def run_refinement(self, sample_size: int = 100) -> Dict[str, Any]:
         """Analyze documents across the ledger, propose and execute topic association/dissociation."""
         repo = DocumentRepository(conn=self.taxonomy.conn)
@@ -678,7 +1040,7 @@ class TaxonomyEvolutionEngine:
     def __init__(self, taxonomy_manager: Optional[TaxonomyManager] = None):
         self.taxonomy = taxonomy_manager or TaxonomyManager()
 
-    def get_evolution_status(self, target_version: str = "v1.0.0") -> Dict[str, Any]:
+    def get_evolution_status(self, target_version: str = "v1.1.0") -> Dict[str, Any]:
         """Return distribution of documents by taxonomy_version and doc_type."""
         cur = self.taxonomy.conn.cursor()
         cur.execute("""
@@ -716,13 +1078,29 @@ class TaxonomyEvolutionEngine:
         Evaluate whether a document qualifies for a new taxonomy category using Section 4 Disambiguation Rules.
         Returns: (target_category, rule_applied, confidence)
         """
+        # Parse file, path and text
         fn = (doc.get("canonical_filename") or "").lower()
         path = (doc.get("relative_path") or "").lower()
+        abs_p = (doc.get("absolute_path") or "").lower()
         snippet = (doc.get("text_snippet") or "").lower()
-        combined = f"{fn} {path} {snippet}"
+        combined = f"{fn} {path} {abs_p} {snippet}"
         old_cat = doc.get("doc_type") or "other"
 
-        # 1. TOP PRIORITY: CV & Lebenslauf (Rule 4.1)
+        # -------------------------------------------------------------
+        # NEAREST-FOLDER ANCESTRY PARSING (Depth 0 = immediate folder)
+        # -------------------------------------------------------------
+        raw_path = (doc.get("absolute_path") or doc.get("relative_path") or "").replace("\\", "/").strip()
+        parts = [p.strip() for p in raw_path.split("/") if p.strip()]
+        dir_ancestors = list(reversed(parts[:-1])) if len(parts) > 1 else []
+        leaf_folder = dir_ancestors[0].lower() if dir_ancestors else ""
+        parent_folder = dir_ancestors[1].lower() if len(dir_ancestors) > 1 else ""
+
+        # 1. TOP PRIORITY: Portfolio & Work Samples (Nearest-Folder Ancestry & Filename)
+        if any(k in fn for k in ["portfolio-booklet", "portfolio_booklet", "portfolio booklet", "arbeitsproben", "case_study", "casestudy"]) or \
+           (leaf_folder and "portfolio" in leaf_folder and not any(k in fn for k in ["jobdescription", "job_description", "_jp.pdf", "cover_letter", "coverletter", "application_letter"])):
+            return "career_portfolio", f"Rule 4.0 (Nearest-Folder Ancestry '{leaf_folder}' + Portfolio)", 0.98
+
+        # 2. CV & Lebenslauf (Rule 4.1 + Nearest-Folder Ancestry)
         fn_split = re.sub(r'([A-Z]+)([A-Z][a-z])', r'\1 \2', doc.get("canonical_filename") or "")
         fn_split = re.sub(r'([0-9]+)([a-zA-Z]+)', r'\1 \2', fn_split)
         fn_split = re.sub(r'([a-z])([A-Z])', r'\1 \2', fn_split)
@@ -734,6 +1112,7 @@ class TaxonomyEvolutionEngine:
             re.search(r'\b(cv|curriculum|lebenslauf|resume)\b', fn_tokens) or
             any(k in fn for k in ["_cv_", "-cv-", "_cv.", "-cv.", "cv_", "cv-", "lebenslauf", "curriculum_vitae", "curriculum-vitae"]) or
             re.search(r'\b(curriculum vitae|lebenslauf)\b', combined) or
+            (leaf_folder and any(cv_k in leaf_folder for cv_k in ["2025-cv", "2026-cv", "cv2015", "cv2014", "2019cv", "2020cv", "2018-cv", "cv-2019", "cv_masters", "cv_tailored"]) and not any(k in fn for k in ["jobdescription", "application_letter", "cover_letter", "stellenbeschreib"])) or
             (("experience" in combined or "berufserfahrung" in combined or "parcours" in combined) and
              ("education" in combined or "ausbildung" in combined or "formation" in combined) and
              any(p in path for p in ["cv", "resume", "lebenslauf"])) or
@@ -741,30 +1120,76 @@ class TaxonomyEvolutionEngine:
         ):
             return "career_cv", "Rule 4.1 (CV / Lebenslauf Top Priority)", 0.98
 
-        # Rule 4.2: Cover Letter vs Formal Correspondence
-        if any(k in fn for k in ["motivation", "candidature", "cover_letter", "coverletter", "bewerbungsschreiben", "motivationsschreiben"]) or \
+        # 3. Rule 4.2: Cover Letter vs Formal Correspondence (Nearest-Folder Ancestry + Form Factor)
+        if any(k in fn for k in ["motivation", "candidature", "cover_letter", "coverletter", "bewerbungsschreiben", "motivationsschreiben", "application_letter"]) or \
            "lettre de motivation" in combined or "bewerbung um die stelle" in combined or \
+           (leaf_folder and any(lm_k in leaf_folder for lm_k in ["2025-lm", "lm", "motivation_letter"]) and not any(k in fn for k in ["jobdescription", "stellenbeschreib", "_jp.pdf"])) or \
            ("candidature" in combined and any(sal in combined for sal in ["madame, monsieur", "sehr geehrte damen und herren", "dear hiring manager"])):
             return "career_cover_letter", "Rule 4.2 (Cover Letter)", 0.95
 
-        # Rule 4.3: Portfolios & Case Studies vs Technical Architecture
-        if any(k in fn for k in ["portfolio", "arbeitsproben", "projektdokumentation", "case_study", "casestudy"]) or \
-           "work samples" in combined or "dossier de réalisations" in combined:
-            return "career_portfolio", "Rule 4.3 (Work Portfolio)", 0.93
-
-        # Rule 4.5: Professional Profile vs CV
-        if any(k in fn for k in ["profil", "profile", "executive_bio", "kurzprofil"]) and \
-           any(k in combined for k in ["linkedin", "professionnel", "kurzprofil", "executive bio", "about me"]) and \
-           not re.search(r'\b(cv|curriculum)\b', fn):
-            return "career_profile", "Rule 4.5 (Professional Profile)", 0.90
-
-        # Rule 4.6: Job Descriptions & Vacancies vs Employment Agreements
-        if any(k in fn for k in ["jobdescription", "job_description", "job-description", "stellenbeschreibung", "stellenausschreibung", "stelleninserat", "fiche de poste", "fiche_de_poste"]) or \
+        # 4. Rule 4.5: Job Descriptions & Vacancies (including _JP.pdf) vs Employment/Lease agreements
+        if fn.endswith("_jp.pdf") or fn.endswith("-jp.pdf") or "_jp." in fn or "-jp." in fn or \
+           any(k in fn for k in ["jobdescription", "job_description", "job-description", "stellenbeschreibung", "stellenausschreibung", "stelleninserat", "fiche de poste", "fiche_de_poste"]) or \
            "job details:----------job_title:" in combined or \
            ("job details" in combined and any(k in combined for k in ["job_title", "company_name", "job_url", "short_description"])) or \
            any(phrase in combined for phrase in ["job description", "stellenbeschreibung", "stellenausschreibung", "stelleninserat", "anforderungsprofil", "deine aufgaben als", "ihre aufgaben als", "wir suchen per sofort"]) or \
-           (any(p in path for p in ["positions", "rav", "stellen", "vacancies", "job-descriptions"]) and any(k in fn for k in ["job", "position", "description", "engineer", "architect", "manager", "developer"])):
-            return "career_job_description", "Rule 4.6 (Job Description)", 0.96
+           (leaf_folder and any(p in leaf_folder for p in ["positions", "stellen", "vacancies", "job-descriptions", "job-profiles"]) and not any(k in fn for k in ["coverletter", "cover_letter", "application_letter", "lebenslauf"])) or \
+           (any(p in path for p in ["positions", "stellen", "vacancies", "job-descriptions"]) and any(k in fn for k in ["job", "position", "description", "engineer", "architect", "manager", "developer"])):
+            return "career_job_description", "Rule 4.5 (Job Description & _JP.pdf)", 0.98
+
+        # 5. Rule 4.6: Swiss Federal & Cantonal Legislation (statute_legislation)
+        if any(k in fn for k in ["fedlex", "fedlex-data-admin", "ro-20", "rs-20", "rs-10", "rs-0."]) or \
+           "fedlex-data-admin-ch" in combined or \
+           (leaf_folder and "fedlex" in leaf_folder) or \
+           any(p in path for p in ["fedlex", "fedlex_library", "rechtssammlung"]) or \
+           any(phrase in combined for phrase in ["systematische rechtssammlung", "recueil officiel", "recueil systématique", "loi fédérale sur", "bundesgesetz über", "zivilgesetzbuch", "obligationenrecht", "sr 1", "sr 2", "sr 3", "sr 4", "sr 5", "sr 6", "sr 7", "sr 8", "sr 9"]):
+            return "statute_legislation", "Rule 4.6 (Legislation & Fedlex)", 0.98
+
+        # 6. Rule 4.7: Banking & Account Statements (financial_banking)
+        if fn.startswith("cre_p_") or "_kontoauszug" in fn or "kontoauszug" in fn or "bankauszug" in fn or "zinsausweis" in fn or "hypothek" in fn or \
+           (leaf_folder and any(b_k in leaf_folder for b_k in ["postfinance", "zugerkantonalbank", "zkb", "releve", "kontoauszug", "bankauszug", "cre_p_"])) or \
+           ("postfinance" in combined and any(k in combined for k in ["cre_p_", "konto", "iban", "gutschrift", "belastung", "relevé", "extrait"])) or \
+           ("zuger kantonalbank" in combined and any(k in combined for k in ["konto", "saldo", "zinsausweis", "auszug"])) or \
+           any(phrase in combined for phrase in ["relevé de compte", "extrait de compte", "attestation d'intérêts", "kontosaldo", "hypothekarauszug"]):
+            return "financial_banking", "Rule 4.7 (Banking & Account Statements)", 0.96
+
+        # 7. Rule 4.8: Insurance Policies & Coverage (insurance_policy)
+        if (leaf_folder and any(ins_k in leaf_folder for ins_k in ["helsana", "assura", "groupemutuel", "swica", "krankenkasse", "cap_rechtsschutz"])) or \
+           (any(ins in combined for ins in ["helsana", "axa", "allianz", "swica", "suva", "groupe mutuel", "zurich versicherung", "sanitas", "css versicherung"]) and \
+            any(term in combined for term in ["police", "versicherungspolice", "assurance combinée", "versicherungsschein", "deckungsnachweis", "police d'assurance", "krankenkasse", "versicherungsvertrag", "police details", "assurance animaux", "assurance ménage"])):
+            return "insurance_policy", "Rule 4.8 (Insurance Policies)", 0.95
+
+        # 8. Rule 4.9: Administrative Decisions & Public Authority Notices (administrative_order)
+        if (leaf_folder and any(adm_k in leaf_folder for adm_k in ["strassenverkehrsamt", "auto_polizei", "einwohnerkontrolle", "ausweisung"])) or \
+           (any(auth in combined for auth in ["strassenverkehrsamt", "kantonspolizei", "einwohnerkontrolle", "sva zürich", "rav", "inno park", "innopark"]) and \
+            any(term in combined for term in ["verfügung", "fahrzeug", "führerausweis", "decision", "décision", "immatriculation", "ordnungswidrigkeit", "umfrage kundenzufriedenheit", "kursbestätigung"])):
+            return "administrative_order", "Rule 4.9 (Administrative Decisions)", 0.94
+
+        # 9. Rule 4.10: Technical Books & Educational Resources (technical_reference)
+        if any(k in fn for k in ["big book", "big-book", "vocabulary", "handbook", "textbook"]) or \
+           fn.startswith("p1 vocabulary") or fn.startswith("p1u") or fn.startswith("n2p2") or \
+           any(term in combined for term in ["the big book of", "vocabulary unit", "sprachkurs", "kursunterlagen"]):
+            return "technical_reference", "Rule 4.10 (Technical Reference & Books)", 0.92
+
+        # 10. Rule 4.5: Professional Profile vs CV
+        if any(k in fn for k in ["profil", "profile", "executive_bio", "kurzprofil"]) and \
+           (leaf_folder and "profile" in leaf_folder or "linkedin" in combined) and \
+           not re.search(r'\b(cv|curriculum)\b', fn):
+            return "career_profile", "Rule 4.5 (Professional Profile)", 0.90
+
+        # 11. Rule 4.11: Strict Guardrail for Tenancy & Lease Contracts (False Positive Removal)
+        if old_cat == "lease_contract":
+            has_lease_terms = any(k in combined for k in [
+                "mietvertrag", "geschäftsmietvertrag", "wohnungsmietvertrag", "mietzins", "mieter", "vermieter",
+                "wohnungsabnahme", "bail à loyer", "bail a loyer", "contrat de bail", "bailleur", "locataire",
+                "loyer mensuel", "état des lieux", "tenancy agreement"
+            ])
+            if not has_lease_terms:
+                # Document was falsely tagged as lease_contract
+                if fn.endswith("_ingestionreport.md") or "ingestion audit" in combined or fn.endswith(".md"):
+                    return "technical_architecture", "Rule 4.11 (Lease Guardrail -> Technical Doc)", 0.90
+                # Fall back to other to remove contamination
+                return "other", "Rule 4.11 (Lease Guardrail - False Positive Removal)", 0.85
 
         return old_cat, "Unchanged Baseline", 0.70
 
@@ -772,7 +1197,7 @@ class TaxonomyEvolutionEngine:
                       dry_run: bool = True,
                       limit: int = 500,
                       source_root_filter: Optional[str] = None,
-                      target_version: str = "v1.0.0") -> Dict[str, Any]:
+                      target_version: str = "v1.1.0") -> Dict[str, Any]:
         """
         Scan candidates and evolve categorization to target_version.
         If dry_run is True, returns proposed changes without committing.
@@ -784,7 +1209,7 @@ class TaxonomyEvolutionEngine:
         query = """
             SELECT dl.sha256_hash, dl.canonical_filename, dl.doc_type, dl.text_snippet,
                    COALESCE(dl.taxonomy_version, 'v0.9.0') as current_tax_ver,
-                   fl.relative_path, fl.storage_root
+                   fl.relative_path, fl.absolute_path, fl.storage_root
             FROM document_ledger dl
             LEFT JOIN file_locations fl ON dl.sha256_hash = fl.sha256_hash
             WHERE (dl.taxonomy_version IS NULL OR dl.taxonomy_version != ?)

@@ -1,6 +1,8 @@
 """Multi-root crawler supporting fast batch scans and watchdog PollingObserver for SMB/GDrive."""
 
 import os
+import time
+import fnmatch
 import logging
 import threading
 import concurrent.futures
@@ -13,6 +15,57 @@ from backend.core.synchronizer import DocumentSynchronizer
 from backend.ledger.repository import DocumentRepository
 
 logger = logging.getLogger("reposcroller.crawler")
+
+
+def _safe_mtime(p: Path) -> float:
+    """Safely get modification time without throwing if file/dir has permission issues."""
+    try:
+        return p.stat().st_mtime
+    except (OSError, PermissionError):
+        return 0.0
+
+
+def is_raw_scan_postponed(file_path: Path) -> bool:
+    """Check whether a freshly created scanner file should be postponed awaiting user rename."""
+    if not getattr(settings, "POSTPONE_RAW_SCANS", True):
+        return False
+    fname = file_path.name.lower()
+    raw_prefixes = getattr(settings, "RAW_SCAN_PREFIXES", ["Xerox Scan_", "Xerox_Scan_", "Scan_"])
+    for prefix in raw_prefixes:
+        if fname.startswith(prefix.lower()):
+            postpone_hours = getattr(settings, "RAW_SCAN_POSTPONE_HOURS", 24.0)
+            if postpone_hours > 0:
+                mtime = _safe_mtime(file_path)
+                if mtime > 0:
+                    age_hours = (time.time() - mtime) / 3600.0
+                    if age_hours < postpone_hours:
+                        return True
+                    # Older than grace period: user kept the raw scanner name permanently
+                    return False
+            # If postpone_hours <= 0, postpone indefinitely until renamed
+            return True
+    return False
+
+
+def is_file_ignored(file_path: Path) -> bool:
+    """Check if file should be ignored based on extension, ignore patterns, or scanner postponement."""
+    name = file_path.name.lower()
+
+    # 1. Check supported extensions
+    if file_path.suffix.lower() not in settings.SUPPORTED_EXTENSIONS:
+        return True
+
+    # 2. Check ignore file patterns (e.g. job_history.txt, ~$*, *.tmp, etc.)
+    ignore_patterns = getattr(settings, "IGNORE_FILE_PATTERNS", ["~$*", "*.tmp", "*.crdownload", "*.part", "job_history.txt"])
+    for pat in ignore_patterns:
+        if fnmatch.fnmatch(name, pat.lower()):
+            return True
+
+    # 3. Postpone raw scanner files awaiting user rename
+    if is_raw_scan_postponed(file_path):
+        return True
+
+    return False
 
 
 class DocumentEventHandler(FileSystemEventHandler):
@@ -31,21 +84,26 @@ class DocumentEventHandler(FileSystemEventHandler):
         if not event.is_directory:
             self._handle_file(Path(event.src_path))
 
+    def on_moved(self, event: FileSystemEvent) -> None:
+        """Handle file rename/move events (e.g. Xerox Scan_... renamed to meaningful name)."""
+        if not event.is_directory:
+            dest = getattr(event, "dest_path", None)
+            if dest:
+                self._handle_file(Path(dest))
+
     def _handle_file(self, file_path: Path) -> None:
-        if file_path.suffix.lower() in settings.SUPPORTED_EXTENSIONS:
-            try:
-                res = self.synchronizer.process_file(file_path, self.storage_root)
-                logger.info(f"Observer processed {file_path.name}: {res.get('status')}")
-            except Exception as e:
-                logger.error(f"Observer failed for {file_path}: {e}")
+        if is_file_ignored(file_path):
+            if is_raw_scan_postponed(file_path):
+                logger.info(f"Observer postponed freshly scanned document awaiting rename: {file_path.name}")
+            else:
+                logger.debug(f"Observer ignored file: {file_path.name}")
+            return
 
-
-def _safe_mtime(p: Path) -> float:
-    """Safely get modification time without throwing if file/dir has permission issues."""
-    try:
-        return p.stat().st_mtime
-    except (OSError, PermissionError):
-        return 0.0
+        try:
+            res = self.synchronizer.process_file(file_path, self.storage_root)
+            logger.info(f"Observer processed {file_path.name}: {res.get('status')}")
+        except Exception as e:
+            logger.error(f"Observer failed for {file_path}: {e}")
 
 
 class MultiRootCrawler:
@@ -216,10 +274,10 @@ class MultiRootCrawler:
             elif order == "alphabetical":
                 dirnames.sort()
 
-            # 3. Filter supported document files
+            # 3. Filter supported document files (excluding ignored patterns and raw scans awaiting rename)
             candidate_files = [
                 fname for fname in filenames
-                if Path(fname).suffix.lower() in settings.SUPPORTED_EXTENSIONS
+                if not is_file_ignored(Path(dirpath) / fname)
             ]
 
             # 4. Sort files inside this folder: newest files scanned first

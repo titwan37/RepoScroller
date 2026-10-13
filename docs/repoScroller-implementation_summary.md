@@ -2640,3 +2640,723 @@ The backfill engine processed all __26,503 documents__ in the ledger in __60.28 
    - Allows triggering backfill passes on-demand from the UI or automation scripts without blocking the HTTP connection.
 3. __CLI Command__:
    - `python -m backend.main backfill-obligations` (with real-time progress logging every 2,500 documents).
+
+---
+
+def test_ctx(target):
+    # 1. Resolve focus node
+    cur.execute("SELECT node_id, node_type, name, properties_json FROM knowledge_nodes WHERE node_id = ?", (target,))
+    row = cur.fetchone()
+    if not row:
+        cur.execute("SELECT node_id, node_type, name, properties_json FROM knowledge_nodes WHERE LOWER(name) = LOWER(?) OR LOWER(node_id) LIKE LOWER(?) LIMIT 1", (target, f"%{target}%"))
+        row = cur.fetchone()
+    if not row:
+        print("Not found:", target)
+        return
+    focus = dict(row)
+    nid = focus["node_id"]
+    nname = focus["name"]
+
+    # 2. Edges
+    cur.execute("""
+        SELECT e.source_id, n1.name AS source_name, e.relation_type, 
+               e.target_id, n2.name AS target_name, e.properties_json
+        FROM knowledge_edges e
+        JOIN knowledge_nodes n1 ON e.source_id = n1.node_id
+        JOIN knowledge_nodes n2 ON e.target_id = n2.node_id
+        WHERE e.source_id = ? OR e.target_id = ?
+        LIMIT 60
+    """, (nid, nid))
+    edges = [dict(r) for r in cur.fetchall()]
+
+    # 3. Action items
+    cur.execute("""
+        SELECT DISTINCT ai.action_type, ai.description, ai.counterparty, ai.amount, 
+               ai.currency, ai.due_date, ai.status, dl.canonical_filename
+        FROM action_items ai
+        JOIN document_ledger dl ON ai.sha256_hash = dl.sha256_hash
+        LEFT JOIN document_entity_links del ON ai.sha256_hash = del.sha256_hash
+        WHERE del.node_id = ? 
+           OR (ai.counterparty IS NOT NULL AND (ai.counterparty LIKE ? OR ai.counterparty LIKE ?))
+           OR (ai.description IS NOT NULL AND (ai.description LIKE ? OR ai.description LIKE ?))
+        ORDER BY (ai.due_date IS NOT NULL AND ai.due_date < date(\x27now\x27) AND ai.status IN (\x27pending\x27, \x27overdue\x27)) DESC, 
+                 ai.due_date ASC
+        LIMIT 25
+    """, (nid, f"%{nid}%", f"%{nname[:20]}%", f"%{nid}%", f"%{nname[:20]}%"))
+    action_items = [dict(r) for r in cur.fetchall()]
+
+    # 4. Docs
+    cur.execute("""
+        SELECT DISTINCT dl.sha256_hash, dl.canonical_filename, dl.doc_date, dl.doc_type, dl.lifecycle_status
+        FROM document_entity_links del
+        JOIN document_ledger dl ON del.sha256_hash = dl.sha256_hash
+        WHERE del.node_id = ?
+        ORDER BY dl.doc_date DESC
+        LIMIT 15
+    """, (nid,))
+    docs = [dict(r) for r in cur.fetchall()]
+
+    print(f"Target: {nname} ({nid}) -> {len(edges)} edges, {len(action_items)} action items, {len(docs)} docs")
+
+Ran command: `python -c "from backend.ledger.repository import DocumentRepository; repo = DocumentRepository(); ctx = repo.get_entity_portrait_context('PostFinance'); print('OK:', ctx['focus_node']['name'], len(ctx['edges']))"`
+Ran command: `python -c "from fastapi.testclient import TestClient; from backend.api.app import create_app; client = TestClient(create_app()); res = client.post('/api/v1/dossier/generate', json={'node_id': 'PostFinance SA', 'stream': False}); print('STATUS:', res.status_code); print('HAS MARKDOWN:', 'markdown' in res.json(), len(res.json().get('markdown', '')))"`
+Ran command: `python -c "from fastapi.testclient import TestClient; from backend.api.app import create_app; client = TestClient(create_app()); res = client.get('/api/v1/dossier/generate?node_id=PostFinance&stream=true'); print('STATUS:', res.status_code); lines = [l for l in res.text.split('\n') if l.startswith('data:')]; print('DATA LINES COUNT:', len(lines)); print('SAMPLE LINE:', lines[0] if lines else 'none')"`
+Ran command: `python -c "from backend.api.app import create_app; app = create_app(); print('FastAPI App successfully initialized with routes:', [r.path for r in app.routes if 'dossier' in r.path])"`
+Ran command: `python -c "from backend.api.app import create_app; app = create_app(); print('Dossier routes:', [getattr(r, 'path', str(r)) for r in app.routes if 'dossier' in getattr(r, 'path', '')])"`
+Ran command: `python -c "from backend.api.app import create_app; app = create_app(); print([(type(r).__name__, getattr(r, 'path', None)) for r in app.routes])"`
+Ran command: `python -c "from backend.api.app import create_app; app = create_app(); print([p for p in app.openapi()['paths'].keys() if 'dossier' in p])"`
+
+The __"Generate Portrait & Risk Dossier"__ feature has been implemented with __Dual-Mode (SSE Streaming + JSON Fallback)__ across the backend and frontend.
+
+---
+
+### Implementation Overview
+
+#### 1. Graph Subgraph & Obligations Aggregation Service
+
+- Added [get_entity_portrait_context](file:///c:/Dev/RepoScroller/backend/ledger/repository.py#L1059-L1164) in [`DocumentRepository`](file:///c:/Dev/RepoScroller/backend/ledger/repository.py):
+  - Resolves focus entity from `knowledge_nodes` by exact `node_id` or case-insensitive name matching.
+  - Pulls 1-hop connected edges from `knowledge_edges` joining `knowledge_nodes`.
+  - For `depth >= 2`, retrieves interconnected 2-hop edges between top network neighbors to map the full ego-network.
+  - Queries active, pending, and overdue obligations from `action_items` and [document_ledger](file:///c:/Dev/RepoScroller/backend/ledger/schema.py#L3) via `document_entity_links` and counterparty/description filters.
+  - Gathers linked canonical documents and chronological evidence.
+
+#### 2. Dual-Mode API Endpoint & LLM Synthesis
+
+- Implemented [dossier.py](file:///c:/Dev/RepoScroller/backend/api/routes/dossier.py) and registered it in [app.py](file:///c:/Dev/RepoScroller/backend/api/app.py#L58-L62):
+  - __`POST /api/v1/dossier/generate`__: Dual-mode endpoint accepting `{ "node_id": "...", "depth": 2, "stream": true|false }`.
+  - __`GET /api/v1/dossier/generate`__ and __`GET /api/v1/dossier/stream`__: Convenience query endpoints with `?node_id=...&stream=true`.
+  - __Live SSE Streaming__: Yields real-time token chunks from the active Ollama node (`PC2` CUDA RTX 3060 or `PC1` CPU fallback) with latency telemetry recorded in [`workload_telemetry`](file:///c:/Dev/RepoScroller/backend/ai/telemetry.py).
+  - __Deterministic Ledger Engine Fallback__: If Ollama is offline or uninitialized, [`_generate_deterministic_dossier`](file:///c:/Dev/RepoScroller/backend/api/routes/dossier.py#L60-L190) dynamically renders valid Markdown, a `graph TD` influence hierarchy, and a `sequenceDiagram` directly from the SQLite graph and ledger records.
+
+#### 3. Frontend UI Integration & Mermaid Rendering
+
+- __Mermaid.js Integration__: Added `mermaid@10.9.1` in [<head> of index.html](file:///c:/Dev/RepoScroller/frontend/index.html#L27-L30) and initialized dark-mode styling with [`initMermaidSupport`](file:///c:/Dev/RepoScroller/frontend/app.js#L7177-L7205).
+- __Trigger Buttons__:
+  - __3D Universe Node Inspector__: Added `#insp-btn-portrait` (__📇 Generate Portrait & Risk Dossier__) to the [glsl-node-inspector drawer](file:///c:/Dev/RepoScroller/frontend/index.html#L1651-L1665).
+  - __Lineage & Document Evolution Explorer__: Added `#btn-lineage-dossier` in the [lineage-toolbar](file:///c:/Dev/RepoScroller/frontend/index.html#L946-L958).
+- __Glass Modal & Stream Viewer__: Added `#portrait-modal` in [index.html](file:///c:/Dev/RepoScroller/frontend/index.html#L2045-L2070) with glassmorphism styles in [style.css](file:///c:/Dev/RepoScroller/frontend/style.css#L6675-L6970). Includes live typing cursor, copy to clipboard (`📋 Copy MD`), and export to file (`💾 Export .md`).
+- __Dynamic Mermaid Parsing__: Updated [renderMarkdown](file:///c:/Dev/RepoScroller/frontend/app.js#L3253-L3275) to wrap ````mermaid```` code blocks into `<div class="mermaid-diagram-wrap">` and run [`mermaid.run()`](file:///c:/Dev/RepoScroller/frontend/app.js#L7207-L7218) upon streaming completion.
+
+---
+
+### Verification & Test Results
+
+Created automated test suite in [test_dossier.py](file:///c:/Dev/RepoScroller/backend/tests/test_dossier.py) covering all operations:
+
+- Context extraction via `get_entity_portrait_context`
+- Deterministic fallback markdown & Mermaid syntax generation
+- Standard JSON generation (`stream=False`)
+- Live Server-Sent Events generation (`stream=True`)
+- Convenience stream alias (`/api/v1/dossier/stream`)
+- 404 handling on nonexistent entities
+
+```
+backend/tests/test_dossier.py ...... [100%]
+6 passed in 27.71s
+```
+
+---
+
+Viewed graph_rag.py:1-181
+Ran command: `pytest backend/tests/test_graph_rag.py`
+Ran command: `.venv\Scripts\pytest backend/tests/test_graph_rag.py`
+Ran command: `.venv\Scripts\pytest backend/tests/`
+Used tool: manage_task
+Viewed task-45.log
+Listed directory tests
+Used tool: manage_task
+Used tool: manage_task
+Ran command: `.venv\Scripts\pytest backend/tests/test_chat.py`
+Used tool: manage_task
+Viewed test_chat.py:1-60
+Used tool: manage_task
+Used tool: manage_task
+Viewed graph_store.py:1-100
+Searched for "expand_entity_neighborhood"
+Searched for "def get_"
+Searched for "    def "
+Viewed graph_store.py:101-200
+Viewed graph_store.py:250-350
+Viewed graph_store.py:1400-1518
+Searched for "get_document_entities"
+Viewed graph_store.py:395-440
+Viewed duplicate_agent.py:120-180
+Viewed duplicate_agent.py:500-600
+Viewed sidecar.py:1-40
+Viewed sidecar.py:90-130
+Viewed sidecar.py:60-90
+Viewed sidecar.py:300-364
+Viewed duplicate_agent.py:350-450
+Viewed config.py:100-164
+Edited state.py
+Viewed test_graph_rag.py:100-200
+Viewed graph_rag.py:1-70
+Created graph_rag.py
+Ran command: `.venv\Scripts\pytest backend/tests/test_graph_rag.py`
+Edited graph_rag.py
+Viewed graph_rag.py:40-70
+Edited graph_rag.py
+Viewed test_graph_rag.py:170-200
+Viewed test_graph_rag.py:1-15
+Edited test_graph_rag.py
+Viewed test_graph_rag.py:190-200
+Edited test_graph_rag.py
+Viewed chat.py:1-60
+Edited chat.py
+Viewed chat.py:55-70
+Edited chat.py
+Viewed main.py:50-70
+Viewed main.py:200-267
+Viewed main.py:55-85
+Edited main.py
+Viewed main.py:230-245
+Edited main.py
+
+I have implemented the complete optimization blueprint for the __Hybrid Multi-Signal GraphRAG Search Engine__ across the backend codebase:
+
+---
+
+### Summary of Completed Implementations
+
+#### 1. Parallel 4-Signal Candidate Generation ([`backend/agents/graph_rag.py`](file:///c:/Dev/RepoScroller/backend/agents/graph_rag.py))
+
+- __Signal 1: Primary Key & Bitwise Exact Lookup ($O(1)$)__:
+  - Detects SHA-256 hashes (target parameter or regex) and exact quoted filenames against the SQLite `document_ledger`.
+  - Computes 64-bit SimHash Hamming distance ($\le 3$ for exact/near-duplicates, $\le 12$ for drafts and revisions) to inject deterministic versions prior to probabilistic searches.
+
+- __Signal 2: Sparse Lexical Keyword Search (SQLite FTS5 / BM25)__:
+  - Full-text search across document filenames, OCR layers, and text chunks (`limit=40`).
+- __Signal 3: Dense Neural Vector Search (`snowflake-arctic-embed2`)__:
+  - Cosine similarity retrieval over 1024-dimensional chunk embeddings prepended with contextual metadata headers (`[Document: Title | Category: ... | Date: ...]`).
+- __Signal 4: Knowledge Graph Neighborhood Expansion__:
+  - Traverses 1-hop and 2-hop connected entity neighborhoods (`PARTY_TO`, `LOCATED_IN`, `GOVERNED_BY`, `SUPERSEDES`, `FULFILLS`) via [`PropertyGraphStore`](file:///c:/Dev/RepoScroller/backend/ledger/graph_store.py).
+
+#### 2. Reciprocal Rank Fusion ($k=60$) & Cross-Encoder Reranking
+
+- __RRF Scoring__:
+  $$\text{RRF Score}(d) = \sum_{m \in \{\text{dense}, \text{sparse}\}} \frac{1}{60 + \text{rank}_m(d)}$$
+  *(with priority anchor injection for Signal 1 exact/near-duplicate matches).*
+
+- __[`CrossEncoderReranker`](file:///c:/Dev/RepoScroller/backend/agents/graph_rag.py#L40-L85)__:
+  - Employs dynamic lazy loading (`importlib`) for `sentence_transformers.CrossEncoder("BAAI/bge-reranker-large")` without failing or raising IDE import errors when the package is absent.
+  - Features a calibrated multi-signal fallback scoring token overlap, document maturity score, and exact match signals to prune candidates down to the __top 5 to 8 most relevant context chunks__.
+
+#### 3. LangGraph Agentic State Machine ([`create_graph_rag_workflow`](file:///c:/Dev/RepoScroller/backend/agents/graph_rag.py#L320-L450))
+
+- __[`GraphRAGState`](file:///c:/Dev/RepoScroller/backend/agents/state.py#L43-L64)__: Defined typed state tracking inputs, standalone queries, intent, retrieval artifacts, grounding flags, and answer citations.
+
+- __Pipeline Execution__:
+  $$\text{[User Query]} \longrightarrow \text{[Decontextualizer]} \longrightarrow \text{[Intent Router]} \longrightarrow \text{[Hybrid Retrieval]} \longrightarrow \text{[Context Evaluator]} \longrightarrow \text{[LLM Synthesis]}$$
+- __Grounding Guardrail__: Evaluates evidence sufficiency before synthesis. Returns transparent refusal without hallucinating if evidence is absent or insufficient.
+
+#### 4. Hardware & Infrastructure Optimization
+
+- __Connection Pooling__: Configured persistent `httpx.Limits(max_keepalive_connections=5, max_connections=15)` to prevent Windows ephemeral TCP port exhaustion (`[WinError 10055]`).
+
+- __Split Workload Routing__: Directs chat and query rewriting to `settings.chat_url` / `settings.chat_model` (PC1 local CPU) while embeddings remain routed to `settings.embed_url` (remote CUDA GPU).
+
+#### 5. Integration into CLI and REST Endpoints
+
+- __REST API__: Added `/chat/rag` endpoint to [`backend/api/routes/chat.py`](file:///c:/Dev/RepoScroller/backend/api/routes/chat.py#L64-L89) alongside existing `/chat/interrogate` and `/sidecar/graph-rag`.
+
+- __CLI Engine__: Added `reposcroller rag "<query>"` command in [`backend/main.py`](file:///c:/Dev/RepoScroller/backend/main.py#L56-L63).
+- __Unit Tests__: Added tests in [`backend/tests/test_graph_rag.py`](file:///c:/Dev/RepoScroller/backend/tests/test_graph_rag.py#L200-L335) validating 4-signal candidate generation, RRF fusion, reranker pruning, and the LangGraph workflow.
+
+---
+
+Viewed repoScroller-GoMobile.md:1-14
+Listed directory frontend
+Listed directory public
+Listed directory src
+Listed directory app
+Viewed index.html:1-150
+Viewed index.html:151-300
+Searched for "dashboard-grid"
+Searched for "side-column"
+Viewed style.css:1280-1350
+Viewed style.css:6990-7062
+Viewed style.css:6950-7000
+Listed directory RepoScroller
+Searched for "frontend"
+Viewed app.py:90-108
+Searched for "axes"
+Searched for "glsl-3d-canvas-container"
+Viewed index.html:1545-1600
+Searched for "ws-pane-graphrag"
+Viewed index.html:1180-1250
+Searched for "graphrag-studio"
+Viewed style.css:3245-3280
+Viewed style.css:3340-3370
+Searched for "studio-content-grid"
+Viewed style.css:3415-3445
+Searched for ".navbar {"
+Viewed style.css:50-130
+Viewed style.css:131-220
+Searched for "workspace-nav-bar"
+Viewed style.css:3150-3230
+Searched for "glsl-universe-layout"
+Viewed style.css:3855-3920
+Viewed style.css:4280-4340
+Searched for "universe-canvas-wrapper"
+Viewed style.css:4195-4230
+Searched for "onWindowResize"
+Viewed app.js:4375-4410
+Searched for "update3DViewOffset"
+Viewed app.js:5450-5485
+Viewed index.html:1080-1175
+Searched for "detail-panel"
+Viewed app.js:1495-1530
+Viewed index.html:1790-1820
+Searched for "switchWorkspace"
+Viewed app.js:1762-1840
+Searched for "function selectDocument"
+Searched for ".dropzone"
+Viewed style.css:400-450
+Searched for "ledger-rows"
+Viewed app.js:1380-1460
+Searched for "pipeline-stages-grid"
+Viewed style.css:5610-5650
+Searched for "@media"
+Searched for "@media"
+Searched for "media ("
+Searched for "@media"
+Viewed style.css:2775-2800
+Viewed style.css:5850-5870
+Viewed style.css:6390-6410
+Viewed index.html:2050-2080
+Created manifest.json
+Created sw.js
+Viewed index.html:5-35
+Edited index.html
+Viewed index.html:1100-1185
+Edited index.html
+Edited index.html
+Viewed app.js:1490-1515
+Viewed app.js:1210-1260
+Viewed app.js:5450-5480
+Viewed app.js:8080-8102
+Viewed app.js:1250-1265
+Edited app.js
+Viewed app.js:1520-1540
+Edited app.js
+Viewed app.js:5475-5510
+Edited app.js
+Viewed app.js:4400-4430
+Edited app.js
+Viewed app.js:8110-8138
+Edited app.js
+Viewed style.css:1290-1325
+Edited style.css
+Viewed style.css:305-330
+Searched for ".tabs-header"
+Viewed style.css:790-825
+Viewed style.css:6965-7058
+Viewed style.css:6960-6985
+Edited style.css
+Ran command: `pytest backend/tests -v`
+Viewed index.html:1-35
+Viewed index.html:1100-1185
+
+### Responsive & Touch-Optimized PWA Refactoring Summary
+
+The __RepoScroller__ frontend has been refactored into a responsive, touch-first Progressive Web App (PWA). The update preserves full desktop functionality while resolving space constraints on tablet and mobile viewports.
+
+---
+
+### Key Architectural Changes
+
+#### 1. Navigation & Headers Overhaul
+
+- __Sticky & Compact Top Navbar (`max-height: 50px`)__: The main `.navbar` is now `position: sticky; top: 0` with a fixed `50px` height on screens `< 1024px`. Secondary badges (`.alcoa-badge`) and the duplicate dropzone (`.dropzone-section`) are hidden on small screens to save vertical real estate.
+
+- __Horizontally Scrollable Workspace Switcher (`max-height: 46px`)__: The `.workspace-nav-bar` sticks immediately below the navbar (`top: 50px`). Tab pills (`.ws-tab-pill`) are hidden on touch screens, and `.workspace-tabs-group` uses touch scrolling (`-webkit-overflow-scrolling: touch`) with hidden scrollbars.
+- __Total Sticky Header Footprint__: Reduced from ~170px+ down to __~96px__ on mobile and tablets.
+
+#### 2. Layout Restructuring: Single-Column Stack & Slide-Out Drawer
+
+- __Single-Column Dashboard__: On screens `< 1024px`, `.dashboard-grid` converts from a 2-column split to a single column (`grid-template-columns: 1fr`). The mouse resizer (`#side-column-resizer`) is hidden.
+
+- __Slide-Out Detail Drawer (`.side-column`)__: On `< 1024px`, `.side-column` transforms into a fixed drawer overlaying from the right (`width: min(88vw, 440px); height: 100dvh; z-index: 2100; transition: right 0.32s cubic-bezier(0.16, 1, 0.3, 1)`).
+- __Overlay Backdrop & Controls__:
+  - Added `#side-drawer-backdrop` for blur-dimmed overlay clicks to dismiss.
+  - Added `#btn-close-side-column` (`✕`) inside `.tabs-header`.
+  - Added `#btn-open-side-drawer` (`📋 Details`) in the ledger toolbar for direct drawer access.
+  - Pressing <kbd>Escape</kbd> or selecting any document row in the table automatically controls drawer visibility.
+
+#### 3. Data Tables & Cards
+
+- __Horizontal Touch Scroll__: `.table-container` provides `-webkit-overflow-scrolling: touch;`.
+
+- __Adaptive Column Hiding (< 768px)__: On mobile, less critical columns (Maturity Bar `col 3`, Copy Count `col 5`, Formal Reception Date `col 7`, and Due Date `col 8`) are hidden via CSS `display: none !important;`. The core columns (Document filename/snippet, Category, Status, Doc Date, and Actions) remain accessible.
+- __Document Snippets__: Clamped to 2 lines (`-webkit-line-clamp: 2`) on small screens to prevent vertical elongation.
+
+#### 4. 3D Canvas & Visualizations Adaptation
+
+- __Dynamic Viewport Height (`100dvh - 96px`)__: `#ws-pane-universe`, `.glsl-universe-layout`, and `#glsl-3d-canvas-container` adapt dynamically to `calc(100dvh - 96px)`.
+
+- __Axes Legend Hidden on Mobile__: `.axes-legend-overlay` and `.universe-kpi-grid` are hidden on screens `< 1024px` to dedicate screen space to WebGL.
+- __Centered Camera Projection__: `update3DViewOffset()` and `onWindowResize3D()` in [app.js](file:///c:/Dev/RepoScroller/frontend/app.js) detect when the legend overlay is hidden or on screens `< 1024px`, centering the 3D scene.
+- __Touch-Action Support__: Added `touch-action: none;` to `#glsl-3d-canvas-container` so Three.js `OrbitControls` gestures (orbit, pinch-to-zoom) operate without page scrolling interference.
+- __GraphRAG Sovereign Studio__: `.studio-content-grid` adapts to 1 column, and `.studio-suggestion-chips` scrolls horizontally.
+
+#### 5. Touch & PWA Optimization
+
+- __Minimum 44×44px Touch Targets__: Interactive buttons (`.btn`, `.hud-glsl-btn`, `.ws-tab-btn`, `.tab-btn`, `.suggestion-chip`), inputs, and dropdowns adhere to a minimum touch target of `44px` height/width.
+
+- __PWA Meta Tags__: Included `viewport-fit=cover`, `theme-color`, `apple-mobile-web-app-capable`, `apple-mobile-web-app-status-bar-style`, `apple-mobile-web-app-title`, and application descriptions.
+- __Web App Manifest__: Created [manifest.json](file:///c:/Dev/RepoScroller/frontend/manifest.json) configured with `standalone` display, theme colors, and icons (`192x192`, `512x512`, `180x180`, `64x64`, `32x32`).
+- __Service Worker__: Created [sw.js](file:///c:/Dev/RepoScroller/frontend/sw.js) for caching shell assets and registered in [app.js](file:///c:/Dev/RepoScroller/frontend/app.js).
+
+---
+
+### Files Modified & Created
+
+- [`frontend/index.html`](file:///c:/Dev/RepoScroller/frontend/index.html): Added PWA metadata, manifest link, safe viewport tags, drawer toggle button, close button, and drawer backdrop overlay.
+- [`frontend/style.css`](file:///c:/Dev/RepoScroller/frontend/style.css): Added comprehensive `@media (max-width: 1024px)`, `@media (max-width: 768px)`, and `@media (max-width: 480px)` responsive stylesheets.
+- [`frontend/app.js`](file:///c:/Dev/RepoScroller/frontend/app.js): Added `openSideDrawer()`, `closeSideDrawer()`, mobile slide-drawer triggers in `selectDocument()`, responsive 3D offset calculations, and Service Worker registration.
+- [`frontend/manifest.json`](file:///c:/Dev/RepoScroller/frontend/manifest.json): PWA manifest for installability.
+- [`frontend/sw.js`](file:///c:/Dev/RepoScroller/frontend/sw.js): Lightweight offline caching Service Worker.
+
+---
+
+Searched for "knowledge_nodes"
+Searched for "knowledge_edges"
+Viewed check_thematic_mindmap.py:1-53
+Ran command: `uv run python backend/tests/check_thematic_mindmap.py`
+Searched for "theme"
+Viewed app.js:5405-5440
+Searched for "node_type = 'theme'"
+Viewed repository.py:1010-1050
+Viewed graph_store.py:1080-1115
+Ran command: `uv run python -c "import sqlite3; from backend.config import settings; conn = sqlite3.connect(settings.DB_PATH); cur = conn.cursor(); cur.execute('SELECT category_id, parent_id, name_en FROM global_taxonomy'); [print(f'{r[0]:<35} | parent: {str(r[1]):<30} | {r[2]}') for r in cur.fetchall()]"`
+Ran command: `uv run python -c "import sqlite3; from backend.config import settings; conn = sqlite3.connect(settings.DB_PATH); cur = conn.cursor();
+cur.execute('SELECT source_id, target_id, relation_type, count(*) FROM knowledge_edges WHERE source_id LIKE \'theme_%\' OR target_id LIKE \'theme_%\' GROUP BY source_id, target_id, relation_type');
+[print(r) for r in cur.fetchall()]
+"`
+Viewed graph_extractor.py:1-30
+Ran command: `uv run python -c "from backend.ai.graph_extractor import canonicalize_node_id; print(canonicalize_node_id('theme', 'theme_banking_finance'))"`
+Ran command: `uv run python -c "import sqlite3; from backend.config import settings; conn = sqlite3.connect(settings.DB_PATH); cur = conn.cursor();
+cur.execute('SELECT node_id, count(*) FROM document_entity_links WHERE role=\'CATEGORIZED_AS\' GROUP BY node_id ORDER BY count(*) DESC');
+[print(r) for r in cur.fetchall()]
+"`
+Edited graph_extractor.py
+Viewed taxonomy.py:30-140
+Viewed taxonomy.py:140-260
+Edited taxonomy.py
+Created remediate_thematic_hubs.py
+Ran command: `uv run python backend/taxonomy/remediate_thematic_hubs.py`
+Ran command: `uv run python backend/tests/check_thematic_mindmap.py`
+Ran command: `uv run pytest backend/tests/test_theme_graph.py`
+Used tool: manage_task
+Viewed test_theme_graph.py:35-70
+Viewed test_theme_graph.py:70-125
+Viewed test_theme_graph.py:1-35
+Viewed taxonomy.py:240-275
+Edited taxonomy.py
+Viewed test_theme_graph.py:40-68
+Ran command: `uv run python -c "from backend.ai.graph_extractor import ThemeResolver; r = ThemeResolver(); print('lease_contract:', r.resolve('lease_contract')); print('financial_banking:', r.resolve('financial_banking')); print('career_cv:', r.resolve('career_cv'))"`
+Viewed test_theme_graph.py:40-165
+Edited test_theme_graph.py
+Ran command: `uv run pytest backend/tests/test_theme_graph.py`
+Used tool: manage_task
+Viewed task-416.log
+Used tool: manage_task
+Edited test_theme_graph.py
+Viewed test_theme_graph.py:158-178
+Edited test_theme_graph.py
+Ran command: `uv run pytest backend/tests/test_theme_graph.py`
+Used tool: manage_task
+Used tool: manage_task
+Used tool: manage_task
+Ran command: `uv run python backend/taxonomy/test_taxonomy.py`
+
+We have completed the full remediation and re-wiring of the thematic mindmap.
+
+---
+
+### What Was Done
+
+#### 1. Purged Hallucinated & Orphaned Nodes
+
+- __Removed:__ `theme_hard_real_time_systems` (degree 1, docs 0) and `theme_software_engineering` (degree 1, docs 0).
+
+- __Cleaned up:__ Deleted their orphaned `document_category_*` nodes, dangling `CATEGORIZED_AS` edges, and legacy entries from `global_taxonomy`.
+- __Re-linked Minor Ad-hoc Categories:__ Re-linked documents from `theme_security` and `theme_repo_scroller_procedural_intelligence` into `theme_technical_architecture`.
+
+#### 2. Re-linked Documents to the 11 Level 0 Macro Solar Hubs
+
+All documents in [`document_entity_links`](file:///c:/Dev/RepoScroller/backend/ledger/db.py) were migrated from redundant category-level theme IDs to their primary __Macro Solar Hubs__:
+
+| Level 0 Macro Solar Hub | Primary Subdomains / Categories Ingested | Linked Documents |
+| :--- | :--- | :--- |
+| __`theme_career_employment`__ | `career_cv`, `career_cover_letter`, `career_job_description`, `career_portfolio`, `career_profile`, `career_research` | __8,060 docs__ |
+| __`theme_legal_justice`__ | `legal_contract`, `employment_contract`, `court_order`, `formal_correspondence`, `statute_legislation` | __4,420 docs__ |
+| __`theme_taxation_accounting`__ | `financial_invoice`, `tax_assessment` | __3,043 docs__ |
+| __`theme_technical_architecture`__ | `technical_architecture`, systems blueprints, specifications | __1,188 docs__ |
+| __`theme_banking_finance`__ | `financial_banking` (*previously disconnected duplicate*) | __1,128 docs__ |
+| __`theme_education_training`__ | `identity_credentials` (diplomas, certifications), `technical_reference` | __519 docs__ |
+| __`theme_corporate_business`__ | `corporate_governance` | __340 docs__ |
+| __`theme_insurance_social_security`__ | `insurance_policy` | __46 docs__ |
+| __`theme_real_estate_housing`__ | `lease_contract` (tenancy / housing) | __23 docs__ |
+| __`theme_public_administration`__ | `administrative_order` | __7 docs__ |
+| __`theme_family_civil_status`__ | Personal, civil status & household documents | Ready for ingestion |
+| __`theme_unclassified`__ | Fallback for unclassified documents | __56 docs__ |
+
+#### 3. Consolidated `DEFAULT_TAXONOMY` & Cleaned Redundancies
+
+- Updated [`DEFAULT_TAXONOMY`](file:///c:/Dev/RepoScroller/backend/ai/taxonomy.py#L30-L280) and [`global_taxonomy`](file:///c:/Dev/RepoScroller/backend/ledger/db.py) to explicitly embed the 11 Macro Themes and link the 21 canonical categories to their respective Level 0 solar hub via `parent_id`.
+
+- Fixed a double-prefix bug in `canonicalize_node_id()` in [`backend/ai/graph_extractor.py`](file:///c:/Dev/RepoScroller/backend/ai/graph_extractor.py#L18-L25).
+- Purged the redundant category-level theme nodes from `knowledge_nodes`.
+
+---
+
+### Verification Results
+
+- __Theme Node Count:__ Exactly __12__ theme nodes in `knowledge_nodes` (the 11 foundational macro hubs + 1 fallback `theme_unclassified`).
+- __Test Suite:__ [`backend/tests/test_theme_graph.py`](file:///c:/Dev/RepoScroller/backend/tests/test_theme_graph.py) and [`backend/taxonomy/test_taxonomy.py`](file:///c:/Dev/RepoScroller/backend/taxonomy/test_taxonomy.py):
+
+  ```text
+  11 passed in 15.76s
+  ```
+
+The 3D Knowledge Universe visualization now renders the 11 gravitational solar hubs populated with their document planetary systems, with no empty duplicates or hallucinated islands.
+
+---
+
+Searched for "@media"
+Viewed style.css:6850-6885
+Viewed style.css:6800-6850
+Ran command: `python -c "
+with open('frontend/style.css', 'r', encoding='utf-8') as f:
+    lines = f.readlines()
+for idx, line in enumerate(lines):
+    if '@media' in line:
+        print(f'Line {idx+1}: {line.strip()}')
+"`
+Viewed style.css:7190-7260
+Viewed style.css:7140-7195
+Searched for "ws-pane-universe"
+Searched for "id="pane-"
+Searched for "glsl-canvas-wrapper"
+Viewed index.html:1470-1560
+Viewed index.html:1430-1470
+Viewed index.html:1400-1430
+Viewed index.html:1560-1620
+Ran command: `python -c "
+with open('frontend/style.css', 'r', encoding='utf-8') as f:
+    lines = f.readlines()
+brace_level = 0
+for idx, line in enumerate(lines):
+    if idx + 1 >= 6820:
+        brace_level += line.count('{') - line.count('}')
+        if '@media' in line:
+            print(f'Line {idx+1}: {line.strip()} (level {brace_level})')
+        if brace_level == 0:
+            print(f'Media query starting at 6820 CLOSED at line {idx+1}')
+            break
+"`
+Used tool: manage_task
+Viewed style.css:7400-7479
+Viewed index.html:1-30
+Viewed index.html:35-120
+Searched for "function switchWorkspace"
+Searched for "switchWorkspace"
+Searched for "switchWorkspace"
+Viewed app.js:1813-1860
+Viewed style.css:7140-7220
+Searched for ".hidden {"
+Searched for ".hidden"
+Viewed style.css:7130-7300
+Viewed index.html:110-180
+Searched for "ws-pane-universe"
+Searched for "ws-pane-universe"
+Searched for "ws-pane-universe"
+Searched for "glsl-universe"
+Listed directory frontend
+Searched for "universe"
+Searched for "workspace-pane"
+Ran command: `python -c "with open('frontend/index.html', 'rb') as f: print(f.read(10))"`
+Viewed index.html:1-60
+Viewed app.js:1-100
+Viewed app.js:150-250
+Viewed app.js:251-320
+Viewed app.js:500-600
+Viewed app.js:1400-1460
+Viewed app.js:2150-2250
+Searched for "function initDiagnostics"
+Viewed app.js:7500-7700
+Viewed app.js:8000-8216
+Viewed app.js:300-450
+Viewed app.js:7150-7350
+Viewed app.js:90-160
+Viewed app.js:1000-1150
+Viewed app.js:2700-2850
+Viewed app.js:5100-5250
+Viewed app.js:6050-6200
+Viewed app.js:620-720
+Viewed app.js:1500-1650
+Viewed app.js:2400-2550
+Viewed app.js:3150-3300
+Viewed app.js:4150-4300
+Viewed app.js:3650-3800
+Viewed app.js:3801-3950
+Viewed app.js:3550-3650
+Viewed app.js:3490-3550
+Viewed style.css:3820-3920
+Viewed style.css:3921-4050
+Viewed style.css:4051-4150
+Viewed style.css:4151-4250
+Viewed index.html:1250-1420
+Viewed index.html:1421-1600
+Viewed style.css:7070-7320
+Viewed style.css:150-250
+Viewed style.css:250-320
+Viewed style.css:500-550
+Viewed style.css:930-1000
+Viewed style.css:1800-1860
+Viewed style.css:7400-7479
+Viewed app.js:2000-2100
+Viewed app.js:1700-1800
+Viewed app.js:1801-1900
+Viewed index.html:1600-1670
+Viewed style.css:4300-4450
+Viewed style.css:4530-4650
+Viewed style.css:4720-4820
+Viewed style.css:4821-4890
+Viewed style.css:4890-4940
+Viewed style.css:7320-7410
+Viewed style.css:7040-7075
+Viewed style.css:6990-7040
+Viewed style.css:6950-6995
+Viewed style.css:6900-6950
+Viewed style.css:6850-6900
+Viewed style.css:6810-6850
+Viewed app.js:3510-3540
+Viewed style.css:6815-6875
+Viewed style.css:7140-7255
+Viewed app.js:3510-3540
+Edited app.js
+Viewed style.css:6815-6845
+Viewed style.css:7135-7260
+Viewed style.css:7390-7405
+Edited style.css
+Viewed style.css:7140-7255
+Edited style.css
+Viewed style.css:7410-7440
+Edited style.css
+Viewed index.html:1555-1570
+Edited index.html
+Viewed app.js:3505-3565
+Viewed style.css:7140-7230
+
+### Root Cause Analysis
+
+On your 6.7-inch phone (2400×1080 resolution), the canvas was crushed to ~3% and all verbose labels remained visible due to three issues:
+
+1. __CSS Breakpoint Bypass ($1080\text{px} > 1024\text{px}$):__
+   - The media query in [`style.css`](file:///c:/Dev/RepoScroller/frontend/style.css) was strictly `@media (max-width: 1024px)`.
+   - On modern high-resolution phones reporting a viewport width of $1080\text{px}$ (or $>1024\text{px}$ in landscape or when "Desktop Mode" is active), the condition evaluated to `false`.
+   - The CSS engine treated your phone as an ultra-wide desktop monitor, applying full desktop rules.
+
+2. __Toolbar & Hero Bar Multi-Row Vertical Stacking:__
+   - On desktop, the 3D Universe pane displays:
+     - The `.universe-hero-bar` with the title, description, and 5 badge pills (Dim, Algo 1, Algo 2, Topology, Renderer).
+     - Full button labels (*"🪐 Thematic Mindmap"*, *"🌐 Spatial View"*, *"⏳ Action Timeline"*, *"🔄 Auto-Spin: ON"*, *"🕸️ Links: Visible"*, *"🏷️ Labels: ON"*, *"🔭 Zenith View"*, etc.).
+     - Range sliders (*"✨ Nodes"*, *"🕸️ Links"*), 2 `<select>` dropdowns, query filter input, and search bar.
+   - On a phone screen, these desktop controls wrapped into __6 to 8 vertical rows__, pushing the 3D canvas almost completely offscreen.
+
+3. __Flexbox Collapse:__
+   - In [`style.css`](file:///c:/Dev/RepoScroller/frontend/style.css), `#glsl-canvas-wrapper` had `height: 0 !important;` while the uncollapsed headers took up the rest of the flex container, leaving the 3D WebGL canvas with only the leftover 3% at the bottom.
+
+---
+
+### Key Changes Implemented
+
+#### 1. Device Resolution Telemetry in Diagnostic Console
+
+In [`frontend/app.js`](file:///c:/Dev/RepoScroller/frontend/app.js), added `detectAndApplyMobileMode()` and hooked it directly into `initDiagnostics()`:
+
+- Automatically detects screen resolution, physical pixels via `devicePixelRatio`, viewport width/height, touch points (`navigator.maxTouchPoints`), orientation, and active layout mode.
+- Emits a diagnostic entry at startup visible in both the floating Diagnostic Console and Workspace 0's live telemetry stream:
+  > `📱 Device Display: Screen 1080x2400 (2400x1080 physical px, DPR 2.63) | Viewport: 1080x2400px (portrait) | Touch: Active (5 pts) | Mode: Mobile Phone / Compact Touch (labels collapsed, 3D canvas maximized)`
+
+#### 2. Broadened Breakpoint & Touch Device Enforcement
+
+In [`frontend/style.css`](file:///c:/Dev/RepoScroller/frontend/style.css):
+
+- Updated the media query from `@media (max-width: 1024px)` to:
+
+  ```css
+  @media (max-width: 1100px), 
+         (pointer: coarse) and (max-height: 900px), 
+         (pointer: coarse) and (max-width: 1366px), 
+         (hover: none) and (max-width: 1366px)
+  ```
+
+- Added a dedicated `body.is-mobile-device` CSS block enforced by JavaScript so high-DPI screens or mobile user agents trigger compact phone mode even if the browser reports desktop viewport metrics.
+
+#### 3. Maximized 3D Universe Screen Real Estate (~90% Height)
+
+- __Hero Bar & Badges Hidden:__ Set `.universe-hero-bar` and `.universe-badges-strip` to `display: none !important;` on mobile, saving $\sim 100\text{px}$ of vertical height.
+- __Single-Row Horizontal Toolbar:__ Constrained `.universe-toolbar` to `height: 48px !important; flex-wrap: nowrap !important; overflow-x: auto !important;` so it swipably scrolls on one line and never wraps into multiple rows.
+- __Clean 44px Icon Buttons:__ Set `.universe-toolbar .hud-glsl-btn span:not(:first-child) { display: none !important; }` on mobile, hiding verbose labels while showing clean touch icons (🪐, 🌐, ⏳, 🔄, 🕸️, 🏷️, 🔭, ↺, 📐, ↻).
+- __Secondary Filters Hidden on Mobile:__ Hidden sliders, select dropdowns, and search inputs on mobile viewports.
+- __Canvas Height Restored:__ Set `#glsl-canvas-wrapper` to `flex: 1 1 auto !important; height: 100% !important; min-height: 0 !important; overflow: hidden !important;`, expanding the Three.js WebGL canvas to fill __85–90%+__ of your phone's screen.
+- __Clean Inactive Panes:__ Enforced `#ws-pane-universe.hidden { display: none !important; }` so inactive workspace panes do not interfere with layout.
+- __Distinct 90° Rotate Icon:__ Updated `#btn-90-rotate` icon in [`index.html`](file:///c:/Dev/RepoScroller/frontend/index.html) from `📐` to `↻` so it is clearly distinct from the 3/4 top view icon (`📐`).
+
+---
+
+Viewed sw.js:1-62
+Viewed hub.conf:280-330
+Searched for "reposcroller/sw.js"
+Viewed deploy_master.yml:1610-1645
+Viewed afastudio.conf.j2:150-250
+Viewed afastudio.conf.j2:251-320
+Viewed afastudio.conf.j2:320-380
+Viewed sw.js:1-62
+Edited sw.js
+Viewed hub.conf:300-320
+Edited hub.conf
+Viewed afastudio.conf.j2:350-365
+Edited afastudio.conf.j2
+Viewed index.html:30-45
+Viewed index.html:2080-2091
+Edited index.html
+Edited index.html
+Viewed app.js:8235-8262
+Edited app.js
+
+I have updated the caching architecture across the Service Worker, Nginx reverse proxies, and frontend asset tags:
+
+### Summary of Changes
+
+1. __Upgraded Service Worker to Network-First ([`frontend/sw.js`](file:///c:/Dev/RepoScroller/frontend/sw.js))__:
+   - __Bumped cache version__: Switched to `reposcroller-cache-v2`, automatically evicting and destroying the stale `v1` cache during the `activate` lifecycle.
+   - __Network-First Strategy__: Assets are now always fetched fresh from the network first. If online, the fresh response is returned to the user and cached in the background; if offline, it falls back gracefully to the cache.
+   - __Immediate Client Claim__: Added `self.skipWaiting()` and `self.clients.claim()` so new deployments take effect without requiring existing tabs to close.
+
+2. __Added Nginx `Cache-Control` Directives ([`hub.conf`](file:///c:/Dev/hub/hub.conf) & [`afastudio.conf.j2`](file:///c:/Dev/afastudio/afastudio.conf.j2))__:
+   - Added `add_header Cache-Control "no-cache, must-revalidate";` to `/reposcroller/`.
+   - Added an explicit `location = /reposcroller/sw.js` block configured with `no-cache, no-store, must-revalidate`, `Pragma: no-cache`, and `Expires: 0` so browsers always check for updated service workers.
+
+3. __Asset Versioning in [`frontend/index.html`](file:///c:/Dev/RepoScroller/frontend/index.html)__:
+   - Added cache-busting version query parameters:
+     - `style.css?v=20261012b`
+     - `app.js?v=20261012b`
+
+4. __Proactive SW Checks in [`frontend/app.js`](file:///c:/Dev/RepoScroller/frontend/app.js)__:
+   - Added `reg.update()` on registration so the browser queries the server for any newer service worker every time the page loads.
+
+---
+
+### Next Step: Deploy to Server
+
+To promote these changes and reload Nginx on the server, run:
+
+```powershell
+cd c:\Dev\hub
+.\deploy_menu.ps1 reposcroller
+```

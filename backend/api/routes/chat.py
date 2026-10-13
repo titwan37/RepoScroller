@@ -2,11 +2,12 @@
 
 import json
 import asyncio
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from fastapi import APIRouter, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from backend.agents.duplicate_agent import DuplicateResolverAgent
+from backend.agents.graph_rag import create_graph_rag_workflow, GraphRAGQueryEngine
 from backend.ai.telemetry import workload_telemetry
 
 router = APIRouter(prefix="/chat", tags=["Interrogation Chatbot"])
@@ -19,6 +20,9 @@ class InterrogationRequest(BaseModel):
     query_text: Optional[str] = None
     node: Optional[str] = None  # Optional override: 'pc1' or 'pc2'
     model: Optional[str] = None
+    mode: Optional[str] = None  # 'ledger' or 'graph_rag'
+    chat_history: Optional[List[Dict[str, str]]] = None
+
 
 
 class ChatRoutingPayload(BaseModel):
@@ -55,6 +59,33 @@ def interrogate_repository(req: InterrogationRequest) -> Dict[str, Any]:
     result["active_chat_node"] = workload_telemetry.chat_active_node
     result["active_chat_model"] = workload_telemetry.get_active_chat_model()
     return result
+
+
+@router.post("/rag")
+def chat_graph_rag(req: InterrogationRequest) -> Dict[str, Any]:
+    """Execute conversational GraphRAG interrogation via LangGraph StateGraph pipeline."""
+    if req.node:
+        workload_telemetry.switch_chat_routing(node=req.node, model=req.model)
+
+    workflow = create_graph_rag_workflow()
+    initial_state = {
+        "raw_query": req.query,
+        "chat_history": req.chat_history or [],
+        "target_sha256": req.sha256_hash,
+        "file_path": req.file_path,
+    }
+    final_state = workflow.invoke(initial_state)
+    return {
+        "query": req.query,
+        "standalone_query": final_state.get("standalone_query", req.query),
+        "intent": final_state.get("intent", "DEEP_CONTENT_QA"),
+        "is_grounded": final_state.get("is_grounded", False),
+        "answer": final_state.get("answer", ""),
+        "sources": final_state.get("sources", []),
+        "recommendation": final_state.get("recommendation", ""),
+        "active_chat_node": workload_telemetry.chat_active_node,
+        "active_chat_model": workload_telemetry.get_active_chat_model(),
+    }
 
 
 @router.get("/stream")

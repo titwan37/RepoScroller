@@ -150,6 +150,13 @@ const getApiBase = () => {
 const API_BASE = getApiBase();
 window.API_BASE = API_BASE;
 
+// Add this to app.js to handle the mobile side-panel drawer
+function toggleMobileSidePanel() {
+  const sideColumn = document.querySelector('.side-column');
+  if (sideColumn) {
+    sideColumn.classList.toggle('mobile-open');
+  }
+}
 
 // Add right before the fetch interceptor:
 const API_PREFIX = window.location.pathname.startsWith("/reposcroller") ? "/reposcroller" : "";
@@ -1149,52 +1156,89 @@ function updateActiveFilterBar() {
   }
 }
 
-// 8. Open File Directly or Reveal in Explorer
-async function openFile(filePath, reveal = false) {
-  if (!filePath) {
-    showToast("Invalid file path", "error");
+// 8. Open File Directly or Reveal in Explorer (with In-Browser Viewer Fallback)
+async function openFile(filePath, reveal = false, sha256 = null) {
+  if (!filePath && !sha256) {
+    showToast("Invalid file path or document SHA-256", "error");
+    return;
+  }
+
+  let cleanPath = String(filePath || "").trim();
+  if (cleanPath.startsWith("file:////")) {
+    cleanPath = "\\\\" + cleanPath.slice(8);
+  } else if (cleanPath.startsWith("file:///")) {
+    cleanPath = cleanPath.slice(8);
+  } else if (cleanPath.startsWith("file://")) {
+    cleanPath = "\\\\" + cleanPath.slice(7);
+  }
+  try {
+    cleanPath = decodeURIComponent(cleanPath);
+  } catch (e) {
+    // Keep raw path if not URI encoded
+  }
+
+  // Strip leading slash before drive letters on Windows (e.g. /H:/... -> H:/...)
+  if (/^[/\\][a-zA-Z]:/.test(cleanPath)) {
+    cleanPath = cleanPath.slice(1);
+  }
+
+  const isLocalHost = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+  const viewUrl = sha256
+    ? `${API_PREFIX}/api/v1/documents/${encodeURIComponent(sha256)}/view`
+    : `${API_PREFIX}/api/v1/documents/raw?path=${encodeURIComponent(cleanPath)}`;
+
+  // If remote browser access (e.g. mobile, tablet, cloud deployment on afastudio.ch) and not reveal:
+  // Directly open the document in a new browser tab
+  if (!isLocalHost && !reveal) {
+    showToast(`Opening document in browser: ${cleanPath || sha256}`, "info", 3000);
+    window.open(viewUrl, "_blank");
     return;
   }
 
   const actionName = reveal ? "Revealing in File Explorer" : "Opening file";
-  showToast(`${actionName}: ${filePath}`, "info", 5000);
+  showToast(`${actionName}: ${cleanPath || sha256}`, "info", 4000);
 
   try {
-
-    /*
-    if (reveal) {
-    const parentFolder = filePath.split("\\").slice(0, -1).join("\\");
-    filePath = parentFolder;
-    console.log("reveal is true: ", filePath);
-    showToast(`Opening folder: ${filePath}`, "info", 5000);
-    } else {
-      console.log("reveal is false: ", filePath);
-    showToast(`Opening file: ${filePath}`, "info", 5000);
-    }
-    */
-
     const res = await fetch("/api/v1/documents/open-file", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ file_path: filePath, reveal: reveal })
+      body: JSON.stringify({ file_path: cleanPath, sha256_hash: sha256, reveal: reveal })
     });
 
     const data = await res.json();
     if (!res.ok) {
-      showToast(`Error: ${data.detail || "Could not open file"}`, "error", 7000);
+      // Local launch failed or file not found locally
+      if (!reveal) {
+        showToast("Local desktop launch unavailable. Opening document in browser preview...", "info", 3500);
+        window.open(viewUrl, "_blank");
+      } else {
+        const errMsg = typeof data.detail === "object" ? (data.detail.error || data.detail.message) : data.detail;
+        showToast(`Error: ${errMsg || "Could not reveal file"}`, "error", 7000);
+      }
+    } else if (data.mode === "browser_open" || data.status === "remote_fallback") {
+      // Remote server signaled in-browser viewing
+      const targetUrl = data.view_url ? (API_PREFIX + data.view_url) : viewUrl;
+      showToast("Opening document in browser preview...", "info", 3000);
+      window.open(targetUrl, "_blank");
     } else {
       const verb = reveal ? "Revealed in Explorer" : "Launched default application";
-      showToast(`${verb}: ${filePath}`, "success", 5000);
+      showToast(`${verb}: ${cleanPath || sha256}`, "success", 5000);
     }
   } catch (err) {
-    showToast(`Network error: ${err.message}`, "error", 7000);
+    console.warn("Network error during open-file, opening in browser tab:", err);
+    if (!reveal) {
+      window.open(viewUrl, "_blank");
+    } else {
+      showToast(`Network error: ${err.message}`, "error", 7000);
+    }
   }
 }
 
 function handleOpenPathClick(event, el, reveal = false) {
   event.stopPropagation();
-  const path = el.getAttribute("data-path");
-  openFile(path, reveal);
+  const path = el.getAttribute("data-path") || "";
+  const sha = el.getAttribute("data-sha") || "";
+  openFile(path, reveal, sha);
 }
 
 // ==========================================
@@ -1251,6 +1295,52 @@ function initSideColumnResizer() {
     showToast("Panel width reset to default (420px)", "info", 2000);
   });
 }
+
+/**
+ * Mobile / Tablet Slide-out Drawer Controls
+ */
+function openSideDrawer() {
+  const side = document.getElementById("side-column");
+  const backdrop = document.getElementById("side-drawer-backdrop");
+  if (side) side.classList.add("mobile-open");
+  if (backdrop) backdrop.classList.add("visible");
+  document.body.classList.add("drawer-open");
+}
+
+function closeSideDrawer() {
+  const side = document.getElementById("side-column");
+  const backdrop = document.getElementById("side-drawer-backdrop");
+  if (side) side.classList.remove("mobile-open");
+  if (backdrop) backdrop.classList.remove("visible");
+  document.body.classList.remove("drawer-open");
+}
+
+function toggleSideDrawer() {
+  const isMobile = window.innerWidth <= 1024;
+  if (isMobile) {
+    const side = document.getElementById("side-column");
+    if (side && side.classList.contains("mobile-open")) {
+      closeSideDrawer();
+    } else {
+      openSideDrawer();
+    }
+  } else {
+    const grid = document.getElementById("ws-pane-ledger");
+    if (grid) {
+      grid.classList.toggle("side-closed");
+    }
+  }
+}
+
+window.openSideDrawer = openSideDrawer;
+window.closeSideDrawer = closeSideDrawer;
+window.toggleSideDrawer = toggleSideDrawer;
+
+window.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    closeSideDrawer();
+  }
+});
 
 function initTableColumnResizers() {
   const table = document.querySelector(".ledger-table");
@@ -1396,7 +1486,7 @@ function renderLedgerRows(items) {
     const isDuplicate = locCount > 1;
 
     const subpathHtml = primaryPath ? `
-      <div class="doc-subpath" data-path="${escapeHtml(primaryPath)}" onclick="handleOpenPathClick(event, this, false)" title="Click to open: ${escapeHtml(primaryPath)}">
+      <div class="doc-subpath" data-path="${escapeHtml(primaryPath)}" data-sha="${escapeHtml(doc.sha256_hash)}" onclick="handleOpenPathClick(event, this, false)" title="Click to open: ${escapeHtml(primaryPath)}">
         🔗 ${escapeHtml(primaryPath)}
       </div>
     ` : '';
@@ -1460,7 +1550,7 @@ function renderLedgerRows(items) {
       <td>
         <div style="display: flex; gap: 0.35rem; align-items: center;">
           ${primaryPath ? `
-          <button class="btn btn-outline" style="padding: 0.2rem 0.5rem; font-size: 0.72rem;" data-path="${escapeHtml(primaryPath)}" onclick="handleOpenPathClick(event, this, false)" title="Open file in default application">
+          <button class="btn btn-outline" style="padding: 0.2rem 0.5rem; font-size: 0.72rem;" data-path="${escapeHtml(primaryPath)}" data-sha="${escapeHtml(doc.sha256_hash)}" onclick="handleOpenPathClick(event, this, false)" title="Open file in default application or browser preview">
             Open ↗
           </button>` : ''}
           <button class="btn btn-outline" style="padding: 0.2rem 0.5rem; font-size: 0.72rem;" onclick="selectDocument('${escapeHtml(doc.sha256_hash)}')">View</button>
@@ -1488,6 +1578,11 @@ async function selectDocument(sha256) {
   activeDocumentSha = sha256;
   switchTab("detail");
 
+  // On mobile/tablet screens, automatically slide open the detail drawer
+  if (window.innerWidth <= 1024 && typeof openSideDrawer === "function") {
+    openSideDrawer();
+  }
+
   document.getElementById("detail-empty").classList.add("hidden");
   const panel = document.getElementById("detail-panel");
   panel.classList.remove("hidden");
@@ -1502,15 +1597,15 @@ async function selectDocument(sha256) {
       <div class="location-item">
         <div class="location-header">
           <div class="location-path">
-            <span class="location-path-link" data-path="${escapeHtml(loc.absolute_path)}" onclick="handleOpenPathClick(event, this, false)" title="Click to open file in default application">
+            <span class="location-path-link" data-path="${escapeHtml(loc.absolute_path)}" data-sha="${escapeHtml(doc.sha256_hash)}" onclick="handleOpenPathClick(event, this, false)" title="Click to open file in default application or browser preview">
               ${loc.is_primary_source ? '⭐ ' : ''}🔗 ${escapeHtml(loc.absolute_path)}
             </span>
           </div>
           <div class="location-actions">
-            <button class="btn-icon-action" data-path="${escapeHtml(loc.absolute_path)}" onclick="handleOpenPathClick(event, this, false)" title="Open in default application">
+            <button class="btn-icon-action" data-path="${escapeHtml(loc.absolute_path)}" data-sha="${escapeHtml(doc.sha256_hash)}" onclick="handleOpenPathClick(event, this, false)" title="Open in default application or browser preview">
               📄 Open
             </button>
-            <button class="btn-icon-action" data-path="${escapeHtml(loc.absolute_path)}" onclick="handleOpenPathClick(event, this, true)" title="Reveal and highlight file in Explorer">
+            <button class="btn-icon-action" data-path="${escapeHtml(loc.absolute_path)}" data-sha="${escapeHtml(doc.sha256_hash)}" onclick="handleOpenPathClick(event, this, true)" title="Reveal and highlight file in Explorer">
               📂 Reveal
             </button>
           </div>
@@ -1558,7 +1653,7 @@ async function selectDocument(sha256) {
           SimHash: ${doc.simhash} • Maturity: ${doc.maturity_score} • Status: ${doc.lifecycle_status.toUpperCase()}
         </div>
       </div>
-          
+
       <div class="detail-section" style="margin-top: 1rem; display: flex; flex-direction: column; gap: 0.5rem;">
         <button class="btn btn-interrogate-detail" data-filename="${escapeHtml(doc.canonical_filename)}" onclick="interrogateAboutCurrent(this.getAttribute('data-filename'))">
           💬 Interrogate Bot About This Document
@@ -1567,25 +1662,25 @@ async function selectDocument(sha256) {
           <span>🌐</span> Visualize in 3D Knowledge Universe ➔
         </button>
       </div>
-          
+
       <div class="detail-section">
         <div class="detail-section-title">Physical Storage Locations (${(doc.locations || []).length})</div>
         <div class="locations-list">${locationsHtml}</div>
       </div>
-     
+
       ${parentsHtml ? `
       <div class="detail-section">
         <div class="detail-section-title">Evolved From (Parents)</div>
         <div class="lineage-list">${parentsHtml}</div>
       </div>` : ''}
-          
+
       ${childrenHtml ? `
       <div class="detail-section">
         <div class="detail-section-title">Superseded By (Revisions)</div>
         <div class="lineage-list">${childrenHtml}</div>
       </div>` : ''}
-          
-          
+
+
     `;
   } catch (err) {
     panel.innerHTML = `<div class="empty-state text-rose">Failed loading details: ${err}</div>`;
@@ -1921,7 +2016,7 @@ function renderActionItems(items) {
 
   let filtered = items;
   if (currentTodoSearchQuery) {
-    filtered = filtered.filter(i => 
+    filtered = filtered.filter(i =>
       (i.title || "").toLowerCase().includes(currentTodoSearchQuery) ||
       (i.description || "").toLowerCase().includes(currentTodoSearchQuery) ||
       (i.target_entity || "").toLowerCase().includes(currentTodoSearchQuery) ||
@@ -3010,29 +3105,26 @@ function clearStudioRAGSearch() {
   if (signalsSummary) signalsSummary.textContent = "";
 }
 
-async function handleCandidateOpenFile(event, sha256, filePath = "", reveal = false) {
+async function handleCandidateOpenFile(event, elOrSha, filePathOrReveal = "", maybeReveal = false) {
   if (event) event.stopPropagation();
+  let sha256 = "";
+  let filePath = "";
+  let reveal = false;
+
+  if (typeof elOrSha === "object" && elOrSha !== null && elOrSha.getAttribute) {
+    sha256 = elOrSha.getAttribute("data-sha") || "";
+    filePath = elOrSha.getAttribute("data-path") || "";
+    reveal = Boolean(filePathOrReveal);
+  } else {
+    sha256 = elOrSha || "";
+    filePath = filePathOrReveal || "";
+    reveal = Boolean(maybeReveal);
+  }
+
   if (filePath && filePath.trim()) {
-    openFile(filePath.trim(), reveal);
+    openFile(filePath.trim(), reveal, sha256);
   } else if (sha256 && sha256.trim()) {
-    const actionName = reveal ? "Revealing in File Explorer" : "Opening file";
-    showToast(`${actionName} for SHA: ${sha256.substring(0, 12)}...`, "info", 4000);
-    try {
-      const res = await fetch("/api/v1/documents/open-file", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sha256_hash: sha256, reveal: reveal })
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        showToast(`Error: ${data.detail || "Could not open file"}`, "error", 7000);
-      } else {
-        const verb = reveal ? "Revealed in Explorer" : "Launched default application";
-        showToast(`${verb}: ${data.path || sha256}`, "success", 5000);
-      }
-    } catch (err) {
-      showToast(`Network error: ${err.message}`, "error", 7000);
-    }
+    openFile("", reveal, sha256.trim());
   } else {
     showToast("No registered file path or SHA-256 for this candidate", "error");
   }
@@ -3147,26 +3239,26 @@ async function executeStudioGraphRAGSearch(explicitQuery = null) {
             </div>
             <span class="signal-pill rrf" title="Reciprocal Rank Fusion Score">RRF Rank #${idx + 1} (${score})</span>
           </div>
-            
+
           <div class="signal-pills-row">
             ${vectorPill}
             ${bm25Pill}
             ${graphPill}
           </div>
-            
+
           <div class="candidate-snippet-box">
             "${escapeHtml(text.slice(0, 300))}${text.length > 300 ? '...' : ''}"
           </div>
-            
+
           <div class="candidate-actions-row">
             <div class="candidate-entities-badges">
               ${entityBadges ? `<span style="font-size: 0.68rem; color: var(--text-faint);">Entities:</span> ${entityBadges}` : ''}
             </div>
             <div class="candidate-action-buttons">
-              <button class="btn btn-outline btn-xs" onclick="handleCandidateOpenFile(event, '${escapeHtml(sha)}', '${escapeHtml(primaryPath)}', false)" title="Open document in default system application">
+              <button class="btn btn-outline btn-xs" data-sha="${escapeHtml(sha)}" data-path="${escapeHtml(primaryPath)}" onclick="handleCandidateOpenFile(event, this, false)" title="Open document in default system application">
                 📄 Open File
               </button>
-              <button class="btn btn-outline btn-xs" onclick="handleCandidateOpenFile(event, '${escapeHtml(sha)}', '${escapeHtml(primaryPath)}', true)" title="Reveal and highlight file in Windows File Explorer">
+              <button class="btn btn-outline btn-xs" data-sha="${escapeHtml(sha)}" data-path="${escapeHtml(primaryPath)}" onclick="handleCandidateOpenFile(event, this, true)" title="Reveal and highlight file in Windows File Explorer">
                 📂 Reveal
               </button>
               <button class="btn btn-outline btn-xs" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.45); background: rgba(56, 189, 248, 0.08);" onclick="visualizeDocumentIn3D('${escapeHtml(sha)}', '${escapeHtml(filename)}')" title="Locate document vertex and visualize connected knowledge graph in 3D Universe">
@@ -3249,15 +3341,27 @@ function interrogateAboutCurrent(filename) {
   sendChatMessage(activeDocumentSha);
 }
 
-// Markdown Parser for Chat Responses
+// Markdown Parser for Chat & Dossier Responses with Mermaid Support
 function renderMarkdown(md) {
   if (!md) return "";
 
+  // Normalize potential unclosed code block during active SSE streaming
+  let normalizedMd = md;
+  const tripleTicks = (normalizedMd.match(/```/g) || []).length;
+  if (tripleTicks % 2 !== 0) {
+    normalizedMd += "\n```";
+  }
+
   // 1. Separate code blocks to protect them
   const codeBlocks = [];
-  let text = md.replace(/```([a-zA-Z0-9_\-]*)\n([\s\S]*?)```/g, (match, lang, code) => {
+  let text = normalizedMd.replace(/```([a-zA-Z0-9_\-]*)\n([\s\S]*?)```/g, (match, lang, code) => {
     const idx = codeBlocks.length;
-    codeBlocks.push(`<pre class="chat-pre"><code class="chat-code-block">${escapeHtml(code.trim())}</code></pre>`);
+    const cleanLang = (lang || "").toLowerCase().trim();
+    if (cleanLang === "mermaid") {
+      codeBlocks.push(`<div class="mermaid-diagram-wrap"><pre class="mermaid">${escapeHtml(code.trim())}</pre></div>`);
+    } else {
+      codeBlocks.push(`<pre class="chat-pre"><code class="chat-code-block language-${cleanLang}">${escapeHtml(code.trim())}</code></pre>`);
+    }
     return `@@CODEBLOCK${idx}@@`;
   });
 
@@ -3292,8 +3396,18 @@ function renderMarkdown(md) {
   text = text.replace(/\*([^*]+)\*/g, '<em>$1</em>');
   text = text.replace(/_([^_]+)_/g, '<em>$1</em>');
 
-  // 8. Markdown Links [text](url)
-  text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" class="chat-link">$1</a>');
+  // 8. Markdown Links [text](url) - route file paths through openFile() or browser view
+  text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, label, href) => {
+    let trimmedHref = href.trim();
+    if (trimmedHref.startsWith("file://") || /^[a-zA-Z]:[\\/]/.test(trimmedHref) || trimmedHref.startsWith("\\\\")) {
+      const cleanTarget = trimmedHref.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+      return `<a href="#" onclick="event.preventDefault(); openFile('${cleanTarget}', false);" class="chat-link" title="Open file: ${escapeHtml(trimmedHref)}">🔗 ${label}</a>`;
+    }
+    if (trimmedHref.startsWith("/api/v1")) {
+      trimmedHref = API_PREFIX + trimmedHref;
+    }
+    return `<a href="${escapeHtml(trimmedHref)}" target="_blank" rel="noopener noreferrer" class="chat-link">${label}</a>`;
+  });
 
   // 9. Unordered Lists
   text = text.replace(/^[\t ]*[-*] (.*$)/gim, '<li class="chat-li">$1</li>');
@@ -3439,6 +3553,41 @@ function escapeHtml(str) {
 }
 
 // ==========================================================================
+// 14.5. Device Display Resolution & Responsive Layout Mode Detector
+// ==========================================================================
+function detectAndApplyMobileMode() {
+  const screenW = window.screen ? window.screen.width : window.innerWidth;
+  const screenH = window.screen ? window.screen.height : window.innerHeight;
+  const innerW = window.innerWidth;
+  const innerH = window.innerHeight;
+  const dpr = window.devicePixelRatio || 1;
+  const touchPoints = (navigator.maxTouchPoints !== undefined) ? navigator.maxTouchPoints : 0;
+  const isTouch = ('ontouchstart' in window) || touchPoints > 0 || (window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+  const isMobileUA = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+  const orientation = (window.screen && window.screen.orientation && window.screen.orientation.type)
+    ? window.screen.orientation.type
+    : (innerW > innerH ? "landscape" : "portrait");
+
+  // Modern 6.7" phones (e.g. 2400x1080) may report 1080px or >1024px, but are physically touch phones
+  const minPhysical = Math.min(screenW, screenH);
+  const minViewport = Math.min(innerW, innerH);
+  const isMobile = isMobileUA || (isTouch && (innerW <= 1100 || minViewport <= 600 || minPhysical <= 1080 || (innerW <= 1366 && innerH <= 900)));
+
+  if (isMobile) {
+    document.documentElement.classList.add("is-mobile-device");
+    if (document.body) document.body.classList.add("is-mobile-device");
+  } else {
+    document.documentElement.classList.remove("is-mobile-device");
+    if (document.body) document.body.classList.remove("is-mobile-device");
+  }
+
+  return { screenW, screenH, innerW, innerH, dpr, touchPoints, isTouch, isMobileUA, orientation, isMobile };
+}
+window.detectAndApplyMobileMode = detectAndApplyMobileMode;
+window.addEventListener("resize", () => { detectAndApplyMobileMode(); });
+window.addEventListener("orientationchange", () => { setTimeout(detectAndApplyMobileMode, 100); });
+
+// ==========================================================================
 // 15. Floating Diagnostic Console Implementation
 // ==========================================================================
 
@@ -3459,6 +3608,17 @@ function initDiagnostics() {
     level: "INFO",
     logger: "client.runtime",
     message: "RepoScroller frontend diagnostic monitor initialized."
+  });
+
+  // Device screen resolution and responsive mode telemetry
+  const devInfo = detectAndApplyMobileMode();
+  const physW = Math.round(devInfo.screenW * devInfo.dpr);
+  const physH = Math.round(devInfo.screenH * devInfo.dpr);
+  logDiagnosticEntry({
+    source: "frontend",
+    level: "INFO",
+    logger: "client.display",
+    message: `📱 Device Display: Screen ${devInfo.screenW}x${devInfo.screenH} (${physW}x${physH} physical px, DPR ${devInfo.dpr.toFixed(2)}) | Viewport: ${devInfo.innerW}x${devInfo.innerH}px (${devInfo.orientation}) | Touch: ${devInfo.isTouch ? 'Active (' + devInfo.touchPoints + ' pts)' : 'None'} | Mode: ${devInfo.isMobile ? 'Mobile Phone / Compact Touch (labels collapsed, 3D canvas maximized)' : 'Desktop / Expanded'}`
   });
 }
 
@@ -3894,17 +4054,19 @@ const UNIVERSE_VERTEX_SHADER = `
     float pulseFreq = aUrgent > 0.6 ? 5.2 : (aUrgent > 0.2 ? 3.4 : 2.4);
     float pulseAmp = aUrgent > 0.6 ? 0.38 : (aUrgent > 0.2 ? 0.26 : 0.22);
     float pulse = sin(uTime * pulseFreq + aCluster * 1.5 + position.x * 0.04) * pulseAmp + 1.0;
-    
+
     vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
     vDist = -mvPosition.z;
 
     // Size attenuation with camera distance
     float baseSize = aSize * 15.0 * pulse * uPointSize;
-    if (aDimmed > 0.5) {
+    if (aDimmed > 1.5) {
+      baseSize = 0.0;
+    } else if (aDimmed > 0.5) {
       baseSize *= 0.5;
     }
     gl_PointSize = baseSize * (320.0 / max(-mvPosition.z, 20.0));
-    gl_PointSize = clamp(gl_PointSize, 4.0, 70.0);
+    gl_PointSize = clamp(gl_PointSize, 0.0, 70.0);
 
     gl_Position = projectionMatrix * mvPosition;
   }
@@ -3932,7 +4094,9 @@ const UNIVERSE_FRAGMENT_SHADER = `
     float halo = exp(-r * 7.0);
     float alpha = clamp(core * 0.85 + halo * 0.45, 0.0, 1.0);
 
-    if (vDimmed > 0.5) {
+    if (vDimmed > 1.5) {
+      discard;
+    } else if (vDimmed > 0.5) {
       alpha *= 0.15;
     }
 
@@ -4364,11 +4528,9 @@ function onWindowResize3D() {
 
   glsl3D.camera.aspect = width / height;
 
-  // Shift the 3D projection center to the right by ~140 pixels (approx. 3.5cm)
-  // This optically centers the universe in the remaining visible space 
-  // next to the left-floating legend panel, without breaking orbit controls.
-  // Signature: setViewOffset(fullWidth, fullHeight, xOffset, yOffset, viewWidth, viewHeight)
-  glsl3D.camera.setViewOffset(width, height, -60, 0, width, height);
+  // Center optical projection properly (on mobile without desktop left bias)
+  const initialOffset = window.innerWidth <= 1024 ? 0 : -60;
+  glsl3D.camera.setViewOffset(width, height, initialOffset, 0, width, height);
   glsl3D.camera.updateProjectionMatrix();
   glsl3D.renderer.setSize(width, height);
 
@@ -4461,6 +4623,7 @@ async function load3DUniverseData(forceReload = false, filterParams = null, tran
     return;
   }
 
+  let requestUrl = "";
   try {
     const params = new URLSearchParams({ limit: "1000", layout: glsl3D.layoutMode || "spatial" });
     if (effectiveFilters) {
@@ -4471,7 +4634,7 @@ async function load3DUniverseData(forceReload = false, filterParams = null, tran
         }
       } else if (typeof effectiveFilters === "object") {
         for (const [k, v] of Object.entries(effectiveFilters)) {
-          if (v !== undefined && v !== null && String(v).trim() !== "") {
+          if (!k.startsWith("_") && v !== undefined && v !== null && String(v).trim() !== "") {
             params.set(k, String(v).trim());
           }
         }
@@ -4482,10 +4645,15 @@ async function load3DUniverseData(forceReload = false, filterParams = null, tran
       glsl3D.layoutMode = params.get("layout");
     }
 
-    const res = await fetch(`/api/v1/sidecar/graph-3d?${params.toString()}`);
+    requestUrl = `/api/v1/sidecar/graph-3d?${params.toString()}`;
+    const res = await fetch(requestUrl);
     if (!res.ok) throw new Error("HTTP " + res.status);
     const data = await res.json();
 
+    if (glsl3D.layoutTransitionAnim) {
+      cancelAnimationFrame(glsl3D.layoutTransitionAnim);
+      glsl3D.layoutTransitionAnim = null;
+    }
     glsl3D.nodes = data.nodes || [];
     glsl3D.edges = data.edges || [];
     glsl3D.clusters = data.clusters || [];
@@ -4549,6 +4717,9 @@ async function load3DUniverseData(forceReload = false, filterParams = null, tran
         counts[n.cluster] = (counts[n.cluster] || 0) + 1;
       });
 
+      glsl3D.lastDataStats = data.stats;
+      if (!glsl3D.disabledClusters) glsl3D.disabledClusters = new Set();
+
       clusterLegendContainer.innerHTML = glsl3D.clusters.map(c => {
         const rendered = counts[c.id] || c.rendered_count || 0;
         const totalInDb = c.total_in_db || rendered;
@@ -4560,11 +4731,15 @@ async function load3DUniverseData(forceReload = false, filterParams = null, tran
         const isCapped = c.is_capped || (totalInDb > quota && rendered >= quota);
         const archetypeLabel = c.archetype || c.name;
         const tooltip = `${c.name} (${archetypeLabel})\n• Rendered in 3D: ${rendered} nodes ${isCapped ? '(Viewport Quota: Max ' + quota + ')' : '(Full Coverage: 100%)'}\n• Total in Database: ${totalInDb.toLocaleString()} entities\n• Representation: ${isFull ? '100%' : pct + '%'} of population\n• Scope: ${c.representation_desc || ''}`;
+        const isOff = glsl3D.disabledClusters && glsl3D.disabledClusters.has(c.id);
 
         return `
-          <div class="cluster-item" data-cluster-id="${c.id}" onclick="openUniverseClusterDrawer(${c.id})" ondblclick="filter3DCluster(${c.id})" title="${escapeHtml(tooltip)}\n💡 Single-click: Filter 3D scene\n💡 Double-click: Open entity list">
+          <div class="cluster-item ${isOff ? 'cluster-disabled' : ''}" data-cluster-id="${c.id}"
+               onclick="handleClusterItemClick(event, ${c.id})"
+               ondblclick="handleClusterItemDblClick(event, ${c.id})"
+               title="${escapeHtml(tooltip)}\n💡 Click: Enable / Disable cluster\n💡 Double-click: View detailed entity list">
             <div class="cluster-item-left">
-              <span class="cluster-color-dot" style="background: ${c.color}; color: ${c.color};"></span>
+              <span class="cluster-color-dot ${isOff ? 'dot-off' : ''}" style="${isOff ? 'background: transparent; border: 1.5px solid #64748b; box-shadow: none;' : `background: ${c.color}; border: none; box-shadow: 0 0 6px ${c.color};`}"></span>
               <div class="cluster-text-col">
                 <span class="cluster-name">${escapeHtml(c.icon || "")} ${escapeHtml(c.name)}</span>
                 <span class="cluster-desc">${escapeHtml(c.representation_desc || archetypeLabel)}</span>
@@ -4619,8 +4794,8 @@ async function load3DUniverseData(forceReload = false, filterParams = null, tran
       // ADDED: Auto-start the orbital tour on the very first load
       glsl3D.initialTourStarted = true;
 
-      // Wait 1.2 seconds before starting the tour. 
-      // This perfectly matches the 1000ms layout transition, allowing the 
+      // Wait 1.2 seconds before starting the tour.
+      // This perfectly matches the 1000ms layout transition, allowing the
       // nodes to glide into place before the camera starts flying.
       setTimeout(() => {
         if (activeWorkspace === "universe" && !glsl3D.isUserInteracting && !glsl3D.orbitalTourActive) {
@@ -4631,7 +4806,7 @@ async function load3DUniverseData(forceReload = false, filterParams = null, tran
 
   } catch (err) {
     console.error("Failed to load 3D Knowledge Universe:", err);
-    pushDiagnosticLog("error", "Failed to load 3D Knowledge Universe data: " + err.message, "frontend", "GLSL3D");
+    pushDiagnosticLog("error", `Failed to load 3D Knowledge Universe data from [${requestUrl || '/api/v1/sidecar/graph-3d'}]: ${err.message}. Ensure Sidecar is running and backend port 8090 is reachable.`, "frontend", "GLSL3D");
   }
 }
 
@@ -4653,24 +4828,34 @@ function renderUniverseFilterBanner(filters) {
     return;
   }
 
-  const pills = entries.map(([k, v]) => `
-    <span class="filter-pill-tag">
-      <span class="filter-k">${escapeHtml(k)}:</span>
-      <span class="filter-v">${escapeHtml(String(v))}</span>
-    </span>
-  `).join("");
-
+  const pills = [];
+  for (const [k, v] of entries) {
+    if (k.startsWith("_")) continue;
+    let displayK = k;
+    let displayV = v;
+    if (k === "doc_sha") {
+      displayK = "document";
+      displayV = (filters && filters._display_filename) ? filters._display_filename : v;
+    }
+    pills.push(`
+      <span class="filter-pill-tag">
+        <span class="filter-k">${escapeHtml(displayK)}:</span>
+        <span class="filter-v">${escapeHtml(String(displayV))}</span>
+      </span>
+    `);
+  }
+  const pillsHtml = pills.join("");
   banner.style.display = "flex";
   banner.innerHTML = `
-    <div class="filter-hud-left">
-      <span class="filter-hud-icon">🔍</span>
-      <span class="filter-hud-title">Filtered 3D Graph:</span>
-      <div class="filter-hud-pills">${pills}</div>
-      <span class="filter-hud-count">(${glsl3D.nodes.length} nodes, ${glsl3D.edges.length} links)</span>
-    </div>
     <button class="filter-hud-reset-btn" onclick="clear3DUniverseFilters()" title="Reset to full universe">
       Reset Filter ✕
     </button>
+    <div class="filter-hud-left">
+      <span class="filter-hud-icon">🔍</span>
+      <span class="filter-hud-title">Filtered 3D Graph:</span>
+      <div class="filter-hud-pills">${pillsHtml}</div>
+      <span class="filter-hud-count">(${glsl3D.nodes.length} nodes, ${glsl3D.edges.length} links)</span>
+    </div>
   `;
 }
 
@@ -4702,6 +4887,80 @@ function handle3DFilterQuery(queryStr) {
   }
 }
 window.handle3DFilterQuery = handle3DFilterQuery;
+
+function rebuild3DEdges(nodeIndexMap) {
+  if (glsl3D.edgesMesh) {
+    glsl3D.worldGroup.remove(glsl3D.edgesMesh);
+    if (glsl3D.edgesMesh.geometry) glsl3D.edgesMesh.geometry.dispose();
+    if (glsl3D.edgesMesh.material) glsl3D.edgesMesh.material.dispose();
+    glsl3D.edgesMesh = null;
+  }
+
+  if (!glsl3D.edges || glsl3D.edges.length === 0 || !glsl3D.nodes || glsl3D.nodes.length === 0) return;
+
+  if (!nodeIndexMap) {
+    nodeIndexMap = new Map();
+    glsl3D.nodes.forEach((n, i) => nodeIndexMap.set(n.id, i));
+  }
+
+  const edgePositions = [];
+  const edgeColors = [];
+  const posAttr = glsl3D.pointsMesh && glsl3D.pointsMesh.geometry ? glsl3D.pointsMesh.geometry.attributes.position : null;
+
+  glsl3D.edges.forEach(e => {
+    const sIdx = nodeIndexMap.get(e.source);
+    const tIdx = nodeIndexMap.get(e.target);
+    if (sIdx !== undefined && tIdx !== undefined) {
+      const sNode = glsl3D.nodes[sIdx];
+      const tNode = glsl3D.nodes[tIdx];
+
+      // Omit edge if either connected node belongs to a disabled cluster
+      if (glsl3D.disabledClusters && (glsl3D.disabledClusters.has(sNode.cluster) || glsl3D.disabledClusters.has(tNode.cluster))) {
+        return;
+      }
+
+      const sx = posAttr ? posAttr.array[sIdx * 3 + 0] : (sNode._startPos ? sNode._startPos.x : sNode.x);
+      const sy = posAttr ? posAttr.array[sIdx * 3 + 1] : (sNode._startPos ? sNode._startPos.y : sNode.y);
+      const sz = posAttr ? posAttr.array[sIdx * 3 + 2] : (sNode._startPos ? sNode._startPos.z : sNode.z);
+
+      const tx = posAttr ? posAttr.array[tIdx * 3 + 0] : (tNode._startPos ? tNode._startPos.x : tNode.x);
+      const ty = posAttr ? posAttr.array[tIdx * 3 + 1] : (tNode._startPos ? tNode._startPos.y : tNode.y);
+      const tz = posAttr ? posAttr.array[tIdx * 3 + 2] : (tNode._startPos ? tNode._startPos.z : tNode.z);
+
+      edgePositions.push(sx, sy, sz);
+      edgePositions.push(tx, ty, tz);
+
+      let edgeColor = new THREE.Color(sNode.cluster_color || "#38bdf8");
+      if (e.relation === "CATEGORIZED_AS") {
+        const themeNode = sNode.type === "theme" ? sNode : (tNode.type === "theme" ? tNode : null);
+        if (themeNode) {
+          edgeColor = new THREE.Color(themeNode.cluster_color || "#ec4899");
+        }
+      }
+      edgeColors.push(edgeColor.r, edgeColor.g, edgeColor.b);
+      edgeColors.push(edgeColor.r, edgeColor.g, edgeColor.b);
+    }
+  });
+
+  if (edgePositions.length > 0) {
+    const edgeGeo = new THREE.BufferGeometry();
+    edgeGeo.setAttribute("position", new THREE.Float32BufferAttribute(edgePositions, 3));
+    edgeGeo.setAttribute("color", new THREE.Float32BufferAttribute(edgeColors, 3));
+
+    const edgeMat = new THREE.LineBasicMaterial({
+      vertexColors: true,
+      transparent: true,
+      opacity: typeof glsl3D.edgeOpacity === "number" ? glsl3D.edgeOpacity : 0.08,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+
+    glsl3D.edgesMesh = new THREE.LineSegments(edgeGeo, edgeMat);
+    glsl3D.edgesMesh.visible = glsl3D.showEdges;
+    glsl3D.worldGroup.add(glsl3D.edgesMesh);
+  }
+}
+window.rebuild3DEdges = rebuild3DEdges;
 
 function build3DSceneObjects(transitionFromOldPositions = null) {
   if (!glsl3D.scene || !glsl3D.worldGroup) return;
@@ -4745,6 +5004,11 @@ function build3DSceneObjects(transitionFromOldPositions = null) {
   glsl3D.nodes.forEach((n, i) => {
     nodeIndexMap.set(n.id, i);
 
+    // 🛑 WebGL NaN Poisoning Fix: Ensure x,y,z are always valid numbers
+    n.x = Number.isFinite(n.x) ? n.x : (Math.random() * 100 - 50);
+    n.y = Number.isFinite(n.y) ? n.y : (Math.random() * 100 - 50);
+    n.z = Number.isFinite(n.z) ? n.z : (Math.random() * 100 - 50);
+
     if (transitionFromOldPositions && transitionFromOldPositions.has(n.id)) {
       const old = transitionFromOldPositions.get(n.id);
       n._startPos = { x: old.x, y: old.y, z: old.z };
@@ -4762,7 +5026,7 @@ function build3DSceneObjects(transitionFromOldPositions = null) {
     sizes[i] = n.size || 1.0;
     degrees[i] = n.degree || 0;
     clusters[i] = n.cluster !== undefined ? n.cluster : 0;
-    dimmed[i] = 0.0;
+    dimmed[i] = (glsl3D.disabledClusters && glsl3D.disabledClusters.has(n.cluster)) ? 2.0 : 0.0;
     urgents[i] = n.is_overdue ? 1.0 : (n.has_pending_todo ? 0.5 : 0.0);
 
     // Color by active color mode
@@ -4794,48 +5058,7 @@ function build3DSceneObjects(transitionFromOldPositions = null) {
   glsl3D.worldGroup.add(glsl3D.pointsMesh);
 
   // 2. Edges Buffer Geometry
-  const edgePositions = [];
-  const edgeColors = [];
-
-  glsl3D.edges.forEach(e => {
-    const sIdx = nodeIndexMap.get(e.source);
-    const tIdx = nodeIndexMap.get(e.target);
-    if (sIdx !== undefined && tIdx !== undefined) {
-      const sNode = glsl3D.nodes[sIdx];
-      const tNode = glsl3D.nodes[tIdx];
-
-      edgePositions.push(sNode._startPos.x, sNode._startPos.y, sNode._startPos.z);
-      edgePositions.push(tNode._startPos.x, tNode._startPos.y, tNode._startPos.z);
-
-      let edgeColor = new THREE.Color(sNode.cluster_color || "#38bdf8");
-      if (e.relation === "CATEGORIZED_AS") {
-        const themeNode = sNode.type === "theme" ? sNode : (tNode.type === "theme" ? tNode : null);
-        if (themeNode) {
-          edgeColor = new THREE.Color(themeNode.cluster_color || "#ec4899");
-        }
-      }
-      edgeColors.push(edgeColor.r, edgeColor.g, edgeColor.b);
-      edgeColors.push(edgeColor.r, edgeColor.g, edgeColor.b);
-    }
-  });
-
-  if (edgePositions.length > 0) {
-    const edgeGeo = new THREE.BufferGeometry();
-    edgeGeo.setAttribute("position", new THREE.Float32BufferAttribute(edgePositions, 3));
-    edgeGeo.setAttribute("color", new THREE.Float32BufferAttribute(edgeColors, 3));
-
-    const edgeMat = new THREE.LineBasicMaterial({
-      vertexColors: true,
-      transparent: true,
-      opacity: typeof glsl3D.edgeOpacity === "number" ? glsl3D.edgeOpacity : 0.08,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-    });
-
-    glsl3D.edgesMesh = new THREE.LineSegments(edgeGeo, edgeMat);
-    glsl3D.edgesMesh.visible = glsl3D.showEdges;
-    glsl3D.worldGroup.add(glsl3D.edgesMesh);
-  }
+  rebuild3DEdges(nodeIndexMap);
 
   // 3. Billboard Text Labels: All theme hubs + Top high-degree entities
   glsl3D.labelsGroup = new THREE.Group();
@@ -5236,12 +5459,26 @@ function animate3DUniverse() {
     const tooltip = document.getElementById("glsl-hover-tooltip");
 
     if (intersects.length > 0) {
-      const hitIdx = intersects[0].index;
-      if (hitIdx !== undefined && hitIdx < glsl3D.nodes.length) {
-        glsl3D.hoveredNodeIndex = hitIdx;
-        const n = glsl3D.nodes[hitIdx];
-        show3DHoverTooltip(n, intersects[0].point);
+      let validHit = null;
+      for (let i = 0; i < intersects.length; i++) {
+        const hitIdx = intersects[i].index;
+        if (hitIdx !== undefined && hitIdx < glsl3D.nodes.length) {
+          const n = glsl3D.nodes[hitIdx];
+          if (!glsl3D.disabledClusters || !glsl3D.disabledClusters.has(n.cluster)) {
+            validHit = { index: hitIdx, point: intersects[i].point, node: n };
+            break;
+          }
+        }
+      }
+
+      if (validHit) {
+        glsl3D.hoveredNodeIndex = validHit.index;
+        show3DHoverTooltip(validHit.node, validHit.point);
         document.body.style.cursor = "pointer";
+      } else {
+        glsl3D.hoveredNodeIndex = -1;
+        if (tooltip) tooltip.style.display = "none";
+        document.body.style.cursor = "default";
       }
     } else {
       glsl3D.hoveredNodeIndex = -1;
@@ -5292,8 +5529,13 @@ async function on3DMouseDblClick(e) {
 }
 
 function focusOrInspect3DNode(nodeId) {
+  closeUniverseClusterDrawer();
   const existingNode = glsl3D.nodes.find(n => n.id === nodeId);
   if (existingNode) {
+    if (glsl3D.disabledClusters && glsl3D.disabledClusters.has(existingNode.cluster)) {
+      glsl3D.disabledClusters.delete(existingNode.cluster);
+      applyClusterVisibility();
+    }
     smoothTransitionTo3DNode(existingNode);
     open3DNodeInspector(existingNode);
     emphasizeNodeLinks(existingNode.id);
@@ -5426,6 +5668,142 @@ window.openUniverseClusterDrawer = openUniverseClusterDrawer;
 window.closeUniverseClusterDrawer = closeUniverseClusterDrawer;
 window.filterUniverseClusterDrawer = filterUniverseClusterDrawer;
 
+let clusterItemClickTimer = null;
+
+function handleClusterItemClick(e, clusterId) {
+  if (e) {
+    e.stopPropagation();
+  }
+  if (clusterItemClickTimer) {
+    // Second click arrived within 250ms -> Double click!
+    clearTimeout(clusterItemClickTimer);
+    clusterItemClickTimer = null;
+    openUniverseClusterDrawer(clusterId);
+    return;
+  }
+
+  // Single click: wait 250ms to verify it's not a double-click
+  clusterItemClickTimer = setTimeout(() => {
+    clusterItemClickTimer = null;
+    toggleUniverseCluster(clusterId);
+  }, 250);
+}
+
+function handleClusterItemDblClick(e, clusterId) {
+  if (e) {
+    e.stopPropagation();
+  }
+  if (clusterItemClickTimer) {
+    clearTimeout(clusterItemClickTimer);
+    clusterItemClickTimer = null;
+  }
+  openUniverseClusterDrawer(clusterId);
+}
+
+function toggleUniverseCluster(clusterId) {
+  const cid = parseInt(clusterId, 10);
+  if (!glsl3D.disabledClusters) {
+    glsl3D.disabledClusters = new Set();
+  }
+
+  if (glsl3D.disabledClusters.has(cid)) {
+    glsl3D.disabledClusters.delete(cid); // Turn back ON
+  } else {
+    glsl3D.disabledClusters.add(cid); // Turn OFF
+  }
+
+  applyClusterVisibility();
+}
+
+function applyClusterVisibility() {
+  if (!glsl3D.disabledClusters) {
+    glsl3D.disabledClusters = new Set();
+  }
+
+  // 1. Update node points in GPU buffer
+  if (glsl3D.pointsMesh && glsl3D.pointsMesh.geometry.attributes.aDimmed) {
+    const dimmed = glsl3D.pointsMesh.geometry.attributes.aDimmed;
+    glsl3D.nodes.forEach((n, i) => {
+      if (glsl3D.disabledClusters.has(n.cluster)) {
+        dimmed.setX(i, 2.0); // 2.0 = completely hidden / discarded in shader
+      } else {
+        dimmed.setX(i, 0.0);
+      }
+    });
+    dimmed.needsUpdate = true;
+  }
+
+  // 2. Rebuild edges so lines connected to disabled clusters disappear
+  rebuild3DEdges();
+
+  // 3. Hide billboard text labels of disabled clusters
+  if (glsl3D.labelsGroup) {
+    glsl3D.labelsGroup.children.forEach(sprite => {
+      if (sprite._boundNode) {
+        sprite.visible = !glsl3D.disabledClusters.has(sprite._boundNode.cluster);
+      }
+    });
+  }
+
+  // 4. Update the Cluster Legend UI (bullet dot switches off/on)
+  updateClusterLegendUI();
+}
+
+function updateClusterLegendUI() {
+  if (!glsl3D.disabledClusters) {
+    glsl3D.disabledClusters = new Set();
+  }
+
+  document.querySelectorAll(".cluster-item").forEach(el => {
+    const cid = parseInt(el.dataset.clusterId, 10);
+    const dot = el.querySelector(".cluster-color-dot");
+    const isOff = glsl3D.disabledClusters.has(cid);
+    const clusterMeta = glsl3D.clusters ? glsl3D.clusters.find(c => c.id === cid) : null;
+    const col = (clusterMeta && clusterMeta.color) || "#38bdf8";
+
+    if (isOff) {
+      el.classList.add("cluster-disabled");
+      if (dot) {
+        dot.style.background = "transparent";
+        dot.style.borderColor = "#64748b";
+        dot.style.border = "1.5px solid #64748b";
+        dot.style.boxShadow = "none";
+        dot.classList.add("dot-off");
+      }
+    } else {
+      el.classList.remove("cluster-disabled");
+      if (dot) {
+        dot.style.background = col;
+        dot.style.borderColor = col;
+        dot.style.border = "none";
+        dot.style.boxShadow = `0 0 6px ${col}`;
+        dot.classList.remove("dot-off");
+      }
+    }
+  });
+
+  // Update cluster macro summary badge count of visible nodes
+  const macroSummary = document.getElementById("cluster-macro-summary");
+  if (macroSummary) {
+    const visibleCount = glsl3D.nodes.filter(n => !glsl3D.disabledClusters || !glsl3D.disabledClusters.has(n.cluster)).length;
+    const totalDbNodes = (glsl3D.lastDataStats && glsl3D.lastDataStats.total_nodes) || glsl3D.nodes.length;
+    const pct = totalDbNodes > 0 ? ((visibleCount / totalDbNodes) * 100).toFixed(1) : 100;
+    macroSummary.innerHTML = `
+      <div class="macro-summary-left">
+        <span class="macro-badge">${glsl3D.disabledClusters.size > 0 ? 'Filtered Subgraph' : 'Macro Universe'}</span>
+        <span class="macro-text"><strong>${visibleCount.toLocaleString()}</strong> of ${totalDbNodes.toLocaleString()} nodes</span>
+      </div>
+      <span class="macro-pct">${pct}% coverage</span>
+    `;
+  }
+}
+
+window.handleClusterItemClick = handleClusterItemClick;
+window.handleClusterItemDblClick = handleClusterItemDblClick;
+window.toggleUniverseCluster = toggleUniverseCluster;
+window.applyClusterVisibility = applyClusterVisibility;
+window.updateClusterLegendUI = updateClusterLegendUI;
+
 /**
  * Dynamically shifts the Three.js optical center to avoid overlapping UI panels.
  * Keeps the selected node perfectly centered in the visible gap.
@@ -5439,16 +5817,22 @@ function update3DViewOffset() {
   const legend = document.getElementById("axes-legend-overlay");
   const inspector = document.getElementById("glsl-node-inspector");
 
-  // Calculate Left UI Intrusion (Legend Panel)
+  // Calculate Left UI Intrusion (Legend Panel) - only if visible on desktop (hidden on mobile)
   let leftOffset = 0;
-  if (legend) {
-    leftOffset = legend.classList.contains("collapsed") ? 250 : 380;
+  if (legend && window.innerWidth > 1024) {
+    const legendStyle = window.getComputedStyle(legend);
+    if (legendStyle.display !== "none" && legendStyle.visibility !== "hidden") {
+      leftOffset = legend.classList.contains("collapsed") ? 250 : 380;
+    }
   }
 
   // Calculate Right UI Intrusion (Inspector Panel)
   let rightOffset = 0;
-  if (inspector && !inspector.classList.contains("hidden")) {
-    rightOffset = 340;
+  if (inspector && !inspector.classList.contains("hidden") && window.innerWidth > 768) {
+    const inspectorStyle = window.getComputedStyle(inspector);
+    if (inspectorStyle.display !== "none" && inspectorStyle.visibility !== "hidden") {
+      rightOffset = 340;
+    }
   }
 
   // Positive xOffset shifts the scene LEFT. Negative shifts the scene RIGHT.
@@ -5892,8 +6276,9 @@ function animateLayoutTransition(duration = 1000) {
       : 1 - Math.pow(-2 * progress + 2, 3) / 2;
 
     const posAttr = glsl3D.pointsMesh.geometry.attributes.position;
-    for (let i = 0; i < nodeCount; i++) {
+    for (let i = 0; i < Math.min(nodeCount, glsl3D.nodes.length); i++) {
       const n = glsl3D.nodes[i];
+      if (!n) continue;
       if (n._startPos && n._targetPos) {
         posAttr.array[i * 3 + 0] = n._startPos.x + (n._targetPos.x - n._startPos.x) * ease;
         posAttr.array[i * 3 + 1] = n._startPos.y + (n._targetPos.y - n._startPos.y) * ease;
@@ -6134,8 +6519,8 @@ async function set3DUniverseLayout(mode) {
       : "⏳ Computing Spatial PCA... recalculating latent variance (this may take a few seconds).");
   showToast(toastMsg, "info", 8000);
 
-  // CRITICAL: Yield to the browser's main thread for 150ms. 
-  // This allows the DOM to actually render the toast animation and CSS changes 
+  // CRITICAL: Yield to the browser's main thread for 150ms.
+  // This allows the DOM to actually render the toast animation and CSS changes
   // BEFORE the heavy 3D physics calculations lock up the CPU.
   await new Promise(resolve => setTimeout(resolve, 150));
 
@@ -6284,7 +6669,7 @@ async function visualizeDocumentIn3D(sha256, filename) {
   switchWorkspace("universe");
 
   // 2. Load universe data filtered for this document
-  await load3DUniverseData(true, { doc_sha: sha256 });
+  await load3DUniverseData(true, { doc_sha: sha256, _display_filename: filename });
 
   // 3. Find the target node
   const targetId = glsl3D.focusNodeId || `doc_${sha256.substring(0, 16)}` || (glsl3D.nodes[0] && glsl3D.nodes[0].id);
@@ -6400,33 +6785,52 @@ function renderNeighborhoodDetails(nh) {
   if (countEl) countEl.textContent = allRel.length;
 
   let html = "";
+  // Column 1: Neighborhood Connections
+  html += `
+    <div class="insp-rel-col">
+      <div class="insp-rel-col-header">
+        <span class="insp-rel-col-title">Connections</span>
+        <span class="insp-rel-badge text-cyan">${allRel.length}</span>
+      </div>
+      <div class="insp-rel-col-items">
+  `;
+
   if (allRel.length > 0) {
-    html += allRel.slice(0, 20).map(r => `
-      <div style="display: flex; justify-content: space-between; align-items: center; padding: 3px 6px; border-radius: 4px; cursor: pointer; transition: background 0.15s;" 
-           onmouseover="this.style.background='rgba(255,255,255,0.08)'" 
-           onmouseout="this.style.background='transparent'" 
+    html += allRel.slice(0, 25).map(r => `
+      <div class="insp-rel-item"
            onclick="focusOrInspect3DNode('${escapeHtml(r.node_id)}')"
-           title="Click to focus / expand: ${escapeHtml(r.name || r.node_id)}">
-        <span style="color: #e2e8f0; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; max-width: 170px;">${escapeHtml(r.name || r.node_id)}</span>
-        <span style="font-size: 10px; color: #38bdf8; background: rgba(56, 189, 248, 0.12); padding: 1px 5px; border-radius: 4px;">${escapeHtml(r.relation_type || 'LINK')}</span>
+           title="Click to focus / expand: ${escapeHtml(r.name || r.node_id)} (${escapeHtml(r.relation_type || 'LINK')})">
+        <span class="insp-rel-name">${escapeHtml(r.name || r.node_id)}</span>
+        <span class="insp-rel-tag">${escapeHtml(r.relation_type || 'LINK')}</span>
       </div>
     `).join("");
   } else {
-    html += `<span style="color: #64748b; font-size: 11px;">No direct explicit graph links</span>`;
+    html += `<span class="insp-rel-empty">No direct links</span>`;
   }
+  html += `</div></div>`;
+
+  // Column 2: Linked Documents
+  html += `
+    <div class="insp-rel-col">
+      <div class="insp-rel-col-header">
+        <span class="insp-rel-col-title docs">Linked Docs</span>
+        <span class="insp-rel-badge text-emerald">${docs.length}</span>
+      </div>
+      <div class="insp-rel-col-items">
+  `;
 
   if (docs.length > 0) {
-    html += `
-      <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; color: #10b981; margin-top: 8px; margin-bottom: 4px;">Linked Documents (${docs.length})</div>
-    `;
-    html += docs.slice(0, 6).map(d => `
-      <div style="font-size: 11px; color: #94a3b8; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; padding: 1px 0; cursor: pointer;" 
+    html += docs.slice(0, 15).map(d => `
+      <div class="insp-doc-item"
            onclick="visualizeDocumentIn3D('${escapeHtml(d.sha256_hash)}', '${escapeHtml(d.canonical_filename)}')"
            title="Visualize in 3D: ${escapeHtml(d.canonical_filename)}">
-        📄 ${escapeHtml(d.canonical_filename)} ➔
+        <span class="insp-doc-name">📄 ${escapeHtml(d.canonical_filename)}</span>
       </div>
     `).join("");
+  } else {
+    html += `<span class="insp-rel-empty">No associated docs</span>`;
   }
+  html += `</div></div>`;
 
   listEl.innerHTML = html;
 }
@@ -6662,28 +7066,16 @@ function filter3DCluster(clusterId) {
     select.value = String(clusterId);
   }
 
-  // Update active state in cluster legend list
-  document.querySelectorAll(".cluster-item").forEach(el => {
-    if (String(clusterId) !== "all" && el.dataset.clusterId === String(clusterId)) {
-      el.classList.add("active");
-    } else {
-      el.classList.remove("active");
-    }
-  });
+  if (clusterId === "all") {
+    glsl3D.disabledClusters = new Set();
+  } else {
+    const targetId = parseInt(clusterId, 10);
+    glsl3D.disabledClusters = new Set(
+      glsl3D.clusters.map(c => c.id).filter(id => id !== targetId)
+    );
+  }
 
-  if (!glsl3D.pointsMesh) return;
-
-  const dimmed = glsl3D.pointsMesh.geometry.attributes.aDimmed;
-  const targetId = clusterId === "all" ? null : parseInt(clusterId, 10);
-
-  glsl3D.nodes.forEach((n, i) => {
-    if (targetId === null || n.cluster === targetId) {
-      dimmed.setX(i, 0.0);
-    } else {
-      dimmed.setX(i, 1.0);
-    }
-  });
-  dimmed.needsUpdate = true;
+  applyClusterVisibility();
 }
 
 // function reset3DCamera() {
@@ -6864,7 +7256,7 @@ window.toggle3DOrbitalTour = toggle3DOrbitalTour;
 
 /**
  * Orbital Tour camera transition:
- * Positions the camera on the outer rim of the current node, looking directly at the node, 
+ * Positions the camera on the outer rim of the current node, looking directly at the node,
  * with the center of the universe fading into the distant background.
  */
 function transitionOrbitalTourCamera(targetNode, orbitCenter, duration = 1400) {
@@ -7052,6 +7444,72 @@ function reset34TopCamera(duration = 800) {
 window.reset34TopCamera = reset34TopCamera;
 window.set3DLeftTopView = reset34TopCamera;
 
+/**
+ * Rotate 90 Degrees around Current Focus Target:
+ * Smoothly pivots the camera 90° clockwise along a circular orbital arc around the target center,
+ * preserving distance and elevation, for inspecting lateral facets of the universe or timeline.
+ */
+function rotate90(angleDeg = 90, duration = 650) {
+  if (!glsl3D.camera || !glsl3D.controls) return;
+
+  // Stop running orbital tour if active
+  if (glsl3D.orbitalTourActive) {
+    stop3DOrbitalTour(false);
+  }
+
+  const target = glsl3D.controls.target.clone();
+  const startCamPos = glsl3D.camera.position.clone();
+  const rel = new THREE.Vector3().subVectors(startCamPos, target);
+
+  // Compute cylindrical radius and current azimuthal angle
+  const radius = Math.sqrt(rel.x * rel.x + rel.z * rel.z);
+  const currentAngle = Math.atan2(rel.x, rel.z);
+  const targetAngle = currentAngle + (angleDeg * Math.PI / 180.0);
+
+  const prevAutoSpin = glsl3D.autoSpin;
+  glsl3D.autoSpin = false;
+
+  const startTime = performance.now();
+  if (glsl3D.cameraTransitionAnim) {
+    cancelAnimationFrame(glsl3D.cameraTransitionAnim);
+    glsl3D.cameraTransitionAnim = null;
+  }
+
+  function step(now) {
+    const elapsed = now - startTime;
+    const progress = Math.min(1.0, elapsed / duration);
+    const ease = progress < 0.5
+      ? 4 * progress * progress * progress
+      : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+
+    // Glide along the circular horizontal arc around target
+    const curAngle = currentAngle + ((targetAngle - currentAngle) * ease);
+    const curX = Math.sin(curAngle) * radius;
+    const curZ = Math.cos(curAngle) * radius;
+
+    glsl3D.camera.position.set(target.x + curX, target.y + rel.y, target.z + curZ);
+    glsl3D.controls.update();
+
+    if (progress < 1.0) {
+      glsl3D.cameraTransitionAnim = requestAnimationFrame(step);
+    } else {
+      glsl3D.camera.position.set(
+        target.x + Math.sin(targetAngle) * radius,
+        target.y + rel.y,
+        target.z + Math.cos(targetAngle) * radius
+      );
+      glsl3D.controls.update();
+      glsl3D.cameraTransitionAnim = null;
+      glsl3D.autoSpin = prevAutoSpin;
+    }
+  }
+
+  glsl3D.cameraTransitionAnim = requestAnimationFrame(step);
+  showToast("↻ Rotated 90° Viewpoint", "info", 1800);
+}
+window.rotate90 = rotate90;
+
+
 function toggleLegendHUD() {
   const overlay = document.getElementById("axes-legend-overlay");
   const body = document.getElementById("axes-legend-body");
@@ -7091,6 +7549,300 @@ function locateEntityInDocumentLedger() {
     handleSearch({ target: searchBox });
   }
 }
+
+// ==============================================================================
+// 12B. ENTITY PORTRAIT & RISK DYNAMICS SYNTHESIS (HYBRID SSE / MERMAID ENGINE)
+// ==============================================================================
+
+let _activePortraitMarkdown = "";
+let _activePortraitEntityName = "";
+let _portraitAbortController = null;
+
+function initMermaidSupport() {
+  if (window.mermaid) {
+    try {
+      window.mermaid.initialize({
+        startOnLoad: false,
+        theme: 'dark',
+        securityLevel: 'loose',
+        themeVariables: {
+          darkMode: true,
+          background: '#0b1120',
+          primaryColor: '#6366f1',
+          primaryBorderColor: '#818cf8',
+          primaryTextColor: '#f8fafc',
+          lineColor: '#94a3b8',
+          secondaryColor: '#0ea5e9',
+          tertiaryColor: '#1e293b'
+        }
+      });
+    } catch (e) {
+      console.warn("Mermaid initialization warning:", e);
+    }
+  }
+}
+
+// Call on startup
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", initMermaidSupport);
+} else {
+  initMermaidSupport();
+}
+
+async function renderMermaidDiagramsInModal(container) {
+  if (!window.mermaid || !container) return;
+  const mermaidNodes = container.querySelectorAll('.mermaid');
+  if (mermaidNodes.length === 0) return;
+  try {
+    await window.mermaid.run({
+      nodes: Array.from(mermaidNodes)
+    });
+  } catch (err) {
+    console.warn("Mermaid dynamic SVG rendering notice:", err);
+  }
+}
+
+async function triggerPortraitSynthesis(targetId = null, targetName = null) {
+  // 1. Resolve focus entity
+  let focusId = targetId;
+  let focusName = targetName;
+
+  if (!focusId) {
+    if (glsl3D && glsl3D.selectedNode) {
+      focusId = glsl3D.selectedNode.id;
+      focusName = glsl3D.selectedNode.name || focusId;
+    } else {
+      const lineageSearch = document.getElementById("lineage-search-input");
+      if (lineageSearch && lineageSearch.value.trim()) {
+        focusId = lineageSearch.value.trim();
+        focusName = focusId;
+      }
+    }
+  }
+
+  if (!focusId) {
+    alert("Please select an entity in the 3D Universe or enter a name in the search box to generate a portrait dossier.");
+    return;
+  }
+
+  _activePortraitEntityName = focusName || focusId;
+  _activePortraitMarkdown = "";
+
+  const modal = document.getElementById("portrait-modal");
+  const modalTitle = document.getElementById("portrait-modal-title");
+  const modalSubtitle = document.getElementById("portrait-modal-subtitle");
+  const modalBody = document.getElementById("portrait-modal-body");
+
+  if (!modal || !modalBody) return;
+
+  if (modalTitle) modalTitle.textContent = `Portrait & Dynamics: ${_activePortraitEntityName}`;
+  if (modalSubtitle) modalSubtitle.textContent = "Connecting to Knowledge Ledger & Ollama Dual-Core...";
+
+  modalBody.innerHTML = `
+    <div class="dossier-loading-box">
+      <div class="dossier-spinner"></div>
+      <div class="dossier-loading-text">
+        Extracting relational subgraph, active contracts, and friction points for <strong>${escapeHtml(_activePortraitEntityName)}</strong>...
+      </div>
+      <span class="dossier-loading-badge">⚡ Cascaded Dual-Mode Engine (SSE Streaming)</span>
+    </div>
+  `;
+
+  modal.classList.remove("hidden");
+
+  // Abort any ongoing stream
+  if (_portraitAbortController) {
+    _portraitAbortController.abort();
+  }
+  _portraitAbortController = new AbortController();
+
+  let accumulated = "";
+  let lastRenderTime = 0;
+  let activeModel = "";
+
+  try {
+    // Attempt SSE streaming first
+    const response = await fetch("/api/v1/dossier/generate", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Accept": "text/event-stream"
+      },
+      body: JSON.stringify({
+        node_id: focusId,
+        depth: 2,
+        stream: true
+      }),
+      signal: _portraitAbortController.signal
+    });
+
+    if (!response.ok) {
+      if (response.status === 404) {
+        throw new Error(`Insufficient relationship data found in ledger for entity '${focusName}'.`);
+      }
+      throw new Error(`Server returned HTTP ${response.status}`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder("utf-8");
+    let buffer = "";
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith("data:")) continue;
+
+        const payloadStr = trimmed.slice(5).trim();
+        if (payloadStr === "[DONE]") {
+          break;
+        }
+
+        try {
+          const evt = JSON.parse(payloadStr);
+          if (evt.type === "chunk" && evt.content) {
+            accumulated += evt.content;
+            const now = Date.now();
+            if (now - lastRenderTime > 80) {
+              lastRenderTime = now;
+              modalBody.innerHTML = renderMarkdown(accumulated) + '<span class="dossier-streaming-cursor"></span>';
+              modalBody.scrollTop = modalBody.scrollHeight;
+            }
+          } else if (evt.type === "status" && evt.message && modalSubtitle) {
+            modalSubtitle.textContent = evt.message;
+          } else if (evt.type === "info" && evt.active_model && modalSubtitle) {
+            activeModel = evt.active_model;
+            modalSubtitle.textContent = `Analyzing via ${evt.active_node ? evt.active_node.toUpperCase() : 'LLM'} (${evt.active_model})...`;
+          } else if (evt.type === "done" && evt.markdown) {
+            accumulated = evt.markdown;
+          }
+        } catch (parseErr) {
+          // Pass non-JSON line
+        }
+      }
+    }
+
+    _activePortraitMarkdown = accumulated;
+    modalBody.innerHTML = renderMarkdown(accumulated);
+    if (modalSubtitle) {
+      modalSubtitle.textContent = `Synthesis Complete • ${activeModel || 'Ledger Intelligence'} • Ready for Export`;
+    }
+
+    // Render Mermaid diagrams dynamically
+    await renderMermaidDiagramsInModal(modalBody);
+
+  } catch (err) {
+    if (err.name === "AbortError") return;
+
+    console.warn("SSE stream failed, attempting standard JSON fallback...", err);
+
+    // Hybrid fallback: Standard JSON payload
+    try {
+      if (modalSubtitle) modalSubtitle.textContent = "Falling back to standard JSON generation...";
+      const jsonRes = await fetch("/api/v1/dossier/generate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          node_id: focusId,
+          depth: 2,
+          stream: false
+        })
+      });
+
+      if (!jsonRes.ok) {
+        throw new Error(`Fallback failed with HTTP ${jsonRes.status}`);
+      }
+
+      const jsonData = await jsonRes.json();
+      _activePortraitMarkdown = jsonData.markdown || "";
+      modalBody.innerHTML = renderMarkdown(_activePortraitMarkdown);
+      if (modalSubtitle) {
+        modalSubtitle.textContent = `Synthesis Complete • ${jsonData.model || 'Ledger Engine'} • Ready for Export`;
+      }
+      await renderMermaidDiagramsInModal(modalBody);
+
+    } catch (fallbackErr) {
+      modalBody.innerHTML = `
+        <div class="error-box" style="padding: 2rem; text-align: center; color: #f87171;">
+          <h3>⚠️ Synthesis Generation Error</h3>
+          <p>${escapeHtml(err.message || fallbackErr.message)}</p>
+          <div style="margin-top: 1.5rem;">
+            <button class="btn btn-secondary btn-sm" onclick="triggerPortraitSynthesis('${escapeHtml(focusId)}', '${escapeHtml(focusName)}')">
+              ⟳ Retry Analysis
+            </button>
+            <button class="btn btn-outline btn-sm" onclick="closePortraitModal()" style="margin-left: 0.5rem;">
+              Close
+            </button>
+          </div>
+        </div>
+      `;
+    }
+  }
+}
+
+function triggerPortraitSynthesisFromLineage() {
+  const searchInput = document.getElementById("lineage-search-input");
+  let query = searchInput ? searchInput.value.trim() : "";
+  if (!query) {
+    query = prompt("Enter an entity or counterparty name to generate portrait dossier:", "PostFinance SA");
+  }
+  if (query) {
+    triggerPortraitSynthesis(query, query);
+  }
+}
+
+function closePortraitModal() {
+  if (_portraitAbortController) {
+    _portraitAbortController.abort();
+    _portraitAbortController = null;
+  }
+  const modal = document.getElementById("portrait-modal");
+  if (modal) modal.classList.add("hidden");
+}
+
+function copyPortraitMarkdown() {
+  if (!_activePortraitMarkdown) return;
+  navigator.clipboard.writeText(_activePortraitMarkdown).then(() => {
+    const btn = document.getElementById("btn-dossier-copy");
+    if (btn) {
+      const origText = btn.innerHTML;
+      btn.innerHTML = "✅ Copied!";
+      setTimeout(() => {
+        btn.innerHTML = origText;
+      }, 2000);
+    }
+  }).catch(err => {
+    console.error("Clipboard copy failed:", err);
+  });
+}
+
+function downloadPortraitMarkdown() {
+  if (!_activePortraitMarkdown) return;
+  const safeName = (_activePortraitEntityName || "Entity").replace(/[^a-zA-Z0-9_\-]/g, "_");
+  const blob = new Blob([_activePortraitMarkdown], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `Portrait_${safeName}.md`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+window.triggerPortraitSynthesis = triggerPortraitSynthesis;
+window.triggerPortraitSynthesisFromLineage = triggerPortraitSynthesisFromLineage;
+window.closePortraitModal = closePortraitModal;
+window.copyPortraitMarkdown = copyPortraitMarkdown;
+window.downloadPortraitMarkdown = downloadPortraitMarkdown;
 
 // ==============================================================================
 // 13. WORKSPACE 0: PROCESS SCROLLER & LINEAGE EXPLORER DYNAMIC TELEMETRY
@@ -7719,4 +8471,22 @@ async function copyWs0FilteredLogs() {
     document.body.removeChild(textArea);
     showToast(`Copied ${currentWs0FilteredLogs.length} log events to clipboard!`, "success", 3000);
   }
+}
+
+// ==========================================
+// PWA Service Worker Registration
+// ==========================================
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker
+      .register("sw.js")
+      .then((reg) => {
+        // Proactively check for updated service worker on page load
+        try { reg.update(); } catch (_) { }
+        console.log("PWA Service Worker registered with scope:", reg.scope);
+      })
+      .catch((err) => {
+        console.warn("PWA Service Worker registration skipped:", err);
+      });
+  });
 }

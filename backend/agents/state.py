@@ -38,3 +38,26 @@ class InterrogationState(TypedDict, total=False):
     answer: str
     recommendation: str
     sources: List[Dict[str, Any]]
+
+
+class GraphRAGState(TypedDict, total=False):
+    # Input
+    raw_query: str
+    chat_history: List[Dict[str, str]]
+    target_sha256: Optional[str]
+    file_path: Optional[str]
+
+    # Decontextualization & Routing
+    standalone_query: str
+    intent: str  # "EXISTENCE_CHECK" | "DEEP_CONTENT_QA"
+
+    # Retrieval Artifacts
+    retrieval_results: Dict[str, Any]
+    context_chunks: List[str]
+    is_grounded: bool
+
+    # Final Output
+    answer: str
+    sources: List[Dict[str, Any]]
+    recommendation: Optional[str]
+

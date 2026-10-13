@@ -154,21 +154,104 @@ class PropertyGraphStore:
             theme_resolver=ThemeResolver(loader=make_db_taxonomy_loader(self.repo.conn, self.repo._lock))
         )
 
+        def _is_housing_doc(dt: str, fname: str, rpath: str) -> bool:
+            dt_clean = (dt or "").strip().lower()
+            if dt_clean == "lease_contract":
+                return True
+            combined = f"{fname} {rpath}".lower()
+            housing_tokens = (
+                "alfred müller", "alfred muller", "eschenstrasse", "garagebollinger", "hause-kosten",
+                "mietvertrag", "mietzins", "liegenschaft", "nebenkosten", "zinsausweis",
+                "hypothek", "wohnung", "loyer", "bail à loyer", "bail a loyer", "regie", "ausweisung", "evakuierung",
+                "immo", "wohn", "miet", "hypo", "real_estate", "housing"
+            )
+            return any(t in combined for t in housing_tokens)
+
         with self.repo._lock:
             cur = self.repo.conn.cursor()
-            cur.execute("SELECT sha256_hash, doc_type FROM document_ledger;")
-            rows = [(r[0], r[1]) for r in cur.fetchall()]
+            cur.execute("""
+                SELECT dl.sha256_hash, dl.doc_type, dl.canonical_filename, COALESCE(fl.relative_path, '')
+                FROM document_ledger dl
+                LEFT JOIN file_locations fl ON dl.sha256_hash = fl.sha256_hash
+                GROUP BY dl.sha256_hash;
+            """)
+            rows = cur.fetchall()
+
+            cur.execute("SELECT DISTINCT sha256_hash FROM document_entity_links WHERE node_id IN ('financial_pillar_rent', 'financial_pillar_mortgage');")
+            pillar_shas = {r[0] for r in cur.fetchall()}
 
         graphs: List[DocumentKnowledgeGraph] = []
         themes: Dict[str, int] = {}
-        for sha, doc_type in rows:
+        unthemed_shas: List[str] = []
+        for row in rows:
+            sha, doc_type, fname, rpath = row[0], row[1], row[2], row[3]
             g = extractor.attach_theme(DocumentKnowledgeGraph(sha256_hash=sha), doc_type or "")
+            if sha in pillar_shas or _is_housing_doc(doc_type, fname, rpath):
+                housing_theme_id = "theme_real_estate_housing"
+                if not any(l.node_id == housing_theme_id and l.role == THEME_RELATION for l in g.links):
+                    g.links.append(DocumentEntityLink(
+                        sha256_hash=sha,
+                        node_id=housing_theme_id,
+                        role=THEME_RELATION,
+                        confidence=1.0,
+                    ))
+                if not any(n.node_id == housing_theme_id for n in g.nodes):
+                    g.nodes.append(EntityNode(
+                        node_id=housing_theme_id,
+                        node_type="theme",
+                        name="Real Estate & Housing",
+                        properties={"taxonomy_root": housing_theme_id, "is_hub": True},
+                    ))
             if g.links:
                 graphs.append(g)
-                themes[g.links[0].node_id] = themes.get(g.links[0].node_id, 0) + 1
+                for link in g.links:
+                    if link.role == THEME_RELATION:
+                        themes[link.node_id] = themes.get(link.node_id, 0) + 1
+            else:
+                unthemed_shas.append(sha)
 
         for i in range(0, len(graphs), batch_size):
             self.save_graphs_batch(graphs[i:i + batch_size])
+
+        # Purge stale CATEGORIZED_AS links for documents that now have no theme (e.g. 'other')
+        if unthemed_shas:
+            with self.repo._lock:
+                with transaction(self.repo.conn) as cur:
+                    for i in range(0, len(unthemed_shas), batch_size):
+                        batch = unthemed_shas[i:i + batch_size]
+                        placeholders = ",".join("?" for _ in batch)
+                        cur.execute(f"""
+                            DELETE FROM document_entity_links
+                            WHERE role = 'CATEGORIZED_AS' AND sha256_hash IN ({placeholders});
+                        """, tuple(batch))
+
+        # Wire structural knowledge edges for theme_real_estate_housing
+        housing_edges = [
+            ("contract_type_lease_contract", "theme_real_estate_housing", "CATEGORIZED_AS", 1.0, {"context": "Lease contract archetype"}),
+            ("financial_pillar_rent", "theme_real_estate_housing", "CATEGORIZED_AS", 1.0, {"context": "Rent obligations"}),
+            ("financial_pillar_mortgage", "theme_real_estate_housing", "CATEGORIZED_AS", 1.0, {"context": "Hypothecary credit"}),
+            ("theme_real_estate_housing", "location_ch_zg_6312", "LOCATED_IN", 1.0, {"context": "Steinhausen property asset"}),
+            ("theme_real_estate_housing", "location_zug", "LOCATED_IN", 1.0, {"context": "Kanton Zug property jurisdiction"}),
+            ("organization_alfred_muller_ag", "theme_real_estate_housing", "MANAGES", 1.0, {"context": "Property management"}),
+            ("organization_zuger_kantonalbank", "theme_real_estate_housing", "FINANCES", 1.0, {"context": "Mortgage financing"}),
+            ("theme_legal_justice", "theme_real_estate_housing", "DISPUTE_REGARDING", 1.0, {"context": "Legal dispute over property access"}),
+            ("organization_kantonsgericht_zug", "theme_real_estate_housing", "ADJUDICATES_ACCESS_TO", 1.0, {"context": "Judicial rulings regarding property access"}),
+        ]
+        with self.repo._lock:
+            with transaction(self.repo.conn) as cur:
+                for src, tgt, rel, weight, props in housing_edges:
+                    cur.execute("SELECT 1 FROM knowledge_nodes WHERE node_id = ?", (src,))
+                    s_ok = cur.fetchone()
+                    cur.execute("SELECT 1 FROM knowledge_nodes WHERE node_id = ?", (tgt,))
+                    t_ok = cur.fetchone()
+                    if s_ok and t_ok:
+                        cur.execute("""
+                            INSERT INTO knowledge_edges (source_id, target_id, relation_type, weight, properties_json)
+                            VALUES (?, ?, ?, ?, ?)
+                            ON CONFLICT(source_id, target_id, relation_type) DO UPDATE SET
+                                weight = excluded.weight,
+                                properties_json = excluded.properties_json;
+                        """, (src, tgt, rel, weight, json.dumps(props)))
 
         return {
             "documents_examined": len(rows),
@@ -279,6 +362,122 @@ class PropertyGraphStore:
                 "mirrored_from_edges": mirrored_from_edges,
                 "mirrored_from_geolinks": mirrored_from_geolinks,
                 "total_mirrored": mirrored_from_edges + mirrored_from_geolinks
+            }
+
+    def backfill_person_profiles(self) -> Dict[str, Any]:
+        """Backfill verified biographical attributes (date of birth, nationality, residences,
+        civil status, tax/municipal IDs, relationships) into knowledge_nodes.properties_json
+        and link relevant identity/civil documents into document_entity_links.
+        """
+        with self.repo._lock:
+            cur = self.repo.conn.cursor()
+
+            falempin_props = {
+                "full_name": "Antoine Guillaume Falempin",
+                "date_of_birth": "1975-06-23",
+                "birth_place": "France",
+                "nationality": "France",
+                "civil_status": "Married / Verheiratet (with registered child allowance / Kinderabzug in Canton Zug)",
+                "residences": [
+                    "Eschenstrasse 7, 6312 Steinhausen (ZG)",
+                    "Rebenstrasse 29b, 8913 Ottenbach (ZH)"
+                ],
+                "tax_identifiers": {
+                    "municipality": "Steinhausen",
+                    "person_id": "1277-4634",
+                    "canton": "Zug"
+                },
+                "bank_accounts": [
+                    "PostFinance Depot 97-105003-9"
+                ],
+                "family_and_dependents": [
+                    "Dinda Gayatri Ranadireksa (Helsana health policy insured / dependent)",
+                    "Sylvie Napogui Catajou"
+                ],
+                "professions": [
+                    "Senior Verification Test Engineer / Test Architect",
+                    "Software Development & System Test Lead (Medical Devices / Biotech / R&D)"
+                ],
+                "key_counterparties": [
+                    "Alfred Müller AG (Property management Liegenschaft 7077 Steinhausen)",
+                    "Helsana Versicherungen AG",
+                    "AXA Vie SA",
+                    "PostFinance SA",
+                    "Gemeinde Steinhausen / Kanton Zug Steuerverwaltung",
+                    "Kantonspolizei Zürich",
+                    "Etude Benoit Sansonnens (Legal counsel)",
+                    "Roland Graf (Legal counsel)"
+                ]
+            }
+            props_str = json.dumps(falempin_props, ensure_ascii=False)
+
+            cur.execute("""
+                UPDATE knowledge_nodes
+                SET properties_json = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE node_id IN (
+                    'person_antoine_falempin',
+                    'person_falempin_antoine',
+                    'person_antoine_guillaume_falempin_no'
+                ) OR LOWER(name) = 'antoine falempin';
+            """, (props_str,))
+            nodes_updated = cur.rowcount if cur.rowcount >= 0 else 0
+
+            target_node_id = "person_antoine_falempin"
+            target_doc_patterns = [
+                ("%Formblatt Falempin%", "identity_credential"),
+                ("%AXA_Communication_de_la_valeur_1%", "residence_record"),
+                ("%2. Mahnlauf Januar 2026%", "property_ownership"),
+                ("%Kantonspolizei-Zurich-Driving-license%", "official_record"),
+                ("%helsana-versicherungen-ag-20645523555%", "family_health_policy"),
+                ("%Helsana-Insurance-Policy-Details%", "insurance_record"),
+                ("%Falempin_Antoine_3400_3a_Fr%", "pension_policy"),
+                ("%Sample Payslip Antoine Falempin%", "payroll_record"),
+                ("%SGLogisticSystemsGmbh-Mietevertrag%", "lease_contract"),
+                ("%Socialamt_Merged_Dialogue%", "administrative_record"),
+                ("%Lawyer4_Merged_Dialogue%", "legal_record"),
+            ]
+
+            links_created = 0
+            for pat, role in target_doc_patterns:
+                cur.execute("SELECT sha256_hash FROM document_ledger WHERE canonical_filename LIKE ?;", (pat,))
+                for (sha,) in cur.fetchall():
+                    cur.execute("""
+                        INSERT INTO document_entity_links (sha256_hash, node_id, role, confidence)
+                        VALUES (?, ?, ?, 1.0)
+                        ON CONFLICT(sha256_hash, node_id, role) DO UPDATE SET confidence = 1.0;
+                    """, (sha, target_node_id, role))
+                    links_created += 1
+
+            rel_edges = [
+                (target_node_id, "location_steinhausen", "RESIDES_IN", 1.0, {"address": "Eschenstrasse 7, 6312 Steinhausen"}),
+                (target_node_id, "location_ottenbach", "RESIDES_IN", 1.0, {"address": "Rebenstrasse 29b, 8913 Ottenbach"}),
+                (target_node_id, "organization_alfred_mueller_ag", "MANAGED_BY", 1.0, {"subject": "Liegenschaft 7077 Eschenstrasse 7"}),
+                (target_node_id, "organization_postfinance_sa", "HOLDS_ACCOUNT", 1.0, {"account": "Depot 97-105003-9"}),
+            ]
+            for s_id, t_id, r_type, w, p in rel_edges:
+                cur.execute("SELECT 1 FROM knowledge_nodes WHERE node_id = ?;", (t_id,))
+                if not cur.fetchone():
+                    t_name = t_id.replace("location_", "").replace("organization_", "").replace("_", " ").title()
+                    n_type = "location" if "location" in t_id else "organization"
+                    cur.execute("""
+                        INSERT INTO knowledge_nodes (node_id, node_type, name, properties_json, updated_at)
+                        VALUES (?, ?, ?, '{}', CURRENT_TIMESTAMP)
+                        ON CONFLICT(node_id) DO NOTHING;
+                    """, (t_id, n_type, t_name))
+
+                cur.execute("""
+                    INSERT INTO knowledge_edges (source_id, target_id, relation_type, weight, properties_json)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(source_id, target_id, relation_type) DO UPDATE SET
+                        weight = excluded.weight,
+                        properties_json = excluded.properties_json;
+                """, (s_id, t_id, r_type, w, json.dumps(p, ensure_ascii=False)))
+
+            self.repo.conn.commit()
+            return {
+                "nodes_updated": nodes_updated,
+                "links_created": links_created,
+                "edges_ensured": len(rel_edges)
             }
 
     def get_document_entities(self, sha256_hash: str) -> List[Dict[str, Any]]:

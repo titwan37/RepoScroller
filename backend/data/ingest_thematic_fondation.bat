@@ -1,0 +1,1 @@
+uv run python -m backend.main ingest-themes backend/data/foundational_themes.json

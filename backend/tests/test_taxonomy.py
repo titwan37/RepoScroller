@@ -156,15 +156,20 @@ def test_taxonomy_skill_sync_and_evolution(temp_db):
     mgr = TaxonomyManager(db_conn=temp_db)
     sync_res = mgr.sync_from_skill()
     assert sync_res["status"] == "synced"
-    assert sync_res["version"] == "v1.0.0"
+    assert sync_res["version"] == "v1.1.0"
 
-    # Verify career categories are present
+    # Verify career categories and new institutional categories are present
     cats = {c.category_id: c for c in mgr.get_all_categories()}
     assert "career_research" in cats
     assert "career_cv" in cats
     assert "career_cover_letter" in cats
     assert "career_job_description" in cats
     assert "career_portfolio" in cats
+    assert "statute_legislation" in cats
+    assert "financial_banking" in cats
+    assert "insurance_policy" in cats
+    assert "administrative_order" in cats
+    assert "technical_reference" in cats
 
     # Ingest test documents with older v0.9.0 taxonomy
     repo = DocumentRepository(conn=temp_db)
@@ -209,11 +214,11 @@ def test_taxonomy_skill_sync_and_evolution(temp_db):
     # Check updated ledger
     doc_cv = repo.get_document_by_sha256("sha_cv_01")
     assert doc_cv["doc_type"] == "career_cv"
-    assert doc_cv["taxonomy_version"] == "v1.0.0"
+    assert doc_cv["taxonomy_version"] == "v1.1.0"
 
     doc_mot = repo.get_document_by_sha256("sha_mot_01")
     assert doc_mot["doc_type"] == "career_cover_letter"
-    assert doc_mot["taxonomy_version"] == "v1.0.0"
+    assert doc_mot["taxonomy_version"] == "v1.1.0"
 
 
 def test_german_application_letter_classification(temp_db):
@@ -321,4 +326,128 @@ def test_cv_classification_precedence_over_technical_architecture_and_tax(temp_d
     assert res_dinda.confidence_score >= 0.95
 
 
+def test_taxonomy_v1_1_0_golden_benchmarks_and_lease_guardrail(temp_db):
+    """Verify TC-TAX-15 to TC-TAX-20 and lease_contract guardrail in TaxonomyEvolutionEngine."""
+    mgr = TaxonomyManager(db_conn=temp_db)
+    engine = TaxonomyEvolutionEngine(taxonomy_manager=mgr)
+
+    # TC-TAX-15: Legislation (Fedlex)
+    cat, rule, conf = engine.evaluate_document_reclassification({
+        "canonical_filename": "fedlex-data-admin-ch-eli-cc-2002-153-20250701-fr-pdf-a.pdf",
+        "relative_path": "Fedlex_Library/fedlex-data-admin-ch-eli-cc-2002-153-20250701-fr-pdf-a.pdf",
+        "text_snippet": "Recueil officiel du droit fédéral. Loi fédérale sur la formation professionnelle.",
+        "doc_type": "lease_contract"
+    })
+    assert cat == "statute_legislation"
+    assert conf >= 0.95
+
+    # TC-TAX-16: Banking (PostFinance statement)
+    cat, rule, conf = engine.evaluate_document_reclassification({
+        "canonical_filename": "CRE_P_CH1709000000875861243_1108518228_0_2024122309152963.pdf",
+        "relative_path": "CRE_P_CH1709000000875861243_1108518228_0_2024122309152963.pdf",
+        "text_snippet": "PostFinance SA. Relevé de compte IBAN CH1709000000875861243. Solde au 23.12.2024: CHF 12'450.00.",
+        "doc_type": "other"
+    })
+    assert cat == "financial_banking"
+    assert conf >= 0.95
+
+    # TC-TAX-17: Insurance Policy (Helsana)
+    cat, rule, conf = engine.evaluate_document_reclassification({
+        "canonical_filename": "2025-10-22-Helsana-Insurance-Policy-Details_Xerox-Scan_20251027104457(3p).pdf",
+        "relative_path": "2025-10-22-Helsana-Insurance-Policy-Details_Xerox-Scan_20251027104457(3p).pdf",
+        "text_snippet": "Helsana Versicherungen AG. Versicherungspolice Krankenpflegeversicherung. Police Details.",
+        "doc_type": "other"
+    })
+    assert cat == "insurance_policy"
+    assert conf >= 0.95
+
+    # TC-TAX-18: Administrative Order (Strassenverkehrsamt)
+    cat, rule, conf = engine.evaluate_document_reclassification({
+        "canonical_filename": "2026-08-18-Strassenverkehrsamt-Kanton-Zürich-registration-véhicule-Vehicle-recall_20260923163747(2p).pdf",
+        "relative_path": "2026-08-18-Strassenverkehrsamt-Kanton-Zürich-registration-véhicule-Vehicle-recall_20260923163747(2p).pdf",
+        "text_snippet": "Strassenverkehrsamt Kanton Zürich. Amtliche Verfügung betreffend Fahrzeug und Immatriculation.",
+        "doc_type": "other"
+    })
+    assert cat == "administrative_order"
+    assert conf >= 0.90
+
+    # TC-TAX-19: Job Description with _JP.pdf
+    cat, rule, conf = engine.evaluate_document_reclassification({
+        "canonical_filename": "925102 Quality System Engineer- Medical Devices_JP.pdf",
+        "relative_path": "Positions/925102 Quality System Engineer- Medical Devices_JP.pdf",
+        "text_snippet": "Job Description: Quality System Engineer Medical Devices. Requirements and Responsibilities.",
+        "doc_type": "lease_contract"
+    })
+    assert cat == "career_job_description"
+    assert conf >= 0.95
+
+    # TC-TAX-20: Technical Reference (Databricks Big Book)
+    cat, rule, conf = engine.evaluate_document_reclassification({
+        "canonical_filename": "2024-12-10 Databricks-Big-Book-Of-GenAI-FINAL.pdf",
+        "relative_path": "2024-12-10 Databricks-Big-Book-Of-GenAI-FINAL.pdf",
+        "text_snippet": "The Big Book of Generative AI. Complete engineering handbook and reference guide.",
+        "doc_type": "other"
+    })
+    assert cat == "technical_reference"
+    assert conf >= 0.90
+
+    # Lease Contract Guardrail: False positive markdown report gets reclaimed to technical_architecture
+    cat, rule, conf = engine.evaluate_document_reclassification({
+        "canonical_filename": "260909_1414_IngestionReport.md",
+        "relative_path": "260909_1414_IngestionReport.md",
+        "text_snippet": "# LawSuiteRAG Ingestion Audit report and pipeline verification.",
+        "doc_type": "lease_contract"
+    })
+    assert cat == "technical_architecture"
+    assert "Lease Guardrail" in rule
+
+    # Lease Contract Guardrail: True lease contract remains lease_contract
+    cat, rule, conf = engine.evaluate_document_reclassification({
+        "canonical_filename": "Mietvertrag_Wohnung_Ottenbach.pdf",
+        "relative_path": "Mietvertrag_Wohnung_Ottenbach.pdf",
+        "text_snippet": "Mietvertrag für Wohnräume. Vermieter: Hans Muster. Mieter: Antoine Falempin. Mietzins: CHF 1'850.00.",
+        "doc_type": "lease_contract"
+    })
+    assert cat == "lease_contract"
+    assert rule == "Unchanged Baseline"
+
+
+def test_nearest_folder_ancestry_precedence(temp_db):
+    """Verify that Nearest-Folder Ancestry correctly classifies portfolio files even with engineer keywords in filename."""
+    mgr = TaxonomyManager(db_conn=temp_db)
+    engine = TaxonomyEvolutionEngine(taxonomy_manager=mgr)
+
+    # 1. Portfolio Booklet in 2026-Portfolio with engineering title in filename
+    cat, rule, conf = engine.evaluate_document_reclassification({
+        "canonical_filename": "2026-0915_Portfolio-Booklet_AmteraAG_SeniorVerificationEngineerAutomatedHILTestingTeamCoordination_AFalempin_en.pdf",
+        "relative_path": "2025rav/2026-Portfolio/2026-0915_Portfolio-Booklet_AmteraAG_SeniorVerificationEngineerAutomatedHILTestingTeamCoordination_AFalempin_en.pdf",
+        "absolute_path": r"L:\My Drive\RAV\2025rav\2026-Portfolio\2026-0915_Portfolio-Booklet_AmteraAG_SeniorVerificationEngineerAutomatedHILTestingTeamCoordination_AFalempin_en.pdf",
+        "text_snippet": "Hardware-in-the-Loop automated testing portfolio and verification framework case studies.",
+        "doc_type": "other"
+    })
+    assert cat == "career_portfolio"
+    assert "Nearest-Folder Ancestry" in rule or "Portfolio" in rule
+    assert conf >= 0.95
+
+    # 2. Cover Letter in 2025-LM folder
+    cat_lm, rule_lm, conf_lm = engine.evaluate_document_reclassification({
+        "canonical_filename": "2026-08-07_19-29_PostFinance_SeniorPortfolioBusinessAnalystDataAI_A-Falempin_application_letter_de.docx",
+        "relative_path": "2025rav/2025-LM/2026-08-07_19-29_PostFinance_SeniorPortfolioBusinessAnalystDataAI_A-Falempin_application_letter_de.docx",
+        "absolute_path": r"L:\My Drive\RAV\2025rav\2025-LM\2026-08-07_19-29_PostFinance_SeniorPortfolioBusinessAnalystDataAI_A-Falempin_application_letter_de.docx",
+        "text_snippet": "Bewerbung als Senior Portfolio Business Analyst Data & AI bei PostFinance SA.",
+        "doc_type": "career_job_description"
+    })
+    assert cat_lm == "career_cover_letter"
+    assert conf_lm >= 0.95
+
+    # 3. Job Description in 2025-Positions folder
+    cat_pos, rule_pos, conf_pos = engine.evaluate_document_reclassification({
+        "canonical_filename": "Roche_SoftwareEngineer_Lead.docx",
+        "relative_path": "2025rav/2025-Positions/Roche_SoftwareEngineer_Lead.docx",
+        "absolute_path": r"L:\My Drive\RAV\2025rav\2025-Positions\Roche_SoftwareEngineer_Lead.docx",
+        "text_snippet": "We are seeking a Lead Software Engineer for Diagnostic Information Solutions.",
+        "doc_type": "other"
+    })
+    assert cat_pos == "career_job_description"
+    assert conf_pos >= 0.95
 

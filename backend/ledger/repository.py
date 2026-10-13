@@ -2,6 +2,7 @@
 
 import sqlite3
 import threading
+import json
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 from backend.config import settings
@@ -1055,6 +1056,302 @@ class DocumentRepository:
 
             results.sort(key=lambda x: x["gravity_score"], reverse=True)
             return results
+
+    def get_entity_portrait_context(self, node_id: str, depth: int = 2) -> Dict[str, Any]:
+        """
+        Extracts entities, relationships, open obligations, and timeline events
+        relevant to a central actor or topic for dynamic dossier synthesis.
+        """
+        with self._lock:
+            cur = self.conn.cursor()
+
+            # 1. Resolve focus node
+            cur.execute("""
+                SELECT node_id, node_type, name, properties_json 
+                FROM knowledge_nodes 
+                WHERE node_id = ?
+            """, (node_id,))
+            row = cur.fetchone()
+            if not row:
+                import re
+                slug = re.sub(r'[^\w\s-]', '', node_id.strip().lower())
+                slug = re.sub(r'[-\s]+', '_', slug)
+                cur.execute("""
+                    SELECT node_id, node_type, name, properties_json 
+                    FROM knowledge_nodes 
+                    WHERE LOWER(name) = LOWER(?) 
+                       OR node_id = ? 
+                       OR node_id = ?
+                       OR LOWER(node_id) LIKE LOWER(?)
+                    ORDER BY (
+                        CASE 
+                            WHEN node_id = ? THEN 1
+                            WHEN node_id = ? THEN 2
+                            WHEN LOWER(name) = LOWER(?) AND node_type = 'person' THEN 3
+                            WHEN LOWER(name) = LOWER(?) THEN 4
+                            WHEN node_type = 'person' THEN 5
+                            WHEN properties_json != '{}' AND properties_json != '' THEN 6
+                            ELSE 7
+                        END
+                    ) ASC, LENGTH(name) ASC
+                    LIMIT 1
+                """, (
+                    node_id, f"person_{slug}", f"organization_{slug}", f"%{slug}%",
+                    f"person_{slug}", f"organization_{slug}", node_id, node_id
+                ))
+                row = cur.fetchone()
+
+            if not row:
+                return {
+                    "focus_node": {"node_id": node_id, "name": node_id, "node_type": "unknown"},
+                    "edges": [],
+                    "action_items": [],
+                    "documents": []
+                }
+
+            focus_node = dict(row)
+            if focus_node.get("properties_json"):
+                try:
+                    focus_node["properties"] = json.loads(focus_node["properties_json"])
+                except Exception:
+                    focus_node["properties"] = {}
+            else:
+                focus_node["properties"] = {}
+
+            target_id = focus_node["node_id"]
+            target_name = focus_node["name"]
+
+            # 2. Extract 1-hop connected edges
+            cur.execute("""
+                SELECT e.source_id, n1.name AS source_name, e.relation_type, 
+                       e.target_id, n2.name AS target_name, e.properties_json
+                FROM knowledge_edges e
+                JOIN knowledge_nodes n1 ON e.source_id = n1.node_id
+                JOIN knowledge_nodes n2 ON e.target_id = n2.node_id
+                WHERE e.source_id = ? OR e.target_id = ?
+                LIMIT 60
+            """, (target_id, target_id))
+            edges = [dict(r) for r in cur.fetchall()]
+
+            # 2b. If depth >= 2, extract 2-hop interconnected edges between neighbors
+            if depth >= 2 and len(edges) < 60:
+                neighbor_ids = set()
+                for edge in edges:
+                    if edge["source_id"] != target_id:
+                        neighbor_ids.add(edge["source_id"])
+                    if edge["target_id"] != target_id:
+                        neighbor_ids.add(edge["target_id"])
+
+                if neighbor_ids:
+                    bounded_neighbors = list(neighbor_ids)[:15]
+                    placeholders = ",".join(["?"] * len(bounded_neighbors))
+                    cur.execute(f"""
+                        SELECT e.source_id, n1.name AS source_name, e.relation_type, 
+                               e.target_id, n2.name AS target_name, e.properties_json
+                        FROM knowledge_edges e
+                        JOIN knowledge_nodes n1 ON e.source_id = n1.node_id
+                        JOIN knowledge_nodes n2 ON e.target_id = n2.node_id
+                        WHERE e.source_id IN ({placeholders}) AND e.target_id IN ({placeholders})
+                        LIMIT {60 - len(edges)}
+                    """, bounded_neighbors + bounded_neighbors)
+                    second_hop_edges = [dict(r) for r in cur.fetchall()]
+                    edges.extend(second_hop_edges)
+
+            is_judicial_query = any(k in target_id.lower() or k in target_name.lower() for k in [
+                "court", "gericht", "urteil", "obergericht", "kantonsgericht", "staatsanwalt", "legal_justice"
+            ])
+
+            # 3. Extract active obligations, pending tasks, and friction points
+            if is_judicial_query:
+                cur.execute("""
+                    SELECT DISTINCT ai.action_id, ai.action_type, ai.description, ai.counterparty, ai.amount, 
+                           ai.currency, ai.due_date, ai.status, dl.canonical_filename
+                    FROM action_items ai
+                    JOIN document_ledger dl ON ai.sha256_hash = dl.sha256_hash
+                    LEFT JOIN document_entity_links del ON ai.sha256_hash = del.sha256_hash
+                    WHERE del.node_id = ?
+                       OR dl.doc_type = 'court_order'
+                       OR LOWER(dl.canonical_filename) LIKE '%gericht%'
+                       OR LOWER(dl.canonical_filename) LIKE '%urteil%'
+                       OR LOWER(dl.canonical_filename) LIKE '%scheidung%'
+                       OR LOWER(dl.canonical_filename) LIKE '%klage%'
+                       OR LOWER(ai.description) LIKE '%gericht%'
+                       OR LOWER(ai.description) LIKE '%court%'
+                       OR LOWER(ai.description) LIKE '%urteil%'
+                    ORDER BY (ai.due_date IS NOT NULL AND ai.due_date < date('now') AND ai.status IN ('pending', 'overdue')) DESC, 
+                             ai.due_date DESC
+                    LIMIT 55;
+                """, (target_id,))
+            else:
+                cur.execute("""
+                    SELECT DISTINCT ai.action_id, ai.action_type, ai.description, ai.counterparty, ai.amount, 
+                           ai.currency, ai.due_date, ai.status, dl.canonical_filename
+                    FROM action_items ai
+                    JOIN document_ledger dl ON ai.sha256_hash = dl.sha256_hash
+                    LEFT JOIN document_entity_links del ON ai.sha256_hash = del.sha256_hash
+                    WHERE del.node_id = ? 
+                       OR (ai.counterparty IS NOT NULL AND (ai.counterparty LIKE ? OR ai.counterparty LIKE ?))
+                       OR (ai.description IS NOT NULL AND (ai.description LIKE ? OR ai.description LIKE ?))
+                    ORDER BY (ai.due_date IS NOT NULL AND ai.due_date < date('now') AND ai.status IN ('pending', 'overdue')) DESC, 
+                             ai.due_date ASC
+                    LIMIT 40;
+                """, (target_id, f"%{target_id}%", f"%{target_name[:20]}%", f"%{target_id}%", f"%{target_name[:20]}%"))
+            action_items = [dict(r) for r in cur.fetchall()]
+
+            # 4. Extract linked canonical documents & chronology
+            if is_judicial_query:
+                cur.execute("""
+                    SELECT dl.sha256_hash, dl.canonical_filename, MAX(dl.doc_date) as doc_date, dl.doc_type, dl.lifecycle_status
+                    FROM document_ledger dl
+                    WHERE dl.doc_type = 'court_order'
+                       OR LOWER(dl.canonical_filename) LIKE '%obergericht%'
+                       OR LOWER(dl.canonical_filename) LIKE '%kantonsgericht%'
+                       OR LOWER(dl.canonical_filename) LIKE '%staatsanwalt%'
+                       OR LOWER(dl.canonical_filename) LIKE '%urteil%'
+                       OR dl.sha256_hash IN (
+                           SELECT sha256_hash FROM document_entity_links WHERE node_id = ?
+                       )
+                    GROUP BY dl.canonical_filename
+                    ORDER BY (
+                        CASE 
+                            WHEN ? != '' AND LOWER(dl.canonical_filename) LIKE '%' || LOWER(?) || '%' THEN 1
+                            WHEN LOWER(dl.canonical_filename) LIKE '%obergericht%' THEN 2
+                            WHEN LOWER(dl.canonical_filename) LIKE '%kantonsgericht%' THEN 3
+                            WHEN LOWER(dl.canonical_filename) LIKE '%staatsanwalt%' THEN 4
+                            WHEN LOWER(dl.canonical_filename) LIKE '%urteil%' THEN 5
+                            ELSE 6
+                        END
+                    ) ASC, MAX(dl.doc_date) DESC
+                    LIMIT 60;
+                """, (target_id, target_name, target_name))
+            else:
+                cur.execute("""
+                    SELECT DISTINCT dl.sha256_hash, dl.canonical_filename, dl.doc_date, dl.doc_type, dl.lifecycle_status
+                    FROM document_entity_links del
+                    JOIN document_ledger dl ON del.sha256_hash = dl.sha256_hash
+                    WHERE del.node_id = ?
+                    ORDER BY dl.doc_date DESC
+                    LIMIT 50;
+                """, (target_id,))
+            documents = [dict(r) for r in cur.fetchall()]
+
+            # 5. Extract rich biographical, contractual, and official text snippets across diverse categories
+            import re
+            clean_tokens = [
+                p.lower() for p in re.sub(r"[^\w\s]", " ", target_name).split()
+                if len(p) > 2 and p.lower() not in {"and", "the", "gmbh", "ag", "sa", "ltd", "inc", "corp", "ch"}
+            ]
+            distinctive_token = clean_tokens[-1] if clean_tokens else target_id.lower()
+            name_pattern = f"%{distinctive_token}%"
+
+            text_evidence = []
+            seen_chunk_hashes = set()
+
+            # 5a. Priority 1: Identity, tax, residence, official & family policies
+            cur.execute("""
+                SELECT dl.canonical_filename, dl.doc_type, dl.doc_date, dc.chunk_text
+                FROM document_entity_links del
+                JOIN document_ledger dl ON del.sha256_hash = dl.sha256_hash
+                JOIN document_chunks dc ON del.sha256_hash = dc.sha256_hash
+                WHERE del.node_id IN (
+                    SELECT node_id FROM knowledge_nodes WHERE LOWER(name) LIKE ? OR LOWER(node_id) LIKE ? LIMIT 40
+                )
+                AND (
+                    del.role IN ('identity_credential', 'residence_record', 'property_ownership', 'official_record', 'family_health_policy', 'pension_policy')
+                    OR dl.doc_type IN ('tax_assessment', 'lease_contract', 'identity_credentials', 'formal_correspondence')
+                    OR dl.canonical_filename LIKE '%Formblatt%'
+                    OR dl.canonical_filename LIKE '%Veranlagung%'
+                    OR dl.canonical_filename LIKE '%Miet%'
+                    OR dl.canonical_filename LIKE '%Helsana%'
+                    OR dl.canonical_filename LIKE '%Mahnung%'
+                    OR dl.canonical_filename LIKE '%AXA%'
+                )
+                ORDER BY (
+                    CASE
+                        WHEN dl.canonical_filename LIKE '%Formblatt%' THEN 1
+                        WHEN dl.doc_type = 'tax_assessment' OR dl.canonical_filename LIKE '%Veranlagung%' THEN 2
+                        WHEN dl.canonical_filename LIKE '%Mahnung%' OR dl.canonical_filename LIKE '%Liegenschaft%' THEN 3
+                        WHEN dl.doc_type = 'lease_contract' OR dl.canonical_filename LIKE '%Miet%' THEN 4
+                        WHEN dl.canonical_filename LIKE '%Helsana%' OR dl.canonical_filename LIKE '%AXA%' THEN 5
+                        WHEN dl.doc_type = 'formal_correspondence' OR dl.canonical_filename LIKE '%Polizei%' THEN 6
+                        ELSE 7
+                    END
+                ) ASC, dc.chunk_index ASC
+                LIMIT 10
+            """, (name_pattern, name_pattern))
+            for r in cur.fetchall():
+                ch_dict = dict(r)
+                key = (ch_dict["canonical_filename"], ch_dict.get("chunk_text", "")[:60])
+                if key not in seen_chunk_hashes:
+                    seen_chunk_hashes.add(key)
+                    text_evidence.append(ch_dict)
+
+            # 5b. Priority 2: Legal, judicial, and dispute dialogues
+            cur.execute("""
+                SELECT dl.canonical_filename, dl.doc_type, dl.doc_date, dc.chunk_text
+                FROM document_entity_links del
+                JOIN document_ledger dl ON del.sha256_hash = dl.sha256_hash
+                JOIN document_chunks dc ON del.sha256_hash = dc.sha256_hash
+                WHERE del.node_id IN (
+                    SELECT node_id FROM knowledge_nodes WHERE LOWER(name) LIKE ? OR LOWER(node_id) LIKE ? LIMIT 40
+                )
+                AND (
+                    dl.doc_type IN ('legal_contract', 'court_order')
+                    OR dl.canonical_filename LIKE '%Dialogue%'
+                    OR dl.canonical_filename LIKE '%Lawyer%'
+                    OR dl.canonical_filename LIKE '%Graf%'
+                    OR dl.canonical_filename LIKE '%Sansonnens%'
+                )
+                ORDER BY dc.chunk_index ASC, dl.doc_date DESC
+                LIMIT 4
+            """, (name_pattern, name_pattern))
+            for r in cur.fetchall():
+                ch_dict = dict(r)
+                key = (ch_dict["canonical_filename"], ch_dict.get("chunk_text", "")[:60])
+                if key not in seen_chunk_hashes:
+                    seen_chunk_hashes.add(key)
+                    text_evidence.append(ch_dict)
+
+            # 5c. Priority 3: Professional & Career records (max 2 chunks to avoid flooding)
+            cur.execute("""
+                SELECT dl.canonical_filename, dl.doc_type, dl.doc_date, dc.chunk_text
+                FROM document_entity_links del
+                JOIN document_ledger dl ON del.sha256_hash = dl.sha256_hash
+                JOIN document_chunks dc ON del.sha256_hash = dc.sha256_hash
+                WHERE del.node_id IN (
+                    SELECT node_id FROM knowledge_nodes WHERE LOWER(name) LIKE ? OR LOWER(node_id) LIKE ? LIMIT 40
+                )
+                AND (dl.doc_type IN ('career_cv', 'employment_contract') OR dl.canonical_filename LIKE '%CV%')
+                ORDER BY dl.doc_date DESC, dc.chunk_index ASC
+                LIMIT 2
+            """, (name_pattern, name_pattern))
+            for r in cur.fetchall():
+                ch_dict = dict(r)
+                key = (ch_dict["canonical_filename"], ch_dict.get("chunk_text", "")[:60])
+                if key not in seen_chunk_hashes:
+                    seen_chunk_hashes.add(key)
+                    text_evidence.append(ch_dict)
+
+            if not text_evidence:
+                cur.execute("""
+                    SELECT DISTINCT dl.canonical_filename, dl.doc_type, dl.doc_date, dc.chunk_text
+                    FROM document_entity_links del
+                    JOIN document_ledger dl ON del.sha256_hash = dl.sha256_hash
+                    JOIN document_chunks dc ON del.sha256_hash = dc.sha256_hash
+                    WHERE del.node_id = ?
+                    ORDER BY dc.chunk_index ASC, dl.doc_date DESC
+                    LIMIT 10
+                """, (target_id,))
+                text_evidence = [dict(r) for r in cur.fetchall()]
+
+            return {
+                "focus_node": focus_node,
+                "edges": edges,
+                "action_items": action_items,
+                "documents": documents,
+                "text_evidence": text_evidence
+            }
+
 
 
 

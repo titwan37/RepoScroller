@@ -1,8 +1,27 @@
 import argparse
 import sys
 import logging
-import uvicorn
+import warnings
 from pathlib import Path
+
+# Fix Windows console charmap encoding for emojis
+if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if sys.stderr and hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+from backend.ai.taxonomy import TaxonomyRefiner
+
+# Silence harmless third-party LangChain/LangGraph internal deprecation warnings
+warnings.filterwarnings("ignore", message=".*LangChainPendingDeprecationWarning.*")
+warnings.filterwarnings("ignore", message=".*allowed_objects.*")
+
+# Ensure project root is in sys.path
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+import uvicorn
 from backend.config import settings
 from backend.ledger.db import init_db
 from backend.ledger.repository import DocumentRepository
@@ -53,6 +72,13 @@ def main():
     chat_p.add_argument("--node", choices=["pc1", "pc2", "localhost", "cuda"], default=None, help="Routing node for api/chat (pc1: CPU / pc2: CUDA RTX 3060)")
     chat_p.add_argument("--model", default=None, help="Target LLM model (e.g. llama3.2:3b or llama3.1:8b)")
 
+    # Command: rag
+    rag_p = subparsers.add_parser("rag", help="Query the Knowledge Base using Hybrid Multi-Signal GraphRAG")
+    rag_p.add_argument("query", help="Search question or clause inquiry")
+    rag_p.add_argument("--sha", default=None, help="Anchor specific document SHA-256 hash")
+    rag_p.add_argument("--top-k", type=int, default=5, help="Number of context chunks to return (default: 5)")
+    rag_p.add_argument("--hops", type=int, default=1, help="Knowledge graph expansion hops (default: 1)")
+
     # Command: sidecar
     sidecar_p = subparsers.add_parser("sidecar", help="Run the Knowledge Base Sidecar Worker to chunk and embed documents")
     sidecar_p.add_argument("--batch", action="store_true", help="Process pending items once and exit")
@@ -72,6 +98,18 @@ def main():
 
     # Command: backfill-obligations
     subparsers.add_parser("backfill-obligations", help="Backfill reception_date, due_date, and actionable obligations using existing DB records and chunks")
+
+    # Command: ingest-themes
+    ingest_parser = subparsers.add_parser(
+        "ingest-themes", 
+        help="Ingest a manually reviewed foundational themes JSON file into the database"
+    )
+    ingest_parser.add_argument("file_path", type=str, help="Path to the foundational_themes.json file")
+
+
+    # Command: embed-test
+    embed_test_p = subparsers.add_parser("embed-test", help="Test local/remote Ollama embeddings endpoint, latency, and vector dimensions")
+    embed_test_p.add_argument("--text", default="RepoScroller sovereign document intelligence test", help="Sample text to embed")
 
     args = parser.parse_args()
 
@@ -139,6 +177,11 @@ def main():
     if args.command == "serve":
         print(f"Starting RepoScroller API at http://{args.host}:{args.port}...")
         uvicorn.run("api.app:app", host=args.host, port=args.port, reload=args.reload)
+
+    elif args.command == "ingest-themes":
+        from backend.ai.taxonomy import TaxonomyRefiner
+        refiner = TaxonomyRefiner()
+        refiner.ingest_reviewed_themes(args.file_path)
 
     elif args.command == "scan":
         crawler = MultiRootCrawler(
@@ -229,6 +272,25 @@ def main():
         print(f"\n{res['answer']}")
         print(f"\nRecommendation: {res['recommendation']}")
 
+    elif args.command == "rag":
+        from backend.agents.graph_rag import create_graph_rag_workflow
+        print(f"Executing GraphRAG LangGraph Pipeline for: '{args.query}'...\n")
+        workflow = create_graph_rag_workflow()
+        res = workflow.invoke({
+            "raw_query": args.query,
+            "chat_history": [],
+            "target_sha256": args.sha
+        })
+        print(f"Intent: {res.get('intent', 'UNKNOWN')} | Grounded: {res.get('is_grounded', False)}")
+        print(f"\n{res.get('answer')}\n")
+        sources = res.get("sources", [])
+        if sources:
+            print("Grounded Sources:")
+            for s in sources[:5]:
+                print(f"  - {s.get('canonical_filename')} ({s.get('doc_date', 'No date')})")
+        if res.get("recommendation"):
+            print(f"\nRecommendation: {res.get('recommendation')}")
+
     elif args.command == "sidecar":
         from backend.ai.sidecar_worker import KnowledgeBaseSidecarWorker
         worker = KnowledgeBaseSidecarWorker()
@@ -256,6 +318,23 @@ def main():
     elif args.command == "backfill-obligations":
         from backend.ledger.backfill_obligations import run_obligations_backfill
         run_obligations_backfill()
+
+    elif args.command == "embed-test":
+        import time
+        from backend.ai.embeddings import EmbeddingAdapter
+        print(f"Testing RepoScroller Embedding Pipeline with sample: '{args.text}'...")
+        adapter = EmbeddingAdapter()
+        t0 = time.time()
+        vec = adapter.embed_text(args.text)
+        elapsed = (time.time() - t0) * 1000
+        print(f"\nEmbedding Result:")
+        print(f"  - Dimension: {len(vec)}d (Expected: {adapter.dimension}d)")
+        print(f"  - Latency:   {elapsed:.1f}ms")
+        print(f"  - Vector sample: {vec[:4]}")
+        if len(vec) == adapter.dimension and any(v != 0.0 for v in vec):
+            print("\n[OK] Embedding engine is fully operational!")
+        else:
+            print("\n[WARN] Embedding returned zero or dimension mismatch vector.")
 
     else:
         parser.print_help()

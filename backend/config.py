@@ -39,7 +39,49 @@ class Settings(BaseSettings):
 
     # File extensions to ingest
     SUPPORTED_EXTENSIONS: List[str] = Field(
-        default_factory=lambda: [".pdf", ".docx", ".txt", ".md", ".eml"]
+        default_factory=lambda: [".pdf", ".docx", ".txt", ".md", ".eml", ".xml"]
+    )
+
+    # Swiss Law & Fedlex Storage Roots
+    SWISS_LAW_ROOTS: List[str] = Field(
+        default_factory=lambda: [
+            r"\\SyNAS\CloudSpace\LexSpace",
+            r"\\SyNAS\xcloud\LawSuiteRAG",
+        ]
+    )
+
+    # Swiss Federal Law SR/RS Code Mapping (FR / DE / EN / IT)
+    SWISS_LAW_MAP: dict[str, str] = Field(
+        default_factory=lambda: {
+            # SR 101: Federal Constitution
+            "CST": "101", "BV": "101",
+            # SR 142.20: Foreign Nationals and Integration Act
+            "LEI": "142.20", "AIG": "142.20", "FNIA": "142.20",
+            # SR 173.110: Federal Supreme Court Act
+            "LTF": "173.110", "BGG": "173.110", "LCA": "173.110", "FSCA": "173.110",
+            # SR 210: Civil Code
+            "CC": "210", "ZGB": "210",
+            # SR 220: Code of Obligations
+            "CO": "220", "OR": "220",
+            # SR 272: Civil Procedure Code
+            "CPC": "272", "ZPO": "272",
+            # SR 273: Federal Civil Procedure Act
+            "PCF": "273", "BZP": "273",
+            # SR 281.1: Debt Collection and Bankruptcy Act
+            "LP": "281.1", "SCHKG": "281.1", "DEBA": "281.1",
+            # SR 311.0: Criminal Code
+            "CP": "311.0", "STGB": "311.0", "SCC": "311.0",
+            # SR 312.0: Criminal Procedure Code
+            "CPP": "312.0", "STPO": "312.0", "CRIMPC": "312.0",
+            # SR 702: Second Homes Act
+            "LRS": "702", "ZWG": "702",
+            # SR 741.01: Road Traffic Act
+            "LCR": "741.01", "SVG": "741.01", "RTA": "741.01",
+            # SR 830.1: Social Insurance General Part Act
+            "LPGA": "830.1", "ATSG": "830.1",
+            # SR 831.10: Old-Age and Survivors' Insurance Act
+            "LAVS": "831.10", "AHVG": "831.10",
+        }
     )
 
     # Directories to ignore during traversal
@@ -51,6 +93,20 @@ class Settings(BaseSettings):
             "System Volume Information"
         ]
     )
+
+    # Files & patterns to ignore during crawling/watching
+    IGNORE_FILE_PATTERNS: List[str] = Field(
+        default_factory=lambda: [
+            "~$*", "*.tmp", "*.crdownload", "*.part", "job_history.txt", "thumbs.db", "desktop.ini"
+        ]
+    )
+
+    # Raw Scanner Ingestion Postponement (awaits manual or automated renaming)
+    POSTPONE_RAW_SCANS: bool = True  # Avoid ingesting raw scanner documents until renamed
+    RAW_SCAN_PREFIXES: List[str] = Field(
+        default_factory=lambda: ["Xerox Scan_", "Xerox_Scan_", "Scan_"]
+    )
+    RAW_SCAN_POSTPONE_HOURS: float = 96.0  # Hours to wait for rename before fallback ingestion (0 = postpone indefinitely)
 
     # Crawler settings
     POLL_INTERVAL_SECONDS: int = 10
@@ -81,6 +137,7 @@ class Settings(BaseSettings):
     OLLAMA_EMBED_BASE_URL: Optional[str] = "http://NITRO-AN51755:11434"  # PC2 Remote Node (CUDA GPU RTX 3060)
     OLLAMA_LOCAL_EMBED_BASE_URL: Optional[str] = "http://localhost:11434"  # Tier 2 Local CPU Fallback
     OLLAMA_LOCAL_EMBEDDING_MODEL: str = "snowflake-arctic-embed:latest"
+    OLLAMA_LOCAL_EMBED_NUM_CTX: Optional[int] = 512  # Context window for local 512-token models (snowflake-arctic-embed v1)
 
     # LLM Categorization & Analysis settings
     LLM_PROVIDER: str = "auto"  # 'auto', 'openrouter', 'ollama', or 'heuristic'
@@ -88,8 +145,9 @@ class Settings(BaseSettings):
     OPENROUTER_MODEL: str = "google/gemini-2.0-flash-001"
     OLLAMA_MODEL: str = "llama3.2:3b"
     OLLAMA_MODEL_PC1: str = "llama3.2:1b"
+    OLLAMA_MODEL_SP1: str = "qwen2.5:7b"
     OLLAMA_MODEL_PC2: str = "llama3.2:3b"
-
+    
     # Dense Vector Embeddings & Knowledge Base Sidecar Settings
     EMBEDDING_PROVIDER: str = "auto"  # 'auto', 'ollama', 'openrouter', or 'mock'
     OLLAMA_EMBEDDING_MODEL: str = "snowflake-arctic-embed2:latest"
@@ -158,6 +216,17 @@ class Settings(BaseSettings):
                     pass
             return [item.strip() for item in v.split(",") if item.strip()]
         return v
+
+    def is_swiss_law_root(self, path: Union[str, Path]) -> bool:
+        """Check if a file or storage root resides in known Swiss legal directories."""
+        path_str = str(path).lower()
+        return any(root.lower() in path_str for root in self.SWISS_LAW_ROOTS)
+
+    def get_sr_code_for_abbrev(self, abbrev: str) -> Optional[str]:
+        """Resolve Swiss law abbreviation (e.g. 'CO', 'OR', 'CC', 'ZGB') to SR code."""
+        if not abbrev:
+            return None
+        return self.SWISS_LAW_MAP.get(abbrev.strip().upper())
 
 
 settings = Settings()

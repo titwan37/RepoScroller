@@ -1,0 +1,38 @@
+# backend/tests/scenarios/case_court_orders_time_tunnel.yaml
+use_case: "Time Tunnel - Court Decision Documents"
+scenario: "Filter and view in the 3D Time Tunnel all court decision documents over the last 6 years"
+
+input:
+  filename: "2024-03-15-Obergericht-Zug-Urteil-Zivilabteilung.pdf"
+  doc_type_raw: "gerichtsurteil"
+  text_snippet: "Urteil des Obergerichts des Kantons Zug betreffend Zivilklage und Rechtsöffnung gemäss Art. 308 ZPO."
+  query_filter:
+    layout: "timeline"
+    type: "court_order"
+    theme: "theme_legal_justice"
+    time_window_years: 6
+    min_date: "2020-01-01"
+    max_date: "2026-12-31"
+
+expected:
+  canonical_category: "court_order"
+  macro_theme: "theme_legal_justice"
+  entities:
+    - { type: "organization", name: "Obergericht Zug" }
+    - { type: "statute", name: "Art. 308 ZPO" }
+  edges:
+    - {
+        source: "document_category_court_order",
+        target: "theme_legal_justice",
+        rel: "CATEGORIZED_AS",
+      }
+  forbidden_nodes:
+    - "theme_household_violence"
+    - "theme_court_order"
+  time_tunnel:
+    layout: "timeline"
+    axis_z: "Chronological Urgency Timeline (Z-Tunnel)"
+    min_date: "2020-01-01"
+    max_date: "2026-12-31"
+    doc_type: "court_order"
+    min_returned_documents: 1

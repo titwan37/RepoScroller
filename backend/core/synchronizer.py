@@ -68,6 +68,25 @@ class DocumentSynchronizer:
         is_primary = ("lexspace" in storage_root.lower() or "lawsuite" in storage_root.lower())
 
         if existing_doc:
+            # Upgrade canonical_filename if previously recorded with a generic scanner name
+            existing_name = existing_doc.get("canonical_filename", "")
+            raw_prefixes = getattr(settings, "RAW_SCAN_PREFIXES", ["Xerox Scan_", "Xerox_Scan_", "Scan_"])
+            is_old_raw = any(existing_name.lower().startswith(p.lower()) for p in raw_prefixes)
+            is_new_raw = any(file_path.name.lower().startswith(p.lower()) for p in raw_prefixes)
+
+            if is_old_raw and not is_new_raw:
+                try:
+                    with self.repo._lock:
+                        self.repo.conn.execute(
+                            "UPDATE document_ledger SET canonical_filename = ?, last_verified = CURRENT_TIMESTAMP WHERE sha256_hash = ?;",
+                            (file_path.name, sha256_hash)
+                        )
+                        self.repo.conn.commit()
+                    logger.info(f"Upgraded canonical_filename from raw scan placeholder '{existing_name}' to '{file_path.name}'")
+                    existing_doc["canonical_filename"] = file_path.name
+                except Exception as e:
+                    logger.debug(f"Could not update canonical_filename: {e}")
+
             # Exact duplicate found in another location!
             self.repo.record_location(
                 sha256_hash=sha256_hash,
@@ -104,14 +123,26 @@ class DocumentSynchronizer:
             metadata=metadata
         )
 
-        analysis = self.analyzer.analyze(
-            text=text,
-            filename=file_path.name,
-            metadata=metadata
-        )
-
-        doc_type = analysis.document_category
-        text_snippet = f"[{analysis.document_category.upper()}] {analysis.summary}" if analysis.summary else (text[:500] if text else f"[File: {file_path.name}]")
+        if metadata.get("is_fedlex_xml"):
+            # Official Swiss Federal Law XML: authoritative legislation
+            doc_type = "statute_legislation"
+            eval_result["lifecycle_status"] = "final"
+            eval_result["completeness_score"] = 1.0
+            eval_result["maturity_score"] = 1.0
+            sr_code = metadata.get("sr_code", "")
+            title = metadata.get("title", "")
+            lang = metadata.get("lang", "").upper()
+            art_cnt = metadata.get("articles_count", 0)
+            text_snippet = f"[LEGAL SR {sr_code}] {title} ({lang}) - {art_cnt} Articles"
+            analysis = None
+        else:
+            analysis = self.analyzer.analyze(
+                text=text,
+                filename=file_path.name,
+                metadata=metadata
+            )
+            doc_type = analysis.document_category
+            text_snippet = f"[{analysis.document_category.upper()}] {analysis.summary}" if analysis.summary else (text[:500] if text else f"[File: {file_path.name}]")
 
         # Extract substantive document date (filename prefix, content, or mtime)
         doc_date, doc_date_source = extract_document_date(
@@ -155,8 +186,8 @@ class DocumentSynchronizer:
                 doc_date=doc_date,
                 doc_date_source=doc_date_source,
                 full_text=text,
-                reception_date=analysis.reception_date,
-                due_date=analysis.due_date,
+                reception_date=analysis.reception_date if analysis else None,
+                due_date=analysis.due_date if analysis else None,
             )
 
             # Record physical location
@@ -172,7 +203,8 @@ class DocumentSynchronizer:
 
             # Step 6b: Record operational Action Items detected in document
             theme_node_id = f"theme_{doc_type}" if doc_type else None
-            for item in (analysis.action_items or []):
+            action_items = analysis.action_items if (analysis and analysis.action_items) else []
+            for item in action_items:
                 self.repo.create_action_item(
                     sha256_hash=sha256_hash,
                     description=item.description,
@@ -181,7 +213,7 @@ class DocumentSynchronizer:
                     counterparty=item.counterparty,
                     amount=item.amount,
                     currency=item.currency or "CHF",
-                    due_date=item.due_date or analysis.due_date,
+                    due_date=item.due_date or (analysis.due_date if analysis else None),
                     status="pending"
                 )
 
@@ -191,8 +223,8 @@ class DocumentSynchronizer:
                 "canonical_filename": file_path.name,
                 "doc_type": doc_type,
                 "doc_date": doc_date,
-                "reception_date": analysis.reception_date,
-                "due_date": analysis.due_date,
+                "reception_date": analysis.reception_date if analysis else None,
+                "due_date": analysis.due_date if analysis else None,
             }
             struck_out_ids = self.repo.cross_match_and_strikeout_actions(doc_record_payload, text)
 

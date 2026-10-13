@@ -1,0 +1,22 @@
+# backend/tests/scenarios/case_police_interrogation.yaml
+use_case: "Police Interrogation Protocol"
+scenario: "Police domestic incident protocol mapped to judicial proceeding"
+input:
+  filename: "2020-12-03-Zuger-Polizei-Einvernahmeprotokoll-häuslicher-Gewalt.pdf"
+  doc_type_raw: "household-violence"
+  text_snippet: "Einvernahmeprotokoll Zuger Polizei betreffend Art. 303 StGB in Steinhausen."
+
+expected:
+  canonical_category: "court_order"
+  macro_theme: "theme_legal_justice"
+  entities:
+    - { type: "location", name: "Steinhausen" }
+    - { type: "statute", name: "Art. 303" }
+  edges:
+    - {
+        source: "document_category_court_order",
+        target: "theme_legal_justice",
+        rel: "CATEGORIZED_AS",
+      }
+  # forbidden_nodes:
+  #   - "theme_household_violence"

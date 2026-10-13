@@ -31,6 +31,8 @@ def extract_document_data(file_path: Path) -> Tuple[str, Dict[str, Any]]:
         res = _extract_text_file(file_path)
     elif ext == ".eml":
         res = _extract_eml(file_path)
+    elif ext == ".xml":
+        res = _extract_xml(file_path)
     else:
         # Fallback for unrecognized text files
         res = _extract_text_file(file_path)
@@ -186,6 +188,34 @@ def _extract_eml(file_path: Path) -> Tuple[str, Dict[str, Any]]:
         metadata["extraction_error"] = str(e)
 
     return text.strip(), metadata
+
+
+def _extract_xml(file_path: Path) -> Tuple[str, Dict[str, Any]]:
+    """Extract structured data from XML files (prioritizing Akoma Ntoso 3.0 Fedlex)."""
+    from backend.extraction.fedlex_parser import is_akoma_ntoso_xml, parse_akoma_ntoso_xml, load_manifest
+
+    if is_akoma_ntoso_xml(file_path):
+        manifest = load_manifest(file_path)
+        return parse_akoma_ntoso_xml(file_path, manifest=manifest)
+
+    # General XML fallback: parse element texts cleanly
+    metadata: Dict[str, Any] = {
+        "page_count": 1,
+        "has_digital_signature": False,
+        "is_generic_xml": True,
+    }
+    try:
+        tree = ET.parse(file_path)
+        root = tree.getroot()
+        text_elements = [elem.text.strip() for elem in root.iter() if elem.text and elem.text.strip()]
+        full_text = "\n".join(text_elements)
+    except Exception as e:
+        logger.error(f"Generic XML extraction failed for '{file_path.name}' ({file_path}): {e}")
+        full_text = ""
+        metadata["extraction_error"] = str(e)
+
+    return full_text.strip(), metadata
+
 
 LLM_Ontology_Expert = """
 You are a domain-expert Knowledge Graph ontology engineer and data certifier for a legal, corporate, and document repository.

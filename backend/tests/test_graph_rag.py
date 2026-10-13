@@ -8,7 +8,7 @@ from backend.ledger.graph_store import PropertyGraphStore
 from backend.ai.embeddings import EmbeddingAdapter
 from backend.ai.graph_schemas import EntityNode, EntityEdge, DocumentEntityLink
 from backend.ai.graph_extractor import KnowledgeGraphExtractor
-from backend.agents.graph_rag import GraphRAGQueryEngine
+from backend.agents.graph_rag import GraphRAGQueryEngine, CrossEncoderReranker, create_graph_rag_workflow
 
 
 def test_graph_rag_hybrid_query(tmp_path):
@@ -195,5 +195,146 @@ def test_expand_entity_neighborhood_lod(tmp_path):
     outgoing_targets = {r["node_id"] for r in nh["outgoing_relations"]}
     assert "loc_zug" in outgoing_targets
     assert "stat_or253" in outgoing_targets
+
+
+def test_graph_rag_4_signals_with_rrf_and_reranker(tmp_path):
+    """Verify 4-signal retrieval (Exact/SimHash, BM25, Arctic-Embed2, Graph), RRF fusion, and Cross-Encoder reranking."""
+    db_file = tmp_path / "test_4signals.db"
+    init_db(db_file)
+    repo = DocumentRepository(db_path=db_file)
+    embedder = EmbeddingAdapter(provider="mock", dimension=64)
+    vstore = VectorStore(repository=repo, embedding_adapter=embedder)
+    gstore = PropertyGraphStore(repository=repo)
+    reranker = CrossEncoderReranker()
+    engine = GraphRAGQueryEngine(
+        repository=repo,
+        vector_store=vstore,
+        graph_store=gstore,
+        embedding_adapter=embedder,
+        reranker=reranker
+    )
+
+    sha = "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90"
+    repo.upsert_document(
+        sha256_hash=sha,
+        simhash="998877665544",
+        canonical_filename="2024_0615_Tenancy_Contract_Zurich.pdf",
+        doc_type="lease_contract",
+        lifecycle_status="final",
+        completeness_score=1.0,
+        maturity_score=0.95,
+        page_count=4,
+        text_snippet="Apartment rental agreement in Zurich.",
+        doc_date="2024-06-15",
+        full_text="Apartment rental agreement in Zurich between Landlord and Tenant Alice for monthly rent of CHF 3,000."
+    )
+    repo.record_location(
+        sha256_hash=sha,
+        storage_root="Local",
+        relative_path="2024_0615_Tenancy_Contract_Zurich.pdf",
+        absolute_path=f"C:\\Files\\2024_0615_Tenancy_Contract_Zurich.pdf",
+        file_size=2048,
+        mtime=1700000000.0,
+        is_primary=True
+    )
+
+    # Signal 3: Vector chunk with prepended metadata header
+    vstore.index_document_chunks(sha, [{
+        "chunk_id": f"{sha}_0",
+        "sha256_hash": sha,
+        "chunk_index": 0,
+        "chunk_text": "[Document: 2024_0615_Tenancy_Contract_Zurich.pdf | Category: LEASE_CONTRACT | Date: 2024-06-15]\nApartment rental agreement in Zurich.",
+        "token_count": 16
+    }])
+
+    # Signal 4: Knowledge graph nodes & relations
+    gstore.upsert_node(EntityNode(node_id="person_alice", node_type="person", name="Alice"))
+    gstore.link_document_entity(DocumentEntityLink(sha256_hash=sha, node_id="person_alice", role="signatory"))
+
+    # Execute 4-signal query with target SHA and RRF + Reranker pruning
+    result = engine.query(
+        query_text="rental agreement Alice Zurich",
+        target_sha256=sha,
+        top_k=10,
+        final_top_k=5,
+        expand_graph_hops=1
+    )
+
+    assert len(result["ranked_results"]) <= 5
+    first_result = result["ranked_results"][0]
+    assert first_result["sha256_hash"] == sha
+    assert first_result["composite_score"] > 0.0
+    assert "cross_encoder_score" in first_result
+
+    signals = result["retrieval_signals"]
+    assert signals["exact_hits_count"] >= 1
+    assert signals["dense_hits_count"] >= 1
+    assert signals["sparse_hits_count"] >= 1
+    assert signals["fused_candidates_count"] >= 1
+    assert signals["final_reranked_count"] <= 5
+    assert len(result["context_chunks"]) <= 5
+
+
+def test_graph_rag_langgraph_workflow(tmp_path):
+    """Verify end-to-end execution of the LangGraph StateGraph agentic query engine."""
+    db_file = tmp_path / "test_workflow.db"
+    init_db(db_file)
+    repo = DocumentRepository(db_path=db_file)
+    embedder = EmbeddingAdapter(provider="mock", dimension=64)
+    vstore = VectorStore(repository=repo, embedding_adapter=embedder)
+    gstore = PropertyGraphStore(repository=repo)
+    engine = GraphRAGQueryEngine(
+        repository=repo,
+        vector_store=vstore,
+        graph_store=gstore,
+        embedding_adapter=embedder
+    )
+
+    sha = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+    repo.upsert_document(
+        sha256_hash=sha,
+        simhash="1234567890",
+        canonical_filename="Notice_Terms_Commercial_2025.pdf",
+        doc_type="commercial_contract",
+        lifecycle_status="final",
+        completeness_score=1.0,
+        maturity_score=0.90,
+        page_count=2,
+        text_snippet="Commercial lease agreement notice term is 6 months prior to expiry.",
+        doc_date="2025-01-10",
+        full_text="Commercial lease agreement notice term is 6 months prior to expiry in Zurich."
+    )
+    vstore.index_document_chunks(sha, [{
+        "chunk_id": f"{sha}_0",
+        "sha256_hash": sha,
+        "chunk_index": 0,
+        "chunk_text": "[Document: Notice_Terms_Commercial_2025.pdf | Category: COMMERCIAL_CONTRACT]\nCommercial lease agreement notice term is 6 months prior to expiry in Zurich.",
+        "token_count": 22
+    }])
+
+    compiled_flow = create_graph_rag_workflow(engine)
+
+    # 1. Existence / Duplicate Intent Check
+    state_existence = compiled_flow.invoke({
+        "raw_query": "Do we have a copy of Notice_Terms_Commercial_2025.pdf?",
+        "chat_history": []
+    })
+    assert state_existence["intent"] == "EXISTENCE_CHECK"
+    assert "answer" in state_existence
+    assert len(state_existence["sources"]) >= 1
+
+    # 2. Deep Content Q&A with pronoun decontextualization
+    state_qa = compiled_flow.invoke({
+        "raw_query": "What are the notice terms?",
+        "chat_history": [
+            {"role": "user", "content": "Tell me about Notice_Terms_Commercial_2025.pdf"},
+            {"role": "assistant", "content": "I located the document Notice_Terms_Commercial_2025.pdf in the ledger."}
+        ]
+    })
+    assert state_qa["intent"] == "DEEP_CONTENT_QA"
+    assert "Notice_Terms" in state_qa.get("standalone_query", "") or "notice" in state_qa.get("standalone_query", "").lower()
+    assert state_qa["is_grounded"] is True
+    assert "answer" in state_qa
+
 
 
