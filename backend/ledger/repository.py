@@ -665,6 +665,47 @@ class DocumentRepository:
                         WHERE sha256_hash IN ({placeholders});
                     """, [status] + sha256_hashes)
 
+    def requeue_documents(self, sha256_hashes: List[str]) -> int:
+        """Reset documents in kb_processing_queue to pending and remove old chunks for fresh re-embedding."""
+        if not sha256_hashes:
+            return 0
+        with self._lock:
+            with transaction(self.conn) as cur:
+                placeholders = ",".join("?" * len(sha256_hashes))
+                cur.execute(f"""
+                    UPDATE kb_processing_queue
+                    SET status = 'pending', error_message = NULL
+                    WHERE sha256_hash IN ({placeholders});
+                """, sha256_hashes)
+                cur.execute(f"""
+                    DELETE FROM document_chunks
+                    WHERE sha256_hash IN ({placeholders});
+                """, sha256_hashes)
+                return len(sha256_hashes)
+
+    def get_shas_for_requeue(self, target: str = "xml", limit: int = 200) -> List[str]:
+        """Get document SHA-256 hashes matching criteria for re-embedding."""
+        with self._lock:
+            cur = self.conn.cursor()
+            if target == "xml":
+                cur.execute("""
+                    SELECT q.sha256_hash 
+                    FROM kb_processing_queue q
+                    JOIN document_ledger dl ON q.sha256_hash = dl.sha256_hash
+                    WHERE dl.canonical_filename LIKE '%.xml';
+                """)
+            elif target == "recent":
+                cur.execute("""
+                    SELECT sha256_hash 
+                    FROM kb_processing_queue
+                    WHERE processed_at IS NOT NULL
+                    ORDER BY processed_at DESC
+                    LIMIT ?;
+                """, (limit,))
+            else:
+                return []
+            return [r[0] for r in cur.fetchall()]
+
     def save_document_chunks(self, sha256_hash: str, chunks: List[Dict[str, Any]]) -> None:
         """Persist dense semantic chunks with embeddings into SQLite."""
         self.save_batch_document_chunks([(sha256_hash, chunks)])

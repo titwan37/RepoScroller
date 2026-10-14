@@ -58,7 +58,7 @@ class EmbeddingAdapter:
         
         # Persistent client connection pool with generous connect & read timeouts (high patience for CPU/GPU)
         self._client = httpx.Client(
-            timeout=httpx.Timeout(self.timeout, connect=3.0, read=self.timeout, write=10.0),
+            timeout=httpx.Timeout(self.timeout, connect=15.0, read=self.timeout, write=15.0),
             limits=httpx.Limits(max_keepalive_connections=8, max_connections=16)
         )
 
@@ -250,6 +250,11 @@ class EmbeddingAdapter:
                 )
                 return emb_local
 
+            if not getattr(settings, "ALLOW_PSEUDO_FALLBACK", False):
+                err = f"Tier 1 (Remote CUDA at {self.base_url}) failed: {err_pc2} | Tier 2 (Localhost CPU at {self.local_url}) failed: {err_pc1}. Pseudo-embedding fallback is disabled."
+                logger.error(err)
+                raise RuntimeError(err)
+
             logger.warning(f"Tier 2 (Local CPU Node at {self.local_url}) failed: {err_pc1}. Falling back to Tier 3 Pseudo-Embedding...")
 
             # --- TIER 3: Deterministic Offline Pseudo-Embedding Fallback ---
@@ -346,6 +351,11 @@ class EmbeddingAdapter:
                 )
                 logger.info(f"⚡ Successfully embedded {len(texts)} chunks using Tier 2 Localhost CPU Fallback ({active_local_model}) at {self.local_url}.")
                 return tier2_results
+
+            if not getattr(settings, "ALLOW_PSEUDO_FALLBACK", False):
+                err = f"Tier 1 (Remote CUDA at {self.base_url}) failed: {err_pc2} | Tier 2 (Localhost CPU at {self.local_url}) failed: {err_pc1}. Pseudo-embedding fallback is disabled."
+                logger.error(err)
+                raise RuntimeError(err)
 
             logger.error(f"Tier 2 (Localhost CPU at {self.local_url}) failed: {err_pc1}. Degrading to Tier 3 Offline Pseudo-Embedding...")
 

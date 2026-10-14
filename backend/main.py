@@ -84,6 +84,8 @@ def main():
     sidecar_p.add_argument("--batch", action="store_true", help="Process pending items once and exit")
     sidecar_p.add_argument("--limit", type=int, default=10, help="Number of documents to process in batch")
     sidecar_p.add_argument("--poll-interval", type=float, default=3.0, help="Poll interval in seconds for continuous mode")
+    sidecar_p.add_argument("--requeue-xml", action="store_true", help="Re-queue all Swiss law XML statutes for Tier 1 re-embedding")
+    sidecar_p.add_argument("--requeue-recent", type=int, default=0, help="Re-queue the N most recently processed documents for Tier 1 re-embedding")
     # Command: reset
     reset_p = subparsers.add_parser("reset", help="Reset ledger database, FTS5 index, and queue (with optional backup)")
     reset_p.add_argument("--backup", action="store_true", default=True, help="Create a .bak backup of the existing database (default: True)")
@@ -294,6 +296,15 @@ def main():
     elif args.command == "sidecar":
         from backend.ai.sidecar_worker import KnowledgeBaseSidecarWorker
         worker = KnowledgeBaseSidecarWorker()
+        if getattr(args, "requeue_xml", False):
+            shas = worker.repo.get_shas_for_requeue(target="xml")
+            count = worker.repo.requeue_documents(shas)
+            print(f"Re-queued {count} Swiss Law XML statutes back to pending.")
+        if getattr(args, "requeue_recent", 0) > 0:
+            shas = worker.repo.get_shas_for_requeue(target="recent", limit=args.requeue_recent)
+            count = worker.repo.requeue_documents(shas)
+            print(f"Re-queued {count} recent documents back to pending.")
+
         if args.batch:
             print(f"Running Knowledge Base Sidecar batch (limit: {args.limit})...")
             res = worker.process_pending_batch(limit=args.limit)
