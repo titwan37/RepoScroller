@@ -160,6 +160,7 @@ class Settings(BaseSettings):
     VECTOR_STORE_PATH: Path = Field(default=Path("reposcroller_vectors"))
     KB_SIDECAR_BATCH_SIZE: int = 10
     KB_SIDECAR_HTTP_WORKERS: int = 4  # Concurrency matching PC2 Ollama OLLAMA_NUM_PARALLEL (prevents queue overflow)
+    ALLOW_PSEUDO_FALLBACK: bool = False  # Strict dense embeddings; prevents degrading to Tier 3 hash pseudo-embeddings
 
     @property
     def chat_url(self) -> str:
