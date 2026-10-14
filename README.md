@@ -348,6 +348,65 @@ curl "http://127.0.0.1:8090/api/v1/sidecar/graph-3d?node_type=organization&clust
 
 ---
 
+## ⚖️ Swiss Federal Law (Fedlex / Akoma Ntoso) Intelligence & Statute Inspector
+
+RepoScroller natively parses, indexes, and visualizes official **Swiss Federal Legislation** (Fedlex XML in Akoma Ntoso format) with legal structural fidelity:
+
+```
+    [ Fedlex Akoma Ntoso XML ] (RS 220, RS 210, RS 311.0, RS 101, etc.)
+                 │
+                 ▼
+  ┌─────────────────────────────────────────────────────────────┐
+  │ 1. Akoma Ntoso Ancestor & Marginal Note Parser              │
+  │ • Parent mapping traversal for <level fedlex:role="marginal">│
+  │ • Hierarchical extraction: Code › Title › Chapter › Article │
+  │ • Exact paragraph chunking (§ 1, § 2, etc.)                 │
+  └──────────────────────────────┬──────────────────────────────┘
+                                 │
+                                 ▼
+  ┌─────────────────────────────────────────────────────────────┐
+  │ 2. Statute Knowledge Engine (backend/ledger/graph_store.py) │
+  │ • SWISS_LAW_CATALOG mapping RS/SR codes (CO, CC, CP, Cst)   │
+  │ • Article numerical range to formal chapter topic mapping   │
+  │ • Multilingual chunk aggregation (French, German, English)  │
+  │ • Thematic life domain tagging (⚖️ Judicial, 🏠 Housing, etc)│
+  └──────────────────────────────┬──────────────────────────────┘
+                                 │
+                                 ▼
+  ┌─────────────────────────────────────────────────────────────┐
+  │ 3. Glassmorphic Statute Inspector Card (3D Universe UI)     │
+  │ • Instant Trilingual Toggle: [ FR ]  [ DE ]  [ EN ]         │
+  │ • Marginal note titles & structured hierarchy breadcrumbs   │
+  │ • Formatted paragraphs with golden [§ 1], [§ 2] badges       │
+  │ • [📋 Copy Formal Citation] & [💬 Interrogate in AI Room]   │
+  └─────────────────────────────────────────────────────────────┘
+```
+
+### Key Capabilities
+
+1. **Trilingual Real-Time Switching:** Select any legal article node (e.g. `Art. 109 (SR 220)`) in the 3D Universe and switch between French (*Effets de la résiliation*), German (*Wirkungen des Rücktritts*), and English without reloading or network latency.
+2. **Hierarchical Breadcrumbs & Marginal Notes:** Displays official law codes, book titles, and chapters alongside marginal headings.
+3. **Thematic Life-Domain Tagging:** Automatic association to contextual domains (⚖️ *Legal, Contracts & Judicial*, 🏠 *Real Estate & Housing*, 💼 *Career & Employment*, 🛡️ *Social Security & Health*).
+4. **Interactive Action Suite:**
+   - **Copy Legal Citation:** Formats standardized legal citations for legal drafting or contracts (e.g. `Art. 109 CO (RS 220) - Effets de la résiliation`).
+   - **Interrogate in AI Room:** Direct 1-click jump to the AI interrogation room with the full statutory text pre-injected into the prompt.
+
+---
+
+## 🗜️ Showcase Database Slicer (`extract_showcase_ledger.py`)
+
+When preparing a lightweight, high-performance database for cloud deployment (e.g. Ionos VPS) or portfolio showcases:
+
+```powershell
+python backend/data/extract_showcase_ledger.py
+```
+
+- **Slices from 8.0 GB full ledger &rarr; ~716 MB compact showcase DB** (91% disk reduction).
+- **100% Legal Fidelity:** Guarantees preservation of all 39 Swiss Federal Law XML files (`doc_type = 'statute_legislation'`), all legal passage chunks (`passage:%`), and all `type = 'statute'` nodes.
+- **Structural Graph Edge Priority:** Preserves 35,000 edges prioritizing structural relationships (`PART_OF`, `CATEGORIZED_AS`, `GOVERNED_BY`, `SUBJECT_TO`, `INVOLVES_PAYMENT`) so statute articles remain linked to parent laws and concepts.
+
+---
+
 ## 💻 CLI Command Reference
 
 | Command | Usage | Description |

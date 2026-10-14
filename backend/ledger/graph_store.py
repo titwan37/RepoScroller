@@ -503,6 +503,355 @@ class PropertyGraphStore:
                 results.append(d)
             return results
 
+    def get_statute_article_details(self, node_id: str, name: str, properties: Dict[str, Any], cur=None) -> Optional[Dict[str, Any]]:
+        """Retrieve rich legal details (title, topic, chapter, paragraphs, translations) for a statute article node."""
+        import re
+        import json
+        from backend.extraction.fedlex_parser import SWISS_LAW_CATALOG
+
+        sr_code = str(properties.get("sr_code") or "").strip()
+        art_num = str(properties.get("article_num") or "").strip()
+        heading = str(properties.get("heading") or properties.get("article_heading") or "").strip()
+        short_form = str(properties.get("short_form") or "").strip()
+
+        # Extract from node_id if missing (e.g. "statute_sr_220_art_109", "statute_sr_311_0_art_109")
+        if not sr_code or not art_num:
+            m_id = re.search(r'statute_sr_([0-9]+(?:_[0-9]+)?)_art_([0-9]+[a-z]?)', node_id, re.IGNORECASE)
+            if m_id:
+                if not sr_code:
+                    sr_code = m_id.group(1).replace('_', '.')
+                if not art_num:
+                    art_num = m_id.group(2)
+
+        # Extract from name if still missing (e.g. "Art. 109 (SR 220)", "Art. 109 (CO SR 220)")
+        if not sr_code or not art_num:
+            m_name = re.search(r'(?:Art\.?|Article)\s*([0-9]+[a-z]?)\s*(?:\((?:([A-Z]+)\s+)?SR\s*([0-9]+(?:\.[0-9]+)?)\))?', name, re.IGNORECASE)
+            if m_name:
+                if not art_num:
+                    art_num = m_name.group(1)
+                if not short_form and m_name.group(2):
+                    short_form = m_name.group(2)
+                if not sr_code and m_name.group(3):
+                    sr_code = m_name.group(3)
+
+        if not sr_code or not art_num:
+            return None
+
+        # Clean art_num (strip "Art." prefix if present)
+        art_clean = re.sub(r'^(?:Art\.?|Article)\s*', '', art_num, flags=re.IGNORECASE).strip()
+        canonical_art = f"Art. {art_clean}"
+
+        # Resolve Law Titles and Catalog
+        catalog = SWISS_LAW_CATALOG.get(sr_code, {})
+        law_title_fr = catalog.get("title_fr", f"SR {sr_code}")
+        law_title_de = catalog.get("title_de", law_title_fr)
+        law_title_en = catalog.get("title_en", law_title_fr)
+        if not short_form:
+            short_form = catalog.get("short_fr") or catalog.get("short_de") or ""
+
+        # Specific Headings & Topic Overrides for Major Articles
+        SPECIFIC_HEADINGS = {
+            ("220", "109"): {
+                "fr": "Effets de la résiliation",
+                "de": "Wirkungen des Rücktritts",
+                "en": "Effects of withdrawal",
+                "topic": "De l'effet des obligations › De la demeure du débiteur",
+                "theme": "theme_legal_justice"
+            },
+            ("220", "102"): {
+                "fr": "Interpellation et demeure du débiteur",
+                "de": "Verzug des Schuldners",
+                "en": "Default of the debtor",
+                "topic": "De la demeure du débiteur",
+                "theme": "theme_legal_justice"
+            },
+            ("220", "104"): {
+                "fr": "Intérêt moratoire (5% l'an)",
+                "de": "Verzugszinse",
+                "en": "Default interest",
+                "topic": "De la demeure du débiteur",
+                "theme": "theme_legal_justice"
+            },
+            ("220", "107"): {
+                "fr": "Délai d'exécution pour demeure",
+                "de": "Fristansetzung",
+                "en": "Time limit for performance",
+                "topic": "De la demeure du débiteur",
+                "theme": "theme_legal_justice"
+            },
+            ("220", "253"): {
+                "fr": "Bail à loyer - Définition",
+                "de": "Mietvertrag - Begriff",
+                "en": "Lease of property - Definition",
+                "topic": "Du bail à loyer",
+                "theme": "theme_real_estate_housing"
+            },
+            ("220", "257"): {
+                "fr": "Paiement du loyer et frais accessoires",
+                "de": "Zahlung des Mietzinses",
+                "en": "Payment of rent and accessory costs",
+                "topic": "Du bail à loyer",
+                "theme": "theme_real_estate_housing"
+            },
+            ("220", "257d"): {
+                "fr": "Demeure du locataire",
+                "de": "Zahlungsrückstand des Mieters",
+                "en": "Tenant's payment arrears",
+                "topic": "Du bail à loyer",
+                "theme": "theme_real_estate_housing"
+            },
+            ("220", "319"): {
+                "fr": "Contrat individuel de travail - Définition",
+                "de": "Einzelarbeitsvertrag - Begriff",
+                "en": "Employment contract - Definition",
+                "topic": "Du contrat de travail",
+                "theme": "theme_career_employment"
+            },
+            ("220", "337"): {
+                "fr": "Résiliation immédiate pour justes motifs",
+                "de": "Fristlose Kündigung aus wichtigen Gründen",
+                "en": "Immediate dismissal for just cause",
+                "topic": "Du contrat de travail",
+                "theme": "theme_career_employment"
+            },
+            ("101", "109"): {
+                "fr": "Bail à loyer et protection des locataires",
+                "de": "Mietwesen",
+                "en": "Tenancy and Lease",
+                "topic": "Politique du logement",
+                "theme": "theme_real_estate_housing"
+            }
+        }
+
+        # Topic & Life-Style Range Mappings
+        SWISS_LAW_TOPICS = {
+            "220": [ # Code des obligations
+                (1, 39, "De la conclusion des contrats", "theme_legal_justice", "Conclusion du contrat", "Abschluss des Vertrages", "Conclusion of contract"),
+                (40, 40, "Démarchage à domicile", "theme_legal_justice", "Démarchage à domicile", "Haustürgeschäfte", "Doorstep selling"),
+                (41, 61, "Des obligations résultant d'actes illicites", "theme_legal_justice", "Responsabilité civile", "Unerlaubte Handlungen", "Torts"),
+                (62, 67, "De l'enrichissement illégitime", "theme_legal_justice", "Enrichissement illégitime", "Ungerechtfertigte Bereicherung", "Unjust enrichment"),
+                (68, 96, "De l'exécution des obligations", "theme_legal_justice", "Exécution des obligations", "Erfüllung der Obligationen", "Performance of obligations"),
+                (97, 101, "De l'inexécution des obligations", "theme_legal_justice", "Responsabilité contractuelle", "Nichterfüllung", "Breach of contract"),
+                (102, 109, "De l'effet des obligations › De la demeure du débiteur", "theme_legal_justice", "Demeure du débiteur & résiliation", "Verzug des Schuldners", "Default of debtor"),
+                (110, 113, "De la demeure du créancier", "theme_legal_justice", "Demeure du créancier", "Verzug des Gläubigers", "Default of creditor"),
+                (114, 142, "De l'extinction des obligations", "theme_legal_justice", "Extinction et compensation", "Erlöschen der Obligationen", "Extinction of obligations"),
+                (143, 163, "Des modalités des obligations (Solidarité / Arrhes)", "theme_legal_justice", "Solidarité et conditions", "Besondere Verhältnisse", "Special relationships"),
+                (164, 183, "De la cession des créances", "theme_banking_finance", "Cession de créances", "Abtretung von Forderungen", "Assignment of claims"),
+                (184, 236, "De la vente et de l'échange", "theme_corporate_business", "Contrat de vente", "Kauf und Tausch", "Sale and exchange"),
+                (237, 252, "De la donation", "theme_legal_justice", "Donation", "Schenkung", "Gift"),
+                (253, 274, "Du bail à loyer (Logements et locaux commerciaux)", "theme_real_estate_housing", "Bail à loyer", "Mietvertrag", "Lease of property"),
+                (275, 304, "Du bail à ferme", "theme_real_estate_housing", "Bail à ferme", "Pachtvertrag", "Usufructuary lease"),
+                (305, 311, "Du prêt à usage (Commodat)", "theme_real_estate_housing", "Prêt à usage", "Gebrauchsleihe", "Loan for use"),
+                (312, 318, "Du prêt de consommation", "theme_banking_finance", "Prêt de consommation", "Darlehen", "Fixed-term loan"),
+                (319, 362, "Du contrat de travail", "theme_career_employment", "Contrat de travail", "Arbeitsvertrag", "Employment contract"),
+                (363, 379, "Du contrat d'entreprise", "theme_corporate_business", "Contrat d'entreprise", "Werkvertrag", "Contract for work"),
+                (380, 393, "Du contrat d'édition", "theme_corporate_business", "Contrat d'édition", "Verlagsvertrag", "Publishing contract"),
+                (394, 418, "Du mandat et de la gestion d'affaires", "theme_corporate_business", "Mandat et courtage", "Auftrag und Geschäftsführung", "Agency and mandate"),
+                (492, 512, "Du cautionnement", "theme_banking_finance", "Cautionnement", "Bürgschaft", "Suretyship"),
+                (530, 551, "De la société simple", "theme_corporate_business", "Société simple", "Einfache Gesellschaft", "Simple partnership"),
+                (552, 619, "Société en nom collectif et en commandite", "theme_corporate_business", "Société de personnes", "Kollektiv- und Kommanditgesellschaft", "Partnerships"),
+                (620, 763, "De la société anonyme (SA)", "theme_corporate_business", "Société anonyme (SA)", "Aktiengesellschaft (AG)", "Company limited by shares"),
+                (772, 827, "De la société à responsabilité limitée (Sàrl)", "theme_corporate_business", "Société à responsabilité limitée (Sàrl)", "GmbH", "Limited liability company"),
+                (828, 926, "De la société coopérative", "theme_corporate_business", "Société coopérative", "Genossenschaft", "Cooperative"),
+                (927, 956, "Registre du commerce et raison de commerce", "theme_corporate_business", "Registre du commerce", "Handelsregister", "Commercial register"),
+                (957, 964, "De la comptabilité commerciale", "theme_tax_fiscal", "Comptabilité commerciale", "Kaufmännische Buchführung", "Commercial accounting"),
+            ],
+            "210": [ # Code civil
+                (1, 10, "Introduction", "theme_legal_justice", "Application de la loi", "Anwendung des Rechts", "Application of law"),
+                (11, 89, "Droit des personnes", "theme_identity_civil", "Personnes physiques et morales", "Personenrecht", "Law of persons"),
+                (90, 251, "Droit de la famille (Mariage, Régimes matrimoniaux)", "theme_identity_civil", "Famille et mariage", "Familienrecht", "Family law"),
+                (252, 359, "De la filiation", "theme_identity_civil", "Filiation", "Kindesverhältnis", "Parent and child"),
+                (360, 456, "De la protection de l'adulte", "theme_identity_civil", "Protection de l'adulte", "Erwachsenenschutz", "Adult protection"),
+                (457, 640, "Droit des successions", "theme_tax_fiscal", "Successions", "Erbrecht", "Law of succession"),
+                (641, 729, "De la propriété", "theme_real_estate_housing", "Propriété foncière et mobilière", "Eigentum", "Ownership and property"),
+                (730, 792, "Des servitudes et charges foncières", "theme_real_estate_housing", "Servitudes et usufruit", "Dienstbarkeiten", "Servitudes"),
+                (793, 883, "Des droits de gage immobilier", "theme_banking_finance", "Hypothèque et cédule hypothécaire", "Grundpfand", "Mortgages and real security"),
+                (884, 918, "Des droits de gage mobilier", "theme_banking_finance", "Gage mobilier", "Fahrnispfand", "Pledge of movables"),
+                (919, 977, "De la possession et du registre foncier", "theme_real_estate_housing", "Registre foncier", "Grundbuch", "Land register"),
+            ],
+            "101": [ # Constitution fédérale
+                (7, 36, "Droits fondamentaux", "theme_legal_justice", "Droits fondamentaux", "Grundrechte", "Fundamental rights"),
+                (108, 109, "Logement et politique foncière", "theme_real_estate_housing", "Bail à loyer et logement", "Mietwesen und Wohnungsbau", "Tenancy and housing"),
+                (110, 114, "Travail et sécurité sociale", "theme_career_employment", "Travail et sécurité sociale", "Arbeit und soziale Sicherheit", "Labor and social security"),
+                (126, 135, "Finances et fiscalité", "theme_tax_fiscal", "Régime financier et impôts", "Finanzordnung", "Financial system"),
+            ]
+        }
+
+        THEME_META = {
+            "theme_real_estate_housing": {"name": "Real Estate, Tenancy & Housing", "icon": "🏠", "color": "#10b981"},
+            "theme_career_employment": {"name": "Career & Employment", "icon": "💼", "color": "#06b6d4"},
+            "theme_banking_finance": {"name": "Banking, Finance & Loans", "icon": "🏦", "color": "#38bdf8"},
+            "theme_legal_justice": {"name": "Legal, Contracts & Judicial", "icon": "⚖️", "color": "#c084fc"},
+            "theme_tax_fiscal": {"name": "Tax, Accounting & Fiscal", "icon": "📊", "color": "#8b5cf6"},
+            "theme_corporate_business": {"name": "Corporate & Commercial", "icon": "🏢", "color": "#6366f1"},
+            "theme_insurance_pension": {"name": "Insurance & Social Security", "icon": "🛡️", "color": "#ec4899"},
+            "theme_vehicles_mobility": {"name": "Vehicles & Road Traffic", "icon": "🚗", "color": "#f59e0b"},
+            "theme_identity_civil": {"name": "Civil Status & Identity", "icon": "🪪", "color": "#fb923c"},
+        }
+
+        # Resolve Topic and Theme
+        topic = "Statutory & Regulatory Codes"
+        theme_id = "theme_legal_justice"
+        catalog_heading_fr = ""
+        catalog_heading_de = ""
+        catalog_heading_en = ""
+
+        # Default by law code
+        if sr_code in ["281.1"]:
+            topic = "Poursuite pour dettes et faillite (LP)"
+            theme_id = "theme_banking_finance"
+        elif sr_code in ["741.01"]:
+            topic = "Circulation routière (LCR)"
+            theme_id = "theme_vehicles_mobility"
+        elif sr_code in ["830.1", "831.10"]:
+            topic = "Assurances sociales et prévoyance"
+            theme_id = "theme_insurance_pension"
+        elif sr_code in ["702"]:
+            topic = "Résidences secondaires (LRS)"
+            theme_id = "theme_real_estate_housing"
+        elif sr_code in ["272", "273", "311.0", "312.0", "173.110"]:
+            topic = "Justice et procédure judiciaire"
+            theme_id = "theme_legal_justice"
+
+        # Check numerical ranges
+        m_num = re.search(r'^[0-9]+', art_clean)
+        if m_num and sr_code in SWISS_LAW_TOPICS:
+            art_int = int(m_num.group(0))
+            for start_a, end_a, top_desc, th_id, h_fr, h_de, h_en in SWISS_LAW_TOPICS[sr_code]:
+                if start_a <= art_int <= end_a:
+                    topic = top_desc
+                    theme_id = th_id
+                    catalog_heading_fr = h_fr
+                    catalog_heading_de = h_de
+                    catalog_heading_en = h_en
+                    break
+
+        # Check specific article overrides
+        spec_key = (sr_code, art_clean.lower())
+        if spec_key in SPECIFIC_HEADINGS:
+            sp = SPECIFIC_HEADINGS[spec_key]
+            topic = sp.get("topic", topic)
+            theme_id = sp.get("theme", theme_id)
+            catalog_heading_fr = sp.get("fr", catalog_heading_fr)
+            catalog_heading_de = sp.get("de", catalog_heading_de)
+            catalog_heading_en = sp.get("en", catalog_heading_en)
+
+        # Query chunks from document_chunks table
+        cursor = cur or self.repo.conn.cursor()
+        binding_key_pattern = f"%_{sr_code}_{canonical_art}_%"
+        binding_key_pattern_alt = f"%_{sr_code}_art_{art_clean}_%"
+
+        cursor.execute("""
+            SELECT c.chunk_id, c.chunk_text, dl.canonical_filename, dl.sha256_hash
+            FROM document_chunks c
+            JOIN document_ledger dl ON c.sha256_hash = dl.sha256_hash
+            WHERE (
+                c.chunk_id LIKE ? 
+                OR c.chunk_id LIKE ?
+                OR (c.chunk_text LIKE ? AND c.chunk_text LIKE ?)
+            )
+            ORDER BY dl.canonical_filename ASC
+            LIMIT 15;
+        """, (
+            binding_key_pattern,
+            binding_key_pattern_alt,
+            f"%SR {sr_code}%",
+            f"%{canonical_art}%"
+        ))
+        chunk_rows = cursor.fetchall()
+
+        languages_data = {}
+        for r in chunk_rows:
+            fname = r["canonical_filename"]
+            ctext = r["chunk_text"]
+
+            # Language detection
+            lang = "fr"
+            if "-DE." in fname.upper() or "/DE/" in fname.upper() or " (OR " in ctext:
+                lang = "de"
+            elif "-EN." in fname.upper() or "/EN/" in fname.upper() or (" (CO SR " in ctext and "Federal" in ctext):
+                lang = "en"
+            elif "-IT." in fname.upper():
+                lang = "it"
+
+            m_art = re.search(r'Art\.?\s*' + re.escape(art_clean) + r'(?:\s*—\s*([^:]+))?:\s*(.*)', ctext, re.DOTALL | re.IGNORECASE)
+            if m_art:
+                extracted_heading = (m_art.group(1) or "").strip()
+                body = m_art.group(2).strip()
+            else:
+                extracted_heading = ""
+                body = ctext.split(":", 1)[-1].strip() if ":" in ctext else ctext
+
+            # Clean trailing artifacts
+            body = re.sub(r'\s*passage:\s*.*$', '', body, flags=re.DOTALL).strip()
+
+            paras = []
+            num_split = re.split(r'(?:^|\n|(?<=[.!?])\s+)(?=(?:[1-9][0-9]?|[IVXLCDM]+)[\.\s]+[A-ZÀ-ÿ])', body)
+            if len(num_split) > 1:
+                for idx, part in enumerate(num_split):
+                    p = part.strip()
+                    if not p:
+                        continue
+                    m_pnum = re.match(r'^([0-9]+|[IVXLCDM]+)[\.\s]+(.*)', p, re.DOTALL)
+                    if m_pnum:
+                        paras.append({"num": m_pnum.group(1), "text": m_pnum.group(2).strip()})
+                    else:
+                        paras.append({"num": str(idx + 1), "text": p})
+            else:
+                sentences = [s.strip() for s in re.split(r'(?<=\.)\s+(?=[A-ZÀ-ÿ])', body) if len(s.strip()) > 5]
+                if len(sentences) > 1 and len(sentences) <= 6:
+                    for idx, s in enumerate(sentences):
+                        paras.append({"num": str(idx + 1), "text": s})
+                elif body:
+                    paras.append({"num": "1", "text": body})
+
+            if lang not in languages_data:
+                lang_h = extracted_heading
+                if not lang_h:
+                    if lang == "de":
+                        lang_h = catalog_heading_de
+                    elif lang == "en":
+                        lang_h = catalog_heading_en
+                    else:
+                        lang_h = catalog_heading_fr
+
+                languages_data[lang] = {
+                    "lang": lang,
+                    "filename": fname,
+                    "heading": lang_h,
+                    "paragraphs": paras,
+                    "full_text": body
+                }
+
+        # Select primary language
+        primary_lang = "fr" if "fr" in languages_data else ("de" if "de" in languages_data else ("en" if "en" in languages_data else (list(languages_data.keys())[0] if languages_data else "fr")))
+        primary_info = languages_data.get(primary_lang, {})
+        primary_heading = primary_info.get("heading") or heading or catalog_heading_fr or catalog_heading_de or "Article"
+        primary_paras = primary_info.get("paragraphs") or []
+        primary_text = primary_info.get("full_text") or ""
+
+        theme_info = THEME_META.get(theme_id, {"name": "Legal & Regulatory", "icon": "⚖️", "color": "#c084fc"})
+
+        return {
+            "sr_code": sr_code,
+            "article_num": canonical_art,
+            "article_clean": art_clean,
+            "short_form": short_form,
+            "law_title": law_title_fr,
+            "law_title_de": law_title_de,
+            "law_title_en": law_title_en,
+            "heading": primary_heading,
+            "topic": topic,
+            "thematic_id": theme_id,
+            "thematic_name": theme_info["name"],
+            "thematic_icon": theme_info["icon"],
+            "thematic_color": theme_info["color"],
+            "primary_lang": primary_lang,
+            "paragraphs": primary_paras,
+            "full_text": primary_text,
+            "languages": languages_data,
+        }
+
     def expand_entity_neighborhood(self, node_id: str, max_hops: int = 1) -> Dict[str, Any]:
         """Expand 1-hop or 2-hop connected graph neighborhood for a given entity or document node."""
         if not node_id:
@@ -560,12 +909,22 @@ class PropertyGraphStore:
             # 2. Handle Knowledge Graph Entity Nodes
             # Resolve actual canonical node_id if passed with slightly different casing or alias
             cur.execute("""
-                SELECT node_id, node_type, name FROM knowledge_nodes
+                SELECT node_id, node_type, name, properties_json FROM knowledge_nodes
                 WHERE node_id = ? OR LOWER(node_id) = LOWER(?) OR LOWER(name) = LOWER(?)
                 LIMIT 1;
             """, (node_id, node_id, node_id))
             node_match = cur.fetchone()
             canonical_id = node_match["node_id"] if node_match else node_id
+            node_type = node_match["node_type"] if node_match else "entity"
+            node_name = node_match["name"] if node_match else canonical_id
+            
+            raw_props = node_match["properties_json"] if (node_match and "properties_json" in node_match.keys()) else None
+            properties = {}
+            if raw_props:
+                try:
+                    properties = json.loads(raw_props)
+                except Exception:
+                    properties = {}
 
             # Outgoing edges
             cur.execute("""
@@ -632,10 +991,16 @@ class PropertyGraphStore:
                     h_dict["hop"] = 2
                     outgoing.append(h_dict)
 
+            statute_details = None
+            if node_type == "statute" or canonical_id.startswith("statute_") or (node_name and node_name.startswith("Art.")):
+                statute_details = self.get_statute_article_details(canonical_id, node_name, properties, cur)
+
             return {
                 "node_id": canonical_id,
-                "node_type": node_match["node_type"] if node_match else "entity",
-                "name": node_match["name"] if node_match else canonical_id,
+                "node_type": node_type,
+                "name": node_name,
+                "properties": properties,
+                "statute_details": statute_details,
                 "outgoing_relations": outgoing,
                 "incoming_relations": incoming,
                 "associated_documents": docs,

@@ -272,18 +272,39 @@ def parse_akoma_ntoso_xml(file_path: Path, manifest: Optional[Dict[str, Any]] = 
     articles_data: List[Dict[str, Any]] = []
     combined_passages: List[str] = []
 
+    # Build parent map for robust ancestor walking
+    parent_map = {c: p for p in root.iter() for c in p}
+
     for idx, art in enumerate(articles_found):
         # 1. Article Number (<an:num>)
         art_num_el = art.find("an:num", AKOMA_NTOSO_NS)
         art_num = "".join(art_num_el.itertext()).strip() if art_num_el is not None else f"Art. {idx+1}"
 
-        # 2. Heading (<an:heading>)
-        heading_el = art.find("an:heading", AKOMA_NTOSO_NS)
-        if heading_el is None:
-            parent_level = art.find("..")
-            if parent_level is not None:
-                heading_el = parent_level.find("an:heading", AKOMA_NTOSO_NS)
-        article_heading = "".join(heading_el.itertext()).strip() if heading_el is not None else ""
+        # 2. Heading (<an:heading>) & Ancestor Chapter / Title Hierarchy
+        article_heading = ""
+        chapter_heading = ""
+        title_heading = ""
+
+        direct_h = art.find("an:heading", AKOMA_NTOSO_NS)
+        if direct_h is not None:
+            article_heading = "".join(direct_h.itertext()).strip()
+
+        curr = parent_map.get(art)
+        while curr is not None:
+            tag = curr.tag.split("}")[-1] if "}" in curr.tag else curr.tag
+            if not article_heading and tag in ["level", "marginalNote", "article"]:
+                h_el = curr.find("an:heading", AKOMA_NTOSO_NS)
+                if h_el is not None:
+                    article_heading = "".join(h_el.itertext()).strip()
+            elif not chapter_heading and tag in ["chapter", "subdivision"]:
+                ch_el = curr.find("an:heading", AKOMA_NTOSO_NS)
+                if ch_el is not None:
+                    chapter_heading = "".join(ch_el.itertext()).strip()
+            elif not title_heading and tag in ["title", "part"]:
+                t_el = curr.find("an:heading", AKOMA_NTOSO_NS)
+                if t_el is not None:
+                    title_heading = "".join(t_el.itertext()).strip()
+            curr = parent_map.get(curr)
 
         # 3. Paragraphs (<an:p>)
         paragraphs = []
@@ -311,6 +332,8 @@ def parse_akoma_ntoso_xml(file_path: Path, manifest: Optional[Dict[str, Any]] = 
             "title": title,
             "short_form": short_form,
             "article_heading": article_heading,
+            "chapter_heading": chapter_heading,
+            "title_heading": title_heading,
             "binding_key": binding_key,
             "paragraphs": paragraphs,
             "text_content": text_content,

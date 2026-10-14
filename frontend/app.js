@@ -6713,6 +6713,22 @@ async function open3DNodeInspector(node) {
 
   drawer.classList.remove("hidden");
 
+  // Reset or show loading shimmer for statute container
+  const statuteContainer = document.getElementById("insp-statute-container");
+  if (statuteContainer) {
+    if (node.type === "statute" || (node.id && node.id.startsWith("statute_")) || (node.name && node.name.startsWith("Art."))) {
+      statuteContainer.classList.remove("hidden");
+      statuteContainer.innerHTML = `
+        <div class="statute-loading-shimmer">
+          <span class="spinner-inline">⏳</span> Loading legal text, paragraphs &amp; thematic topic...
+        </div>
+      `;
+    } else {
+      statuteContainer.classList.add("hidden");
+      statuteContainer.innerHTML = "";
+    }
+  }
+
   // Recenter universe for the newly opened right panel
   update3DViewOffset();
 
@@ -6774,10 +6790,176 @@ function renderLocalSceneNeighborhood(node) {
   renderNeighborhoodDetails(nh);
 }
 
+function renderStatuteDetailsCard(sd) {
+  const container = document.getElementById("insp-statute-container");
+  if (!container) return;
+
+  if (!sd) {
+    container.classList.add("hidden");
+    container.innerHTML = "";
+    return;
+  }
+
+  container.classList.remove("hidden");
+  glsl3D.activeStatuteData = sd;
+
+  const currentLang = glsl3D.activeStatuteLang || sd.primary_lang || "fr";
+  const langData = (sd.languages && sd.languages[currentLang]) ? sd.languages[currentLang] : {
+    heading: sd.heading,
+    paragraphs: sd.paragraphs || [],
+    full_text: sd.full_text || ""
+  };
+
+  const lawPillText = sd.short_form ? `${sd.short_form} (SR ${sd.sr_code})` : `SR ${sd.sr_code}`;
+  const themeIcon = sd.thematic_icon || "⚖️";
+  const themeName = sd.thematic_name || "Legal & Regulatory";
+  const themeColor = sd.thematic_color || "#c084fc";
+
+  // Build Language Switcher Pills
+  const availableLangs = Object.keys(sd.languages || {});
+  let langBarHtml = "";
+  if (availableLangs.length > 0) {
+    langBarHtml = `
+      <div class="statute-lang-bar">
+        <span class="statute-lang-label">Official Lang:</span>
+        ${["fr", "de", "en", "it"].filter(l => availableLangs.includes(l) || l === sd.primary_lang).map(l => `
+          <button class="statute-lang-btn ${l === currentLang ? 'active' : ''}"
+                  onclick="switchStatuteLanguage('${l}')"
+                  title="View official legal text in ${l.toUpperCase()}">
+            ${l.toUpperCase()}
+          </button>
+        `).join("")}
+      </div>
+    `;
+  }
+
+  // Build Paragraphs HTML
+  const paras = langData.paragraphs || [];
+  let parasHtml = "";
+  if (paras.length > 0) {
+    parasHtml = paras.map(p => `
+      <div class="statute-para-item">
+        <span class="statute-para-badge">§ ${escapeHtml(p.num || '1')}</span>
+        <p class="statute-para-text">${escapeHtml(p.text || '')}</p>
+      </div>
+    `).join("");
+  } else if (langData.full_text) {
+    parasHtml = `
+      <div class="statute-para-item">
+        <span class="statute-para-badge">§ 1</span>
+        <p class="statute-para-text">${escapeHtml(langData.full_text)}</p>
+      </div>
+    `;
+  } else {
+    parasHtml = `<div class="statute-para-item"><p class="statute-para-text text-muted">Legal text indexing in progress...</p></div>`;
+  }
+
+  const activeHeading = langData.heading || sd.heading || "";
+
+  container.innerHTML = `
+    <div class="statute-card">
+      <div class="statute-header-strip">
+        <div class="statute-badge-row">
+          <span class="statute-law-pill" title="${escapeHtml(sd.law_title || '')}">
+            📜 ${escapeHtml(lawPillText)}
+          </span>
+          <span class="statute-theme-pill" style="border-color: ${themeColor}55; background: ${themeColor}1a; color: ${themeColor};" title="Thematic Life-Style Domain">
+            ${themeIcon} ${escapeHtml(themeName)}
+          </span>
+        </div>
+
+        <div class="statute-article-title-row">
+          <span class="statute-art-number">${escapeHtml(sd.article_num)}</span>
+          ${activeHeading ? `<span class="statute-art-heading">— ${escapeHtml(activeHeading)}</span>` : ''}
+        </div>
+
+        ${sd.topic ? `
+          <div class="statute-topic-trail" title="Legal Chapter / Systematic Hierarchy">
+            <span>🏷️</span>
+            <span>${escapeHtml(sd.topic)}</span>
+          </div>
+        ` : ''}
+      </div>
+
+      ${langBarHtml}
+
+      <div class="statute-paragraphs-list">
+        ${parasHtml}
+      </div>
+
+      <div class="statute-action-strip">
+        <button class="btn-statute-tool" onclick="copyStatuteCitation()" title="Copy complete legal citation &amp; paragraphs">
+          📋 <span>Copy Citation</span>
+        </button>
+        <button class="btn-statute-tool" onclick="askAIAboutStatute()" title="Interrogate this article in AI Room">
+          💬 <span>Interrogate in AI</span>
+        </button>
+      </div>
+    </div>
+  `;
+
+  // Update top title if it was bare
+  const nameEl = document.getElementById("insp-node-name");
+  if (nameEl && activeHeading && !nameEl.textContent.includes("—")) {
+    nameEl.textContent = `${sd.article_num} (${sd.short_form || ('SR ' + sd.sr_code)}) — ${activeHeading}`;
+  }
+}
+window.renderStatuteDetailsCard = renderStatuteDetailsCard;
+
+function switchStatuteLanguage(lang) {
+  glsl3D.activeStatuteLang = lang;
+  if (glsl3D.activeStatuteData) {
+    renderStatuteDetailsCard(glsl3D.activeStatuteData);
+  }
+}
+window.switchStatuteLanguage = switchStatuteLanguage;
+
+function copyStatuteCitation() {
+  const sd = glsl3D.activeStatuteData;
+  if (!sd) return;
+  const currentLang = glsl3D.activeStatuteLang || sd.primary_lang || "fr";
+  const langData = (sd.languages && sd.languages[currentLang]) ? sd.languages[currentLang] : {
+    heading: sd.heading,
+    paragraphs: sd.paragraphs || [],
+    full_text: sd.full_text || ""
+  };
+  const headingStr = langData.heading ? ` — ${langData.heading}` : "";
+  const parasStr = (langData.paragraphs && langData.paragraphs.length > 0)
+    ? langData.paragraphs.map(p => `§ ${p.num}. ${p.text}`).join("\n\n")
+    : (langData.full_text || "");
+
+  const citation = `${sd.article_num} ${sd.short_form || ('SR ' + sd.sr_code)} (${sd.law_title || ''})${headingStr}\n\n${parasStr}`;
+
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(citation).then(() => {
+      showToast(`📋 Copied ${sd.article_num} citation & paragraphs to clipboard`, "success", 3000);
+    }).catch(() => {
+      prompt("Copy legal citation:", citation);
+    });
+  } else {
+    prompt("Copy legal citation:", citation);
+  }
+}
+window.copyStatuteCitation = copyStatuteCitation;
+
+function askAIAboutStatute() {
+  const sd = glsl3D.activeStatuteData;
+  if (!sd) return;
+  const currentLang = glsl3D.activeStatuteLang || sd.primary_lang || "fr";
+  const heading = (sd.languages && sd.languages[currentLang] && sd.languages[currentLang].heading) || sd.heading || "";
+  const query = `Analyse l'${sd.article_num} ${sd.short_form || ('SR ' + sd.sr_code)}${heading ? ' (' + heading + ')' : ''} : comment cet article s'applique-t-il à mes documents, contrats ou obligations dans RepoScroller ?`;
+
+  interrogateEntityInAIStudio(query);
+}
+window.askAIAboutStatute = askAIAboutStatute;
+
 function renderNeighborhoodDetails(nh) {
   const listEl = document.getElementById("insp-neighborhood-list");
   const countEl = document.getElementById("insp-neighborhood-count");
   if (!listEl) return;
+
+  // Render Law Article Details Card if available
+  renderStatuteDetailsCard(nh.statute_details);
 
   const outR = nh.outgoing_relations || [];
   const inR = nh.incoming_relations || [];
@@ -7529,13 +7711,13 @@ function toggleLegendHUD() {
 }
 window.toggleLegendHUD = toggleLegendHUD;
 
-function interrogateEntityInAIStudio() {
+function interrogateEntityInAIStudio(customQuery) {
   if (!glsl3D.selectedNode) return;
   const node = glsl3D.selectedNode;
   switchWorkspace("chat");
   const chatInput = document.getElementById("chat-input");
   if (chatInput) {
-    chatInput.value = `Tell me about the entity "${node.name}" (${node.type}), its key agreements, related signatories, and significance across the repository documents.`;
+    chatInput.value = customQuery || `Tell me about the entity "${node.name}" (${node.type}), its key agreements, related signatories, and significance across the repository documents.`;
     sendChatMessage();
   }
 }

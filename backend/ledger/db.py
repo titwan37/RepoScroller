@@ -13,7 +13,7 @@ from .schema import SCHEMA_SQL
 logger = logging.getLogger("reposcroller.db")
 
 def _is_valid_ledger_db(path: Optional[Path]) -> bool:
-    """Verify that a path exists, has substantial data (>4KB), and contains the core document_ledger table."""
+    """Verify that a path exists, has substantial data (>4KB), and contains the core document_ledger table with rows."""
     if not path:
         return False
     p = Path(path)
@@ -27,7 +27,11 @@ def _is_valid_ledger_db(path: Optional[Path]) -> bool:
         try:
             cur = conn.cursor()
             cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='document_ledger';")
-            return cur.fetchone() is not None
+            if cur.fetchone() is None:
+                return False
+            cur.execute("SELECT COUNT(*) FROM document_ledger;")
+            row_count = cur.fetchone()[0]
+            return row_count > 0
         finally:
             conn.close()
     except Exception:

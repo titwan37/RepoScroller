@@ -3414,3 +3414,89 @@ Lors de l'envoi d'ordres d'embedding batch distants vers le nœud CUDA PC2 (équ
 - **Vérification Payload Python :** Validation que `EmbeddingAdapter()._build_embed_payload()` génère correctement `{'num_thread': 6}`.
 - **Vérification Syntaxe PowerShell :** Validation de `start_pc2_cuda_node.ps1` et `cleanup_zombie_servers.ps1`.
 
+---
+
+## ⚖️ Swiss Federal Law (Fedlex / Akoma Ntoso) Statute Intelligence & Showcase DB Migration (2026-10-14)
+
+### 1. Contexte & Objectifs
+
+Pour offrir une navigation souveraine et ultra-précise au sein du droit fédéral suisse dans l'Univers 3D et le Document Ledger, les fonctionnalités suivantes ont été implémentées :
+1. **Extraction de haute fidélité des métadonnées juridiques Akoma Ntoso** (notes marginales, chapitres, titres, paragraphes légaux).
+2. **Fiche d'inspection enrichie pour les nœuds législatifs** (`statute`) avec commutation trilingue instantanée (`[ FR ]`, `[ DE ]`, `[ EN ]`), découpage des paragraphes (`§ 1`, `§ 2`) et domaines thématiques de vie.
+3. **Optimisation du Slicer de base de données Showcase** (`extract_showcase_ledger.py`) pour migrer et compacter la base complète de 8.0 Go vers une vitrine de ~716 Mo **sans aucune perte** de documents juridiques, de passages textuels ni d'arêtes hiérarchiques (`PART_OF`, `GOVERNED_BY`).
+4. **Sécurisation de la route `/api/v1/actions/todos`** pour éliminer les erreurs 500 en cas de démarrage à froid ou de table d'obligations non initialisée.
+
+---
+
+### 2. Piliers d'Implémentation
+
+#### Pilier 1 : Parser Akoma Ntoso Avancé & Hiérarchie Lexicale (`backend/extraction/fedlex_parser.py`)
+- **Résolution des Ancêtres XML :** En raison des limites de `xml.etree.ElementTree` qui ne permet pas nativement la traversée montante (`art.find("..")`), construction d'une table de correspondances parent-enfant `{c: p for p in root.iter() for c in p}`.
+- **Extraction des Notes Marginales & Rubriques :**
+  - Extraction des éléments `<level fedlex:role="marginal">` pour récupérer les titres d'articles officiels (ex: *Effets de la résiliation*, *Demeure du débiteur*).
+  - Traversée récursive des conteneurs parents (`<level>`, `<chapter>`, `<title>`) pour déduire `article_heading`, `chapter_heading` et `title_heading`.
+- **Enrichissement des Nœuds Législatifs :** Les nœuds `statute` stockent désormais dans `properties_json` les titres officiels, la hiérarchie du code et le numéro d'article.
+
+#### Pilier 2 : Moteur de Connaissance des Lois dans le Graph Store (`backend/ledger/graph_store.py`)
+- **Résolution Automatisée (`get_statute_article_details`) :**
+  - Parse automatiquement les identifiants de nœuds légaux (ex: `Art. 109 (SR 220)`).
+  - Référentiel intégré des codes officiels suisses (`SWISS_LAW_CATALOG`) :
+    - **RS 220 :** Code des obligations (CO / OR / LO)
+    - **RS 210 :** Code civil suisse (CC / ZGB)
+    - **RS 311.0 :** Code pénal suisse (CP / StGB)
+    - **RS 101 :** Constitution fédérale (Cst. / BV)
+    - **RS 173.110 :** Loi sur le Tribunal fédéral (LTF / BGG)
+    - **RS 280 :** Loi fédérale sur la poursuite pour dettes et la faillite (LP / SchKG)
+- **Table des Matières & Cartographie Thématique :**
+  - Dictionnaires d'intervalles d'articles (`SWISS_LAW_TOPICS`) associant chaque plage d'articles à son chapitre formel (ex: CO Art. 97–113 &rarr; *De l'effet des obligations / De la demeure du débiteur*).
+  - Dictionnaire de rubriques marginales précises (`SPECIFIC_HEADINGS`).
+  - Association automatique aux domaines de vie (⚖️ *Judiciaire & Contrats*, 🏠 *Immobilier & Bail*, 💼 *Carrière & Droit du travail*, 🛡️ *Prévoyance & Sécurité sociale*).
+- **Résolution Multilingue des Paragraphes Légaux :**
+  - Requête ciblée dans `document_chunks` sur les préfixes `passage:%` pour le document en français (`RS-220-...-FR.xml`), allemand (`SR-220-...-DE.xml`) et anglais (`SR-220-...-EN.xml`).
+  - Nettoyage et segmentation des paragraphes numérotés (`1. ...`, `2. ...` ou `1 ...`, `2 ...`).
+- **Enrichissement de l'API Graph :**
+  - La méthode `expand_entity_neighborhood` injecte l'objet `statute_details` dans la réponse JSON de `GET /api/v1/sidecar/graph/node/{node_id}` lorsque le nœud inspecté est de type `statute`.
+
+#### Pilier 3 : Carte d'Inspection Légale Glassmorphique (`frontend/`)
+- **Structure HTML (`frontend/index.html`) :**
+  - Ajout du conteneur dédié `#insp-statute-container` au sein du tiroir d'inspection de nœud.
+- **Composant UI Dynamique (`frontend/app.js`) :**
+  - `renderStatuteDetailsCard(sd)` : Injection fluide des métadonnées, titres marginaux, fil d'Ariane et paragraphes.
+  - `switchStatuteLanguage(lang)` : Commutation instantanée entre Français, Allemand et Anglais sans aucun rechargement réseau.
+  - `copyStatuteCitation()` : Copie de la citation juridique normalisée dans le presse-papier (ex: `Art. 109 CO (RS 220) - Effets de la résiliation`).
+  - `askAIAboutStatute()` : Bascule automatique vers le salon d'IA conversationnelle en pré-remplissant la requête avec le texte exact et le contexte de l'article de loi.
+- **Design & Styles (`frontend/style.css` & `frontend/style_arch1.css`) :**
+  - Conteneur `.statute-card` avec effet de verre dépoli (*glassmorphism*), bordure dorée subtile et badges thématiques `.statute-theme-pill`.
+  - Barre de sélection trilingue `.statute-lang-bar` avec boutons interactifs `.statute-lang-btn`.
+  - Liste de paragraphes `.statute-paragraphs-list` avec puces dorées `.statute-para-badge` (`§ 1`, `§ 2`).
+
+#### Pilier 4 : Slicer de Base de Données Showcase (`backend/data/extract_showcase_ledger.py`)
+- **Problématique Initiale :**
+  - La base complète `reposcroller_ledger.db` fait ~8.0 Go. Le découpage naïf précédent limitait les arêtes à 5 000, ce qui excluait les relations hiérarchiques législatives (`PART_OF`, `GOVERNED_BY`) au profit des cooccurrences denses.
+- **Améliorations du Slicer :**
+  - Inclusion inconditionnelle des 39 documents XML de lois fédérales suisses (`UNION SELECT ... WHERE doc_type = 'statute_legislation'`).
+  - Inclusion inconditionnelle de tous les chunks juridiques (`passage:%`) associés.
+  - Inclusion de l'archétype `statute` dans la sélection prioritaire des nœuds de graphe.
+  - Augmentation du quota d'arêtes à 35 000 en accordant la priorité absolue aux arêtes structurelles (`PART_OF`, `CATEGORIZED_AS`, `GOVERNED_BY`, `SUBJECT_TO`, `INVOLVES_PAYMENT`).
+- **Résultat Concret :**
+  - Génération d'une base vitrine autonome `reposcroller_showcase.db` de **716.8 Mo** (réduction de 91% de la taille disque).
+  - Préservation intégrale des 39 codes et lois, de leurs articles et de leurs liens vers les entités légales, tout en garantissant des temps de réponse ultra-rapides pour l'hébergement de démonstration.
+
+#### Pilier 5 : Résilience de l'API Actions (`backend/api/routes/actions.py`)
+- Traitement défensif dans `/api/v1/actions/todos` avec vérification de la présence des tables et colonnes financières, évitant les erreurs HTTP 500 lors de démarrages à froid ou avec bases allégées.
+
+---
+
+### 3. Fichiers Modifiés & Livrables
+
+| Fichier | Nature | Description |
+| :--- | :--- | :--- |
+| [`backend/extraction/fedlex_parser.py`](file:///c:/Dev/RepoScroller/backend/extraction/fedlex_parser.py) | Backend | Construction du `parent_map` pour extraire notes marginales, titres et chapitres Akoma Ntoso. |
+| [`backend/ledger/graph_store.py`](file:///c:/Dev/RepoScroller/backend/ledger/graph_store.py) | Backend | Implémentation de `get_statute_article_details()`, `SWISS_LAW_CATALOG`, et enrichissement de `expand_entity_neighborhood()`. |
+| [`backend/data/extract_showcase_ledger.py`](file:///c:/Dev/RepoScroller/backend/data/extract_showcase_ledger.py) | Backend | Slicer optimisé garantissant 100% des lois suisses, chunks de passages et arêtes hiérarchiques (716 Mo). |
+| [`backend/api/routes/actions.py`](file:///c:/Dev/RepoScroller/backend/api/routes/actions.py) | Backend | Sécurisation de la route `/todos` contre les erreurs 500 sur base incomplète. |
+| [`frontend/index.html`](file:///c:/Dev/RepoScroller/frontend/index.html) | Frontend | Ajout du conteneur `#insp-statute-container` dans le panneau d'inspection. |
+| [`frontend/app.js`](file:///c:/Dev/RepoScroller/frontend/app.js) | Frontend | Rendu dynamique de la carte de loi, commutation trilingue live, copie de citation et interrogation IA. |
+| [`frontend/style.css`](file:///c:/Dev/RepoScroller/frontend/style.css) | Frontend | Styles CSS glassmorphiques pour `.statute-card`, `.statute-lang-bar`, et `.statute-paragraphs-list`. |
+| [`frontend/style_arch1.css`](file:///c:/Dev/RepoScroller/frontend/style_arch1.css) | Frontend | Harmonisation des styles de la carte de statut légal pour l'architecture UI alternative. |
+

@@ -62,29 +62,36 @@ def build_showcase():
     dst.commit()
 
     # 2. Select Anchor Document SHA-256 Hashes
-    print(f"[*] Selecting top {SAMPLE_DOC_LIMIT} showcase document records...")
+    # Explicitly include all Swiss Federal Law statute documents plus top sample documents
+    print(f"[*] Selecting showcase document records (including all Swiss Law Akoma Ntoso statutes + top {SAMPLE_DOC_LIMIT} anchors)...")
     query_anchors = f"""
-        SELECT sha256_hash FROM document_ledger
-        ORDER BY 
-            maturity_score DESC,
-            doc_date DESC,
-            created_at DESC
-        LIMIT {SAMPLE_DOC_LIMIT};
+        SELECT sha256_hash FROM (
+            SELECT sha256_hash FROM document_ledger WHERE doc_type = 'statute_legislation' OR canonical_filename LIKE '%.xml'
+            UNION
+            SELECT sha256_hash FROM (
+                SELECT sha256_hash FROM document_ledger
+                ORDER BY 
+                    maturity_score DESC,
+                    doc_date DESC,
+                    created_at DESC
+                LIMIT {SAMPLE_DOC_LIMIT}
+            )
+        );
     """
     src_cur.execute(query_anchors)
     selected_shas = [row[0] for row in src_cur.fetchall()]
-    print(f"[+] Selected {len(selected_shas)} core anchor documents.")
+    print(f"[+] Selected {len(selected_shas)} core anchor documents (with full Swiss Law statutes).")
 
     src_cur.execute("CREATE TEMP TABLE target_doc_shas (sha256_hash TEXT PRIMARY KEY);")
     src_cur.executemany("INSERT INTO temp.target_doc_shas (sha256_hash) VALUES (?);", [(s,) for s in selected_shas])
 
-    # Pre-select vital archetype hubs (Themes, Financial Pillars, Currencies, Contract Types)
+    # Pre-select vital archetype hubs (Themes, Financial Pillars, Currencies, Contract Types, Statutes)
     # plus all entity nodes actively linked to the chosen showcase documents
     src_cur.execute("CREATE TEMP TABLE target_nodes (node_id TEXT PRIMARY KEY);")
     src_cur.execute("""
         INSERT OR IGNORE INTO temp.target_nodes (node_id)
         SELECT node_id FROM knowledge_nodes 
-        WHERE node_type IN ('theme', 'financial_pillar', 'currency', 'contract_type', 'location')
+        WHERE node_type IN ('theme', 'financial_pillar', 'currency', 'contract_type', 'location', 'statute')
         UNION
         SELECT DISTINCT node_id FROM document_entity_links 
         WHERE sha256_hash IN (SELECT sha256_hash FROM temp.target_doc_shas);
@@ -119,8 +126,16 @@ def build_showcase():
                 SELECT * FROM knowledge_edges 
                 WHERE source_id IN (SELECT node_id FROM temp.target_nodes)
                   AND target_id IN (SELECT node_id FROM temp.target_nodes)
-                ORDER BY weight DESC
-                LIMIT 5000;
+                ORDER BY 
+                    CASE WHEN relation_type IN ('PART_OF', 'CATEGORIZED_AS', 'GOVERNED_BY', 'SUBJECT_TO', 'INVOLVES_PAYMENT') THEN 1 ELSE 2 END ASC,
+                    weight DESC
+                LIMIT 35000;
+            """)
+        elif tbl == "document_chunks":
+            src_cur.execute("""
+                SELECT * FROM document_chunks 
+                WHERE sha256_hash IN (SELECT sha256_hash FROM temp.target_doc_shas)
+                   OR chunk_text LIKE 'passage:%'
             """)
         elif "sha256_hash" in col_names:
             src_cur.execute(f"SELECT * FROM {tbl} WHERE sha256_hash IN (SELECT sha256_hash FROM temp.target_doc_shas)")
