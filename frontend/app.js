@@ -511,11 +511,12 @@ async function loadWorkloadTelemetry(force = false) {
           const isEmbedHot = !!embedDetail;
           const isChatHot = !!chatDetail;
 
+          const threadCapMeta = pc2.num_thread ? ` • ${pc2.num_thread}t (P-Core)` : ' • 6t (P-Core)';
           const embedVramMeta = embedDetail ? ` • ${embedDetail.size_vram_mb}MB ${embedDetail.quantization}` : '';
           const chatVramMeta = chatDetail ? ` • ${(chatDetail.size_vram_mb >= 1024 ? (chatDetail.size_vram_mb / 1024).toFixed(1) + 'GB' : chatDetail.size_vram_mb + 'MB')} ${chatDetail.quantization}` : '';
 
           let tagsHtml = `
-            <span class="mini-tag tag-cuda" title="${isEmbedHot ? 'VRAM Resident (Active on GPU)' : 'Configured CUDA Tensor Embeddings'}">${isEmbedHot ? '⚡ ' : ''}${embedModel}${embedVramMeta}</span>
+            <span class="mini-tag tag-cuda" title="${isEmbedHot ? 'VRAM Resident (Active on GPU) • CPU Worker Capped to Prevent Spin-Wait Thrashing' : 'Configured CUDA Tensor Embeddings'}">${isEmbedHot ? '⚡ ' : ''}${embedModel}${embedVramMeta}${threadCapMeta}</span>
             <span class="mini-tag tag-chat" title="${isChatHot ? 'VRAM Resident (Active on GPU)' : 'Configured CUDA Chat Reasoning'}">${isChatHot ? '⚡ ' : ''}${chatModel}${chatVramMeta}</span>
           `;
 

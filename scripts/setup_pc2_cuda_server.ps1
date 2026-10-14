@@ -89,8 +89,8 @@ else {
 
 # 5. Restart Ollama Service / Background Process
 Write-Host ""
-Write-Host "[4/5] Restarting Ollama service with new network settings..." -ForegroundColor Cyan
-Stop-Process -Name "ollama", "ollama app" -Force -ErrorAction SilentlyContinue
+Write-Host "[4/5] Terminating stale servers and restarting Ollama service..." -ForegroundColor Cyan
+Stop-Process -Name "llama-server", "ollama", "ollama app" -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 2
 
 # Check if Ollama is running as a Windows Service or execute server directly
@@ -105,15 +105,20 @@ else {
 
 # Test curl for LAN access
 Write-Host ""
-Write-Host "[5/5] Testing LAN API connectivity..." -ForegroundColor Cyan
+Write-Host "[5/5] Testing LAN API connectivity & pre-warming models..." -ForegroundColor Cyan
 
 # Test Embedding
 try {
     $embedParams = @{
-        "model" = "snowflake-arctic-embed2:latest"
-        "input" = "test"
+        "model"      = "snowflake-arctic-embed2:latest"
+        "input"      = "test"
+        "keep_alive" = "24h"
+        "options"    = @{
+            "num_thread" = 6
+            "num_ctx"    = 2048
+        }
     }
-    $embedResult = Invoke-RestMethod -Uri "http://localhost:11434/api/embed" -Method Post -Body ($embedParams | ConvertTo-Json) -ContentType "application/json" -TimeoutSec 30
+    $embedResult = Invoke-RestMethod -Uri "http://localhost:11434/api/embed" -Method Post -Body ($embedParams | ConvertTo-Json -Depth 4) -ContentType "application/json" -TimeoutSec 30
     Write-Host "  -> Embedding test: SUCCESS (GPU active)" -ForegroundColor Green
 }
 catch {

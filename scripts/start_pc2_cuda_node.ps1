@@ -6,7 +6,8 @@
 param (
     [string]$Model = "snowflake-arctic-embed2:latest",
     [string]$Port = "11434",
-    [string]$TelemetryPort = "11435"
+    [string]$TelemetryPort = "11435",
+    [switch]$NoGpuMonitor = $false
 )
 
 $Host.UI.RawUI.WindowTitle = "RepoScroller - PC2 CUDA GPU Server (RTX 3060)"
@@ -63,8 +64,8 @@ $env:OLLAMA_FLASH_ATTENTION = "1"
 Write-Host ""
 Write-Host "[2/4] Ensuring Ollama Server is running with OLLAMA_MAX_LOADED_MODELS=3 (Queue: 1024)..." -ForegroundColor Cyan
 
-# Stop old instances so they inherit the new environment variables
-Stop-Process -Name "ollama", "ollama app" -Force -ErrorAction SilentlyContinue
+# Stop old instances and any orphaned llama-server runners so they inherit the new environment variables
+Stop-Process -Name "llama-server", "ollama", "ollama app" -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 1
 
 Write-Host "  -> Launching Ollama server (0.0.0.0:$Port)..." -ForegroundColor Yellow
@@ -91,12 +92,16 @@ if ($isListening) {
 
 # 4. Pre-warm Embedding Model in VRAM
 Write-Host ""
-Write-Host "[3/4] Pre-warming embedding model '$Model' into VRAM..." -ForegroundColor Cyan
+Write-Host "[3/4] Pre-warming embedding model '$Model' into VRAM (capped to 6 P-core threads)..." -ForegroundColor Cyan
 try {
     $warmupPayload = @{
         model      = $Model
         input      = "RepoScroller sovereign LAN CUDA embedding node warm-up probe"
         keep_alive = "24h"
+        options    = @{
+            num_thread = 6
+            num_ctx    = 2048
+        }
     } | ConvertTo-Json -Depth 5
     
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
@@ -123,7 +128,8 @@ try {
         keep_alive = "24h"
         stream     = $false
         options    = @{
-            num_ctx = 2048
+            num_thread = 6
+            num_ctx    = 2048
         }
     } | ConvertTo-Json -Depth 5
 
@@ -264,6 +270,20 @@ if (Get-Command ollama.exe -ErrorAction SilentlyContinue) {
     ollama ps
 }
 Write-Host ""
+
+# 8. Real-Time CUDA Compute Monitor (monitor_gpu_cuda.bat)
+$monitorProc = $null
+if (-not $NoGpuMonitor) {
+    $monitorBat = Join-Path $PSScriptRoot "monitor_gpu_cuda.bat"
+    if (Test-Path $monitorBat) {
+        Write-Host " [CUDA Monitor] Launching real-time GPU activity monitor window..." -ForegroundColor Green
+        $monitorProc = Start-Process cmd.exe -ArgumentList "/c `"$monitorBat`"" -PassThru
+    } elseif (Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue) {
+        Write-Host " [CUDA Monitor] Launching real-time GPU activity monitor window (nvidia-smi dmon)..." -ForegroundColor Green
+        $monitorProc = Start-Process cmd.exe -ArgumentList "/k title RepoScroller - NVIDIA CUDA Monitor && nvidia-smi dmon -s u -d 1" -PassThru
+    }
+}
+
 Write-Host " Press [Ctrl+C] to exit or leave this window open." -ForegroundColor Gray
 Write-Host "================================================================" -ForegroundColor Green
 Write-Host ""
@@ -276,8 +296,17 @@ try {
         if (Get-Command ollama.exe -ErrorAction SilentlyContinue) {
             ollama ps
         }
+        if (Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue) {
+            $smi = nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu --format=csv,noheader,nounits 2>$null
+            if ($smi) {
+                Write-Host "   GPU Status (Load, VRAM used, VRAM tot, Temp): $smi" -ForegroundColor Gray
+            }
+        }
     }
 } finally {
-    Write-Host "Stopping telemetry probe..." -ForegroundColor Yellow
+    Write-Host "Stopping telemetry probe and companion monitors..." -ForegroundColor Yellow
+    if ($monitorProc -and -not $monitorProc.HasExited) {
+        Stop-Process -Id $monitorProc.Id -Force -ErrorAction SilentlyContinue
+    }
     Get-Job -Name "PC2HardwareTelemetry" -ErrorAction SilentlyContinue | Stop-Job -PassThru | Remove-Job -Force -ErrorAction SilentlyContinue
 }

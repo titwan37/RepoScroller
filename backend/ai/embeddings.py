@@ -79,16 +79,25 @@ class EmbeddingAdapter:
             vec = [v / norm for v in vec]
         return vec
     def _build_embed_payload(self, model: str, input_data: Union[str, List[str]]) -> dict:
-        """Construct Ollama embedding payload, clamping num_ctx for 512-token models to prevent warnings."""
+        """Construct Ollama embedding payload, clamping num_ctx and capping num_thread to P-cores."""
         payload = {
             "model": model,
             "input": input_data,
             "keep_alive": self.keep_alive
         }
+        options = {}
         # Avoid Ollama context allocation warning/error for 512-token models (snowflake-arctic-embed v1)
         if "snowflake-arctic-embed" in model and "embed2" not in model:
             local_ctx = getattr(settings, "OLLAMA_LOCAL_EMBED_NUM_CTX", 512) or 512
-            payload["options"] = {"num_ctx": local_ctx}
+            options["num_ctx"] = local_ctx
+
+        # Cap CPU worker threads to physical P-cores to eliminate spin-wait thrashing across 20 threads
+        num_threads = getattr(settings, "OLLAMA_EMBED_NUM_THREAD", 6)
+        if num_threads:
+            options["num_thread"] = int(num_threads)
+
+        if options:
+            payload["options"] = options
         return payload
 
     def _try_single_ollama(self, url: str, model: str, text: str, max_retries: int = 3) -> Tuple[Optional[List[float]], Optional[str]]:
@@ -141,7 +150,8 @@ class EmbeddingAdapter:
                     json={
                         "model": model,
                         "prompt": text,
-                        "keep_alive": self.keep_alive
+                        "keep_alive": self.keep_alive,
+                        "options": {"num_thread": int(getattr(settings, "OLLAMA_EMBED_NUM_THREAD", 6))}
                     }
                 )
                 if resp_legacy.status_code == 200:

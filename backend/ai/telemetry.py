@@ -396,6 +396,7 @@ class WorkloadTelemetry:
                     "total_vram_gb": cuda_node.get("total_vram_gb", 0.0),
                     "processor": cuda_node.get("processor", "100% GPU"),
                     "context_length": cuda_node.get("context_length", 0),
+                    "num_thread": getattr(settings, "OLLAMA_EMBED_NUM_THREAD", 6),
                     "effective_tier": effective_tier,
                     "tier_color": tier_color,
                     "stats": {
