@@ -514,17 +514,15 @@ Created stop_pc2_cuda_node.ps1
 Created stop_pc2_cuda_node.bat
 Ran command: `git add . && git commit -m "Add dedicated daily launcher and stopper for PC2 CUDA GPU node" && git push origin main`
 
-Nous avons désormais une distinction claire entre **Setup initial (une seule fois avec droits Administrateur)** et **Lanceurs / Stoppers quotidiens** pour PC2 et PC1.
-
----
-
 ### Résumé des scripts pour PC2 (Node CUDA RTX 3060)
 
 | Fichier | Fréquence | Rôle |
 | :--- | :--- | :--- |
-| [`setup_pc2_cuda_server.bat`](file:///c:/Dev/RepoScroller/setup_pc2_cuda_server.bat) <br> *(et `.ps1`)* | **1 fois** *(Initiale)* | **Configuration système complète (Droits Admin) :**<br>• Définit `OLLAMA_HOST=0.0.0.0:11434`, `OLLAMA_KEEP_ALIVE=24h`, `OLLAMA_NUM_PARALLEL=4`, `OLLAMA_FLASH_ATTENTION=1`.<br>• Crée la règle Inbound dans le Pare-feu Windows pour le port TCP 11434.<br>• Télécharge et pré-installe le modèle `snowflake-arctic-embed2:latest`. |
-| [`start_pc2_cuda_node.bat`](file:///c:/Dev/RepoScroller/start_pc2_cuda_node.bat) <br> *(et `.ps1`)* | **Au quotidien** *(Lanceur)* | **Lanceur et Moniteur temps réel :**<br>• Démarre Ollama si non actif (sans demander les droits admin).<br>• **Pré-chauffe (warm-up)** le modèle `snowflake-arctic-embed2` directement dans la VRAM de la RTX 3060 pour garantir **0 ms de latence à froid** lors des requêtes de PC1.<br>• Affiche en direct l'utilisation VRAM (`nvidia-smi`), les modèles actifs (`ollama ps`) et les IP LAN d'écoute. |
-| [`stop_pc2_cuda_node.bat`](file:///c:/Dev/RepoScroller/stop_pc2_cuda_node.bat) <br> *(et `.ps1`)* | **Quand souhaité** | Arrête proprement Ollama sur PC2 et libère la VRAM du GPU. |
+| [`setup_pc2_cuda_server.bat`](file:///c:/Dev/RepoScroller/scripts/setup_pc2_cuda_server.bat) <br> *(et `.ps1`)* | **1 fois** *(Initiale)* | **Configuration système complète (Droits Admin) :**<br>• Définit `OLLAMA_HOST=0.0.0.0:11434`, `OLLAMA_KEEP_ALIVE=24h`, `OLLAMA_NUM_PARALLEL=4`, `OLLAMA_FLASH_ATTENTION=1`.<br>• Crée les règles Inbound dans le Pare-feu Windows pour le port TCP 11434 (API) et 11435 (Télémétrie).<br>• Télécharge et pré-installe le modèle `snowflake-arctic-embed2:latest`. |
+| [`start_pc2_cuda_node.bat`](file:///c:/Dev/RepoScroller/start_pc2_cuda_node.bat) <br> *(et `.ps1`)* | **Au quotidien** *(Lanceur)* | **Lanceur et Moniteur temps réel :**<br>• Nettoie préalablement les éventuels processus orphelins `llama-server` et `ollama`.<br>• Démarre Ollama si non actif (sans demander les droits admin).<br>• **Pré-chauffe (warm-up)** le modèle `snowflake-arctic-embed2` et `llama3.2:3b` dans la VRAM de la RTX 3060 avec limitation à 6 threads P-Cores.<br>• Lance la sonde de télémétrie matérielle OS sur le port 11435.<br>• **Lance automatiquement la fenêtre compagnon de monitoring CUDA** (`monitor_gpu_cuda.bat`) pour suivre l'activité des Streaming Multiprocessors (`sm %`) en temps réel (désactivable via switch `-NoGpuMonitor`). |
+| [`cleanup_zombie_servers.bat`](file:///c:/Dev/RepoScroller/scripts/cleanup_zombie_servers.bat) <br> *(et `.ps1`)* | **En cas de besoin** | **Nettoyage forcé des processus zombies (Droits Admin) :**<br>• Tue instantanément avec `taskkill /F /T` tous les runners `llama-server.exe` et `ollama.exe` orphelins résiduels.<br>• Libère immédiatement 100% de la RAM et de la VRAM monopolisées. |
+| [`monitor_gpu_cuda.bat`](file:///c:/Dev/RepoScroller/scripts/monitor_gpu_cuda.bat) | **À la demande** | **Moniteur CUDA Tensor Core temps réel :**<br>• Exécute `nvidia-smi dmon -s u -d 1` pour afficher l'utilisation GPU brute (`sm %`), la bande passante VRAM (`mem %`) et la température. Intégré nativement dans `start_pc2_cuda_node.ps1`. |
+| [`stop_pc2_cuda_node.bat`](file:///c:/Dev/RepoScroller/stop_pc2_cuda_node.bat) <br> *(et `.ps1`)* | **Quand souhaité** | Arrête proprement Ollama et la sonde de télémétrie sur PC2 et libère la VRAM du GPU. |
 
 ---
 
@@ -536,4 +534,20 @@ Nous avons désormais une distinction claire entre **Setup initial (une seule fo
 | [`start_all.bat`](file:///c:/Dev/RepoScroller/start_all.bat) | Orchestrateur standard RepoScroller (backend, scanner x6, watcher, sidecar). |
 | [`stop_all.bat`](file:///c:/Dev/RepoScroller/stop_all.bat) | **Arrêt propre total** de tous les processus RepoScroller (FastAPI :8090, scanner, watcher, sidecar). |
 
-Tous les fichiers sont validés et synchronisés sur votre repository Git.
+---
+
+## ⚡ Optimisation Inférence CUDA & Élimination du Spin-Lock CPU
+
+Sur les machines équipées de processeurs hybrides (ex: Intel 12th/13th/14th Gen avec 14 cœurs / 20 threads) et d'un GPU dédié NVIDIA RTX :
+
+1. **Plafond de Threads CPU (`OLLAMA_EMBED_NUM_THREAD = 6`) :**
+   - Par défaut, le backend `llama.cpp` initialise son pool de threads sur tous les processeurs logiques (20 threads) et applique un algorithme de *busy-wait* (`spin_wait`) entre deux requêtes.
+   - Lors de rafales d'embeddings à cadence élevée, ces 20 threads saturent le processeur à 100% sans bénéfice pour le GPU.
+   - RepoScroller injecte désormais systématiquement `{"options": {"num_thread": 6}}` dans chaque appel `/api/embed` (simple et par batch), confinant le pré-traitement CPU aux cœurs de performance (P-Cores) et éliminant tout emballement thermique.
+2. **Affichage du GPU sous Windows (Piège 3D vs Compute_0) :**
+   - Le Gestionnaire des tâches de Windows n'affiche par défaut que le moteur **3D** du GPU. Les calculs matriciels Tensor Cores / CUDA s'exécutent sur la file **Compute_0 (CUDA)**.
+   - De plus, un embedding ne génère pas de tokens au compte-goutte : l'inférence dense s'exécute en une seule passe ultra-rapide de ~25 ms.
+   - L'intégration de `monitor_gpu_cuda.bat` (`nvidia-smi dmon -s u -d 1`) permet de visualiser directement les pics d'activité sur les Streaming Multiprocessors (`sm`) en temps réel.
+3. **Nettoyage automatique des runners orphelins :**
+   - Les scripts de lancement et [`cleanup_zombie_servers.bat`](file:///c:/Dev/RepoScroller/scripts/cleanup_zombie_servers.bat) garantissent l'élimination des processus d'arrière-plan `llama-server.exe` non rattachés.
+

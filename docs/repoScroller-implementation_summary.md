@@ -3360,3 +3360,57 @@ To promote these changes and reload Nginx on the server, run:
 cd c:\Dev\hub
 .\deploy_menu.ps1 reposcroller
 ```
+
+---
+
+## ⚡ PC2 CUDA Node Inférence Dense & Optimisation CPU/GPU (2026-10-14)
+
+### 1. Contexte & Analyse Racine
+
+Lors de l'envoi d'ordres d'embedding batch distants vers le nœud CUDA PC2 (équipé d'un NVIDIA GeForce RTX 3060 Laptop GPU et d'un processeur 12th Gen Intel Core i7-12700H à 14 cœurs / 20 threads), deux anomalies apparentes ont été observées :
+1. **CPU à 100% sur les 20 threads :** Emballement des 20 cœurs logiques et consommation RAM élevée sans que le GPU ne semble sollicité.
+2. **GPU affiché à ~0% dans le Gestionnaire des tâches Windows :** Le modèle était pourtant bien chargé à 100% dans la VRAM (`ollama ps` confirmant `100% GPU`, 664 MB).
+
+#### Causes techniques identifiées :
+- **Spin-Lock Busy-Wait dans GGML (`llama.cpp`) :** Par défaut, `llama.cpp` dimensionne son pool de threads sur la totalité des processeurs logiques (ici 20 threads). Pour minimiser la latence de réveil, les threads GGML appliquent une boucle active (`spin_wait`) avant de s'endormir. Sous un flux rapide de requêtes HTTP `/api/embed` (toutes les 300 ms), ces 20 threads restent perpétuellement actifs, saturant les P-Cores et les E-Cores.
+- **Inférence Dense en Passe Unique :** Contrairement à la génération de texte (chat) qui génère des tokens séquentiellement pendant plusieurs secondes, un embedding dense calcule l'ensemble des 91 tokens en **une seule passe forward de ~25 ms**. Les moniteurs échantillonnant à 1 Hz (1000 ms), un pic de 25 ms représente ~2.5% moyen et retombe immédiatement à 0%.
+- **File Compute_0 vs File 3D sous Windows WDDM :** Le Gestionnaire des tâches n'affiche par défaut que la file 3D graphique. Les opérations matricielles Tensor Cores s'exécutent sur la file **Compute_0 (CUDA)**.
+- **Processus orphelins résiduels :** Plusieurs instances orphelines `llama-server.exe` issues de sessions précédentes continuaient de tourner en arrière-plan, monopolisant mémoire paginée et threads CPU.
+
+---
+
+### 2. Piliers de Remédiation Mis en Œuvre
+
+#### Pilier 1 : Plafond de Threads CPU (`num_thread: 6`)
+- **[`backend/config.py`](file:///c:/Dev/RepoScroller/backend/config.py) :** Ajout du paramètre `OLLAMA_EMBED_NUM_THREAD: int = 6` limitant l'allocation CPU aux cœurs de performance physiques (P-Cores) de l'architecture hybride Intel.
+- **[`backend/ai/embeddings.py`](file:///c:/Dev/RepoScroller/backend/ai/embeddings.py) :** Mise à jour de `_build_embed_payload()` et du fallback `/api/embeddings` pour injecter systématiquement `"options": {"num_thread": 6}` dans tous les ordres d'embedding (simples et batchs).
+- **Probes de Warm-up :** Mise à jour de [`start_pc2_cuda_node.ps1`](file:///c:/Dev/RepoScroller/scripts/start_pc2_cuda_node.ps1) et [`setup_pc2_cuda_server.ps1`](file:///c:/Dev/RepoScroller/scripts/setup_pc2_cuda_server.ps1) pour pré-chauffer les modèles avec `num_thread: 6` et `num_ctx: 2048`.
+
+#### Pilier 2 : Élimination Forcée des Processus Zombies
+- **[`scripts/cleanup_zombie_servers.ps1`](file:///c:/Dev/RepoScroller/scripts/cleanup_zombie_servers.ps1) & [`.bat`](file:///c:/Dev/RepoScroller/scripts/cleanup_zombie_servers.bat) :**
+  - Utilitaire avec auto-élévation Administrateur (`-Verb RunAs`).
+  - Termine immédiatement via `taskkill.exe /F /T` et `Stop-Process` tous les processus `llama-server.exe`, `ollama.exe` et `ollama app.exe`.
+  - Libère 100% de la RAM et de la VRAM monopolisées.
+- **Lanceurs Quotidiens Sécurisés :** [`start_pc2_cuda_node.ps1`](file:///c:/Dev/RepoScroller/scripts/start_pc2_cuda_node.ps1) exécute désormais un nettoyage préventif des orphelins `llama-server` avant de démarrer un nouveau serveur sain.
+
+#### Pilier 3 : Moniteur Temps Réel CUDA Intégré
+- **[`scripts/monitor_gpu_cuda.bat`](file:///c:/Dev/RepoScroller/scripts/monitor_gpu_cuda.bat) :**
+  - Lance la commande native `nvidia-smi dmon -s u -d 1` pour mesurer directement les Streaming Multiprocessors (`sm %`), la bande passante mémoire (`mem %`) et la température.
+- **Intégration Native dans [`start_pc2_cuda_node.ps1`](file:///c:/Dev/RepoScroller/scripts/start_pc2_cuda_node.ps1) :**
+  - Ouvre automatiquement la fenêtre de monitoring CUDA compagnon au démarrage du nœud.
+  - Switch de désactivation optionnel : `.\scripts\start_pc2_cuda_node.ps1 -NoGpuMonitor`.
+  - Fermeture automatique du moniteur dans le bloc `finally` lors de l'arrêt du nœud (`Ctrl+C`).
+  - Affichage périodique d'une ligne d'état GPU dans la console principale toutes les 60 secondes.
+
+#### Pilier 4 : Exposition Télémétrique & IHM
+- **[`backend/ai/telemetry.py`](file:///c:/Dev/RepoScroller/backend/ai/telemetry.py) :** Exposition de `"num_thread"` dans l'objet `cuda_gpu_node` de la route `/api/v1/diagnostics/workload`.
+- **[`frontend/app.js`](file:///c:/Dev/RepoScroller/frontend/app.js) :** Affichage visuel du badge de limitation de threads (`⚡ snowflake-arctic-embed2:latest • 664MB • 6t (P-Core)`) dans la carte du nœud PC2.
+
+---
+
+### 3. Validation & Tests
+
+- **Tests Unitaires :** `pytest backend/tests/test_embeddings.py` &rarr; 3 passed en 0.75s.
+- **Vérification Payload Python :** Validation que `EmbeddingAdapter()._build_embed_payload()` génère correctement `{'num_thread': 6}`.
+- **Vérification Syntaxe PowerShell :** Validation de `start_pc2_cuda_node.ps1` et `cleanup_zombie_servers.ps1`.
+
