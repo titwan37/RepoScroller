@@ -1,0 +1,322 @@
+[
+  {
+    "id": "CLERK-001",
+    "title": "Admin Clerk Database Models & Schema Migration",
+    "description": "Implement the SQLAlchemy ORM models for the Administrative Clerk in 'backend/clerk/models.py'. Include tables: 'form_templates' (template_id, name, form_type, version, schema_json), 'form_fields' (field_id, template_id, label, canonical_question, expected_type, jurisdiction, validation_rules), 'form_runs' (run_id, template_id, status, progress, target_path), 'field_runs' (field_run_id, run_id, field_id, status, proposed_value, confidence, requires_human_review), 'evidence_links' (evidence_id, field_run_id, chunk_id, document_hash, page_number, excerpt), 'knowledge_facts' (fact_id, subject, predicate, object_value, valid_from, valid_to, confidence, status), 'knowledge_answers' (answer_id, question_hash, canonical_answer, jurisdiction), 'review_decisions' (decision_id, field_run_id, reviewer, decision, comment, timestamp), and 'admin_audit_events' (event_id, run_id, event_type, payload, hash, timestamp). Models must connect cleanly to RepoScroller's SQLite WAL database and be importable.",
+    "context_files": [
+      "backend/clerk/docs/repoScroller-AdminClerk-implementation-plan.md",
+      "backend/clerk/docs/repoScroller-AdminClerk-roadmap.md"
+    ],
+    "test_command": "python -c \"import backend.clerk.models as m; assert hasattr(m, 'FormRun') or hasattr(m, 'FormTemplate'); print('CLERK-001 passed')\"",
+    "status": "pending",
+    "attempts": 0,
+    "last_error": null,
+    "completed_at": null
+  },
+  {
+    "id": "CLERK-002",
+    "title": "Pydantic Field Contracts & Swiss Administrative Validators",
+    "description": "Create Pydantic models in 'backend/clerk/schemas.py' defining typed contracts for Swiss administrative forms. Implement: 'FieldContract' (field_id, label, canonical_question, expected_type, jurisdiction, required, freshness_policy, evidence_required, validation_rules), 'AHVNumberContract' with regex validation for Swiss 13-digit AHV numbers ('^756\\.\\d{4}\\.\\d{4}\\.\\d{2}$'), 'CHFCurrencyContract' ensuring non-negative CHF amounts with standard 5-centime rounding rules, 'DateFieldContract' supporting Swiss date formats (DD.MM.YYYY), 'AnswerProposal' (proposed_value, confidence_relevance, confidence_authority, confidence_freshness, evidence_list, requires_review), and 'FormRunStatus' enum ('pending', 'analyzing', 'retrieving', 'answer_proposed', 'review_required', 'approved', 'exported').",
+    "context_files": [
+      "backend/clerk/docs/repoScroller-AdminClerk-implementation-plan.md"
+    ],
+    "test_command": "python -c \"from backend.clerk.schemas import FieldContract, AHVNumberContract, CHFCurrencyContract; print('CLERK-002 passed')\"",
+    "status": "pending",
+    "attempts": 0,
+    "last_error": null,
+    "completed_at": null
+  },
+  {
+    "id": "CLERK-003",
+    "title": "3-URP Form Ingestion & Canonical Field Resolver",
+    "description": "Implement 'backend/clerk/form_parser.py' to parse and resolve field contracts for the 3-URP Cantonal Free Juridic Assistance Form ('Gesuch um unentgeltliche Rechtspflege', Art. 119 ZPO). The module must read 'backend/clerk/maps/mapping.json' and 'backend/clerk/UseCases/3-URP-FreeJuridicAssistanceForm/Gesuch UP elektronisch ausfüllbar.pdf', converting the 100+ AcroForm aliases into structured 'FieldContract' instances (including applicant identity, case metadata, monthly net wage, rent, health insurance, and child maintenance). Provide a function 'load_3urp_field_contracts() -> List[FieldContract]'.",
+    "context_files": [
+      "backend/clerk/maps/mapping.json",
+      "backend/clerk/tools/fill_form.py"
+    ],
+    "test_command": "python -c \"from backend.clerk.form_parser import load_3urp_field_contracts; c = load_3urp_field_contracts(); assert len(c) > 0; print(f'CLERK-003 passed: {len(c)} fields')\"",
+    "status": "pending",
+    "attempts": 0,
+    "last_error": null,
+    "completed_at": null
+  },
+  {
+    "id": "CLERK-004",
+    "title": "3-URP AcroForm PDF Export Service Adapter",
+    "description": "Create 'backend/clerk/export_service.py' providing an export service that wraps 'backend/clerk/tools/fill_form.py' (Cantonal Legal Aid Form Filler). Implement class 'FormExportService' with method 'export_3urp_form(field_values: dict, output_path: str) -> str' that resolves field aliases against 'backend/clerk/maps/mapping.json', validates format constraints, executes atomic PDF generation via pypdf, and writes an accompanying 'audit_manifest.json' with document SHA-256 hash and generation timestamp.",
+    "context_files": [
+      "backend/clerk/tools/fill_form.py",
+      "backend/clerk/maps/mapping.json"
+    ],
+    "test_command": "python -c \"from backend.clerk.export_service import FormExportService; s = FormExportService(); print('CLERK-004 passed')\"",
+    "status": "pending",
+    "attempts": 0,
+    "last_error": null,
+    "completed_at": null
+  },
+  {
+    "id": "CLERK-005",
+    "title": "A2 Answer Orchestrator & Evidence Grounding for 3-URP",
+    "description": "Implement 'backend/clerk/orchestrator.py' housing the A2 Answer Orchestrator for 3-URP form completion. For each 3-URP field, query RepoScroller's existing search/GraphRAG indexes to retrieve applicant evidence from personal documents (Lohnausweis Ziffer 11, Mietvertrag, KVG health insurance policy, bank statement). Extract the answer, compute multi-dimensional confidence (relevance, authority, freshness, validation), link source document chunk IDs and page numbers, and populate 'AnswerProposal'. If evidence is insufficient, mark field as 'requires_review' or 'research_pending'.",
+    "context_files": [
+      "backend/clerk/schemas.py",
+      "backend/clerk/docs/repoScroller-AdminClerk-roadmap.md"
+    ],
+    "test_command": "python -c \"from backend.clerk.orchestrator import AnswerOrchestrator; o = AnswerOrchestrator(); print('CLERK-005 passed')\"",
+    "status": "pending",
+    "attempts": 0,
+    "last_error": null,
+    "completed_at": null
+  },
+  {
+    "id": "CLERK-006",
+    "title": "Zurich Tax Declaration Multi-Schedule Models",
+    "description": "Create 'backend/clerk/adapters/tax/schemas.py' modeling the official Zurich Tax Declaration (Zürcher Steuererklärung, Formular 1–5). Define Pydantic models for: 'Hauptformular' (personal status, AHV-Nr, employment income from Lohnausweis Ziffer 1-15, pension income), 'WertschriftenSchedule' (bank accounts, stocks, funds, with Steuerwert, Bruttoertrag mit Verrechnungssteuer, Bruttoertrag ohne Verrechnungssteuer), 'BerufsauslagenSchedule' (commute/Fahrkosten, lunch/Verpflegungsabzug, Weiterbildung), 'SchuldenSchedule' (loans, mortgages, Schuldzinsen), and 'LiegenschaftenSchedule' (Eigenmietwert, Unterhaltskosten pauschal/effektiv).",
+    "context_files": [
+      "backend/clerk/docs/usecases.md",
+      "backend/clerk/docs/repoScroller-AdminClerk-roadmap.md"
+    ],
+    "test_command": "python -c \"from backend.clerk.adapters.tax.schemas import ZurichTaxDossier, WertschriftenSchedule; print('CLERK-006 passed')\"",
+    "status": "pending",
+    "attempts": 0,
+    "last_error": null,
+    "completed_at": null
+  },
+  {
+    "id": "CLERK-007",
+    "title": "Swiss Bank eSteuerauszug Parser Adapter",
+    "description": "Implement 'backend/clerk/adapters/tax/steuerauszug.py' inspired by 'https://github.com/CaliCaliente/steuerauszug-generator'. The module parses Swiss bank-issued eSteuerauszug statements (PDF and standardized XML formats from UBS, Credit Suisse, ZKB, Raiffeisen, PostFinance, Swissquote). Extract structured entries containing IBAN/account number, security name/ISIN, valuation date (31.12), taxable wealth value (Steuerwert), gross yield subject to 35% withholding tax (Bruttoertrag mit Verrechnungssteuer), gross yield exempt from withholding tax, and custody fees (Depotgebühren). Return structured list of 'WertschriftenEntry' ready for the tax schedule.",
+    "context_files": [
+      "backend/clerk/adapters/tax/schemas.py",
+      "backend/clerk/docs/usecases.md"
+    ],
+    "test_command": "python -c \"from backend.clerk.adapters.tax.steuerauszug import SteuerauszugParser; p = SteuerauszugParser(); print('CLERK-007 passed')\"",
+    "status": "pending",
+    "attempts": 0,
+    "last_error": null,
+    "completed_at": null
+  },
+  {
+    "id": "CLERK-008",
+    "title": "Deterministic Zurich & Federal Tax Calculation Engine",
+    "description": "Implement 'backend/clerk/adapters/tax/taxcalc_engine.py' inspired by 'https://github.com/infogrind/taxcalc'. The engine implements deterministic mathematical tax formulas for Canton Zurich: Simple Cantonal Tax (Einfache Staatssteuer nach Zürcher Steuertarif für Alleinstehende und Verheiratete), Municipal Tax multiplier (Gemeindesteuerfuss, e.g. Stadt Zürich 119%, Winterthur 122%), and Direct Federal Tax (Direkte Bundessteuer nach DBG Art. 36). Implement function 'calculate_zurich_tax(taxable_income: float, taxable_wealth: float, municipality: str, marital_status: str) -> ZurichTaxCalculationResult' to mathematically verify that form line totals and tax liabilities balance.",
+    "context_files": [
+      "backend/clerk/adapters/tax/schemas.py",
+      "backend/clerk/docs/usecases.md"
+    ],
+    "test_command": "python -c \"from backend.clerk.adapters.tax.taxcalc_engine import calculate_zurich_tax; r = calculate_zurich_tax(85000, 120000, 'Zürich', 'single'); assert r.total_tax > 0; print('CLERK-008 passed')\"",
+    "status": "pending",
+    "attempts": 0,
+    "last_error": null,
+    "completed_at": null
+  },
+  {
+    "id": "CLERK-009",
+    "title": "Canton Zurich Deduction Heuristics & Rules Engine",
+    "description": "Implement 'backend/clerk/adapters/tax/swiss_tax_rules.py' inspired by 'https://github.com/Landmarklens/swissai-tax' and 'https://github.com/salvatoreviticchie/SwissTaxAgent'. Implements Canton Zurich legal deduction rules: Commute expense rules (ÖV cost ceiling, bicycle lump sum CHF 700, private vehicle justification criteria), Meal expense rules (standard meal deduction CHF 3,200/year or CHF 15/day, employer canteen subsidized deduction CHF 1,600/year), Continuing education deduction (Weiterbildungskosten up to cantonal ceiling CHF 12,000), and Pillar 3a annual limits (CHF 7,056 with 2nd pillar / 20% of net income up to CHF 35,280 without). Provide 'evaluate_zurich_deductions(dossier)'.",
+    "context_files": [
+      "backend/clerk/adapters/tax/schemas.py",
+      "backend/clerk/docs/usecases.md"
+    ],
+    "test_command": "python -c \"from backend.clerk.adapters.tax.swiss_tax_rules import evaluate_zurich_deductions; print('CLERK-009 passed')\"",
+    "status": "pending",
+    "attempts": 0,
+    "last_error": null,
+    "completed_at": null
+  },
+  {
+    "id": "CLERK-010",
+    "title": "Multi-Document Cross-Verification & Anomaly Detector",
+    "description": "Implement 'backend/clerk/adapters/tax/copilot_verifier.py' inspired by 'https://github.com/michaelbahr/TaxOffice-Copilot'. The verifier reconciles figures across heterogeneous tax enclosures: (1) Verifies that declared net wage matches Lohnausweis Ziffer 11 and monthly bank salary inflows; (2) Reconciles total bank balances against reported wealth on the Wertschriftenverzeichnis; (3) Detects missing mandatory certificates (e.g. Pillar 3a deduction claimed without bank confirmation receipt); (4) Flags debt interest claims exceeding Swiss legal ceilings. Returns structured 'TaxDiscrepancyReport' with severity levels (INFO, WARNING, BLOCKING).",
+    "context_files": [
+      "backend/clerk/adapters/tax/schemas.py",
+      "backend/clerk/docs/usecases.md"
+    ],
+    "test_command": "python -c \"from backend.clerk.adapters.tax.copilot_verifier import TaxDossierVerifier; v = TaxDossierVerifier(); print('CLERK-010 passed')\"",
+    "status": "pending",
+    "attempts": 0,
+    "last_error": null,
+    "completed_at": null
+  },
+  {
+    "id": "CLERK-011",
+    "title": "Zurich Social Assistance Schema & Means-Testing Model",
+    "description": "Create 'backend/clerk/adapters/social/schemas.py' modeling the Zurich Cantonal Social Assistance application ('backend/clerk/UseCases/2-SozialAmtPflege/Antragsformular_09.2018.pdf'). Define schemas for: 'ApplicantPersonalData', 'HouseholdComposition' (partner, children, flatmates), 'EmploymentStatus' (wages, RAV/ALV unemployment compensation, IV pension), 'AssetDeclaration' (bank accounts, vehicles, cash, surrender value of life insurance), 'AssetExemptions' (Vermögensfreibetrag CHF 4,000 single / CHF 8,000 couple / CHF 2,000 per child), and 'SocialAssistanceDossier'.",
+    "context_files": [
+      "backend/clerk/UseCases/2-SozialAmtPflege/Antragsformular_09.2018.pdf",
+      "backend/clerk/docs/repoScroller-AdminClerk-roadmap.md"
+    ],
+    "test_command": "python -c \"from backend.clerk.adapters.social.schemas import SocialAssistanceDossier; print('CLERK-011 passed')\"",
+    "status": "pending",
+    "attempts": 0,
+    "last_error": null,
+    "completed_at": null
+  },
+  {
+    "id": "CLERK-012",
+    "title": "Mandatory Evidence Checklist Verification Engine",
+    "description": "Implement 'backend/clerk/adapters/social/checklist_matcher.py' to automate verification against 'backend/clerk/UseCases/2-SozialAmtPflege/Checkliste_Unterlagen.pdf'. For a given applicant dossier, check for the presence and validity of mandatory proofs: (1) Rental lease contract (Mietvertrag inkl. Nebenkostenabrechnung); (2) Basic health insurance policy (Krankenkassenpolice KVG); (3) Bank account statements for ALL accounts over the preceding 3 to 6 months; (4) Extract from the debt collection register (Betreibungsauszug); (5) Latest wage slips or termination notice; (6) Divorce/maintenance agreements if applicable. Output a 'ChecklistVerificationScorecard' detailing missing documents and warnings.",
+    "context_files": [
+      "backend/clerk/UseCases/2-SozialAmtPflege/Checkliste_Unterlagen.pdf",
+      "backend/clerk/adapters/social/schemas.py"
+    ],
+    "test_command": "python -c \"from backend.clerk.adapters.social.checklist_matcher import ChecklistMatcher; m = ChecklistMatcher(); print('CLERK-012 passed')\"",
+    "status": "pending",
+    "attempts": 0,
+    "last_error": null,
+    "completed_at": null
+  },
+  {
+    "id": "CLERK-013",
+    "title": "SKOS Social Welfare Monthly Budget Deficit Calculator",
+    "description": "Implement 'backend/clerk/adapters/social/skos_budget.py' modeling the SKOS guidelines (Schweizerische Konferenz für Sozialhilfe) for Canton Zurich social assistance. Compute: (1) Basic living allowance (Grundbedarf für den Lebensunterhalt based on household size: 1 person CHF 1,031, 2 persons CHF 1,577, 3 persons CHF 1,938, etc.); (2) Housing costs (actual rent + heating costs up to municipal limits); (3) Medical basic care (KVG insurance minus cantonal premium reduction IPV); (4) Situation-related benefits (Integrationszulage, child costs); (5) Compare total needs against net recognized income to calculate the official monthly financial deficit (Sozialhilfebedarf).",
+    "context_files": [
+      "backend/clerk/adapters/social/schemas.py",
+      "backend/clerk/docs/repoScroller-AdminClerk-roadmap.md"
+    ],
+    "test_command": "python -c \"from backend.clerk.adapters.social.skos_budget import calculate_skos_budget; b = calculate_skos_budget(household_size=1, rent=1200, kvg_premium=380, net_income=500); assert b.deficit > 0; print('CLERK-013 passed')\"",
+    "status": "pending",
+    "attempts": 0,
+    "last_error": null,
+    "completed_at": null
+  },
+  {
+    "id": "CLERK-014",
+    "title": "Temporal AgentGoalWorkflow Deterministic State Machine",
+    "description": "Implement 'backend/clerk/workflows/agent_goal_workflow.py' adopting the pattern from 'C:\\dev-hub\\temporal-ai-agent'. Define a deterministic Temporal workflow 'AgentGoalWorkflow' that manages the complete lifecycle of a form run. It iterates over extracted field goals, evaluates completion criteria, coordinates activity calls, handles replay safety, and ensures that worker restarts do not re-execute already completed fields or re-invoke LLMs. Define workflow queries ('get_status', 'get_field_state') and signal handlers.",
+    "context_files": [
+      "backend/clerk/schemas.py",
+      "backend/clerk/docs/repoScroller-AdminClerk-roadmap.md"
+    ],
+    "test_command": "python -c \"from backend.clerk.workflows.agent_goal_workflow import AgentGoalWorkflow; print('CLERK-014 passed')\"",
+    "status": "pending",
+    "attempts": 0,
+    "last_error": null,
+    "completed_at": null
+  },
+  {
+    "id": "CLERK-015",
+    "title": "Temporal ToolActivities Non-Deterministic Worker Execution",
+    "description": "Implement 'backend/clerk/activities/tool_activities.py' adopting the activity architecture from 'C:\\dev-hub\\temporal-ai-agent'. House all non-deterministic, I/O-bound operations: (1) 'llm_complete_activity' (via LiteLLM, Ollama, or Claude CLI); (2) 'graphrag_search_activity' (querying RepoScroller FTS5 and vector indexes); (3) 'pdf_extract_activity' and 'pdf_fill_activity' (wrapping fill_form.py); (4) 'tax_calculation_activity' (calling taxcalc); (5) 'ocr_activity'. Configure activities with Temporal retry policies (exponential backoff, maximum attempts, jitter).",
+    "context_files": [
+      "backend/clerk/workflows/agent_goal_workflow.py",
+      "backend/clerk/tools/fill_form.py"
+    ],
+    "test_command": "python -c \"from backend.clerk.activities.tool_activities import ToolActivities; print('CLERK-015 passed')\"",
+    "status": "pending",
+    "attempts": 0,
+    "last_error": null,
+    "completed_at": null
+  },
+  {
+    "id": "CLERK-016",
+    "title": "Temporal Human-in-the-Loop Signals & Queries",
+    "description": "Implement 'backend/clerk/workflows/signals.py' providing signals and queries for human-in-the-loop administrative reviews. Define signals: 'submit_user_input' (applicant provides missing information for a pending field), 'approve_field_answer' (reviewer signs off on a proposed value), 'reject_field_answer' (reviewer rejects or overrides a value with manual text), and 'cancel_form_run'. Implement async wait conditions in workflow loops using 'workflow.wait_condition(...)' so workflows sleep with zero CPU usage while awaiting reviewer input.",
+    "context_files": [
+      "backend/clerk/workflows/agent_goal_workflow.py"
+    ],
+    "test_command": "python -c \"from backend.clerk.workflows.signals import FormSignals, FormQueries; print('CLERK-016 passed')\"",
+    "status": "pending",
+    "attempts": 0,
+    "last_error": null,
+    "completed_at": null
+  },
+  {
+    "id": "CLERK-017",
+    "title": "Temporal Workflow Context Compaction Engine",
+    "description": "Implement 'backend/clerk/workflows/compaction.py' inspired by context compaction in 'C:\\dev-hub\\temporal-ai-agent'. When an agent session or multi-schedule form run accumulates extensive tool interaction history that approaches model token limits, the compaction engine summarizes completed research steps into structured verified facts while preserving exact document citations and chunk IDs. Provide 'compact_agent_history(history, max_tokens=4000) -> List[dict]'.",
+    "context_files": [
+      "backend/clerk/workflows/agent_goal_workflow.py"
+    ],
+    "test_command": "python -c \"from backend.clerk.workflows.compaction import compact_agent_history; print('CLERK-017 passed')\"",
+    "status": "pending",
+    "attempts": 0,
+    "last_error": null,
+    "completed_at": null
+  },
+  {
+    "id": "CLERK-018",
+    "title": "Administrative Workbench FastAPI Endpoints",
+    "description": "Implement 'backend/api/routes/admin_forms.py' providing FastAPI routes for the Administrative Workbench under '/api/v1/admin/': (1) 'POST /forms' (create form run from template); (2) 'GET /forms/{run_id}' (retrieve overall progress, completion percentage, field runs); (3) 'POST /forms/{run_id}/analyze' (start A1 field extraction); (4) 'POST /forms/{run_id}/fields/{field_id}/answer' (run A2 answer orchestration); (5) 'POST /forms/{run_id}/fields/{field_id}/review' (submit human approval/rejection signal); (6) 'POST /forms/{run_id}/export' (generate stamped AcroForm PDF and audit trail); (7) 'GET /knowledge/review-queue'. Connect router to RepoScroller main FastAPI app.",
+    "context_files": [
+      "backend/clerk/schemas.py",
+      "backend/clerk/models.py"
+    ],
+    "test_command": "python -c \"from backend.api.routes.admin_forms import router; assert router.prefix == '/api/v1/admin' or len(router.routes) > 0; print('CLERK-018 passed')\"",
+    "status": "pending",
+    "attempts": 0,
+    "last_error": null,
+    "completed_at": null
+  },
+  {
+    "id": "CLERK-019",
+    "title": "Field Review Studio UI Component for RepoScroller",
+    "description": "Create 'frontend/components/admin_workbench.js' implementing the Administrative Workbench view inside RepoScroller. Features: (1) Form Workspace: upload templates, select 3-URP / Zurich Tax / Sozialhilfe, view completion progress bar; (2) Field Review Studio: table/card view showing canonical question, proposed value, confidence badge, source document snippet, and Approve / Override / Reject buttons; (3) Side-by-side Evidence Inspector: clicking a field navigates directly to the exact page excerpt in RepoScroller's PDF viewer; (4) Agent Execution Log with real-time status updates.",
+    "context_files": [
+      "frontend/app.js",
+      "frontend/style.css"
+    ],
+    "test_command": "node -e \"const fs = require('fs'); if (!fs.existsSync('frontend/components/admin_workbench.js')) process.exit(1); console.log('CLERK-019 passed');\"",
+    "status": "pending",
+    "attempts": 0,
+    "last_error": null,
+    "completed_at": null
+  },
+  {
+    "id": "CLERK-020",
+    "title": "ALCOA+ Audit Ledger & Verification Service",
+    "description": "Implement 'backend/clerk/audit.py' enforcing ALCOA+ compliance (Attributable, Legible, Contemporaneous, Original, Accurate + Complete, Consistent, Enduring, Available). Provide 'AuditService' with method 'record_event(run_id, field_id, actor, action, previous_val, new_val, evidence_hash)' writing to an append-only SQLite table with SHA-256 cryptographic chaining. Implement 'generate_audit_certificate(run_id) -> dict' to export a tamper-evident audit manifest alongside every finalized PDF form.",
+    "context_files": [
+      "backend/clerk/models.py",
+      "backend/clerk/docs/repoScroller-AdminClerk-roadmap.md"
+    ],
+    "test_command": "python -c \"from backend.clerk.audit import AuditService; a = AuditService(); print('CLERK-020 passed')\"",
+    "status": "pending",
+    "attempts": 0,
+    "last_error": null,
+    "completed_at": null
+  },
+  {
+    "id": "CLERK-021",
+    "title": "Level 1/2/3 Reusable Fact Knowledge Service",
+    "description": "Implement 'backend/clerk/knowledge_service.py' managing the 3-level knowledge architecture: Level 1 (raw source evidence and document chunks), Level 2 (extracted structured facts such as AHV-Nr, legal address, marital status, salary with validity periods), Level 3 (approved reusable answers to recurring administrative questions). Provide methods 'lookup_reusable_fact(subject, predicate, period)' and 'register_proposed_fact(fact, source_citations)'. Include a quality gate that prevents unverified LLM answers from becoming trusted facts without human approval.",
+    "context_files": [
+      "backend/clerk/models.py",
+      "backend/clerk/schemas.py"
+    ],
+    "test_command": "python -c \"from backend.clerk.knowledge_service import KnowledgeService; k = KnowledgeService(); print('CLERK-021 passed')\"",
+    "status": "pending",
+    "attempts": 0,
+    "last_error": null,
+    "completed_at": null
+  },
+  {
+    "id": "CLERK-022",
+    "title": "A3 Targeted Document Research & Knowledge Enrichment Agent",
+    "description": "Implement 'backend/clerk/agents/research_agent.py' housing the A3 Research Agent. When A2 cannot find evidence in structured knowledge or top-ranked GraphRAG chunks, delegate the field to A3. A3 performs multi-document targeted research: searching previous tax years, parsing multi-page bank statements, inspecting employment contracts, resolving conflicting versions (e.g. outdated address vs new lease), and compiling a structured 'ResearchPackage' with proposed facts, exact page citations, and identified conflicts. Submits proposed facts to the knowledge review queue.",
+    "context_files": [
+      "backend/clerk/schemas.py",
+      "backend/clerk/knowledge_service.py"
+    ],
+    "test_command": "python -c \"from backend.clerk.agents.research_agent import ResearchAgent; r = ResearchAgent(); print('CLERK-022 passed')\"",
+    "status": "pending",
+    "attempts": 0,
+    "last_error": null,
+    "completed_at": null
+  },
+  {
+    "id": "CLERK-023",
+    "title": "End-to-End Swiss Administrative Golden Test Suite",
+    "description": "Implement 'tests/clerk/test_golden_forms.py' containing end-to-end integration tests for all three Swiss use cases: (1) Test 3-URP full run: input mock dossier (Lohnausweis, Mietvertrag, KVG policy) -> field extraction -> A2 answering -> Existenzminimum check -> fill_form.py AcroForm PDF stamping; (2) Test Zurich Tax Declaration: input Lohnausweis + eSteuerauszug -> taxcalc verification -> deduction evaluation; (3) Test Sozialhilfe: input dossier -> checklist verification -> SKOS budget deficit calculation. Assert >= 98% field answer correctness and 100% evidence citation coverage.",
+    "context_files": [
+      "backend/clerk/tools/fill_form.py",
+      "backend/clerk/maps/mapping.json",
+      "backend/clerk/docs/usecases.md"
+    ],
+    "test_command": "python -c \"import os; assert os.path.exists('tests/clerk/test_golden_forms.py') or os.path.exists('backend/clerk/tests/test_golden_forms.py'); print('CLERK-023 passed')\"",
+    "status": "pending",
+    "attempts": 0,
+    "last_error": null,
+    "completed_at": null
+  }
+]
