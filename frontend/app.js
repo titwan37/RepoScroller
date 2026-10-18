@@ -1554,8 +1554,8 @@ function renderLedgerRows(items) {
           <button class="btn btn-outline" style="padding: 0.2rem 0.5rem; font-size: 0.72rem;" data-path="${escapeHtml(primaryPath)}" data-sha="${escapeHtml(doc.sha256_hash)}" onclick="handleOpenPathClick(event, this, false)" title="Open file in default application or browser preview">
             Open ↗
           </button>` : ''}
-          <button class="btn btn-outline" style="padding: 0.2rem 0.5rem; font-size: 0.72rem;" onclick="selectDocument('${escapeHtml(doc.sha256_hash)}')">View</button>
-          <button class="btn btn-outline" style="padding: 0.2rem 0.5rem; font-size: 0.72rem; color: #38bdf8; border-color: rgba(56, 189, 248, 0.45); background: rgba(56, 189, 248, 0.1);" onclick="event.stopPropagation(); visualizeDocumentIn3D('${escapeHtml(doc.sha256_hash)}', '${escapeHtml(doc.canonical_filename)}')" title="Visualize document node and connected entity links in 3D Knowledge Universe">
+          <button class="btn btn-outline" style="padding: 0.2rem 0.5rem; font-size: 0.72rem;" data-sha="${escapeHtml(doc.sha256_hash)}" onclick="selectDocument(this.getAttribute('data-sha'))">View</button>
+          <button class="btn btn-outline" style="padding: 0.2rem 0.5rem; font-size: 0.72rem; color: #38bdf8; border-color: rgba(56, 189, 248, 0.45); background: rgba(56, 189, 248, 0.1);" data-sha="${escapeHtml(doc.sha256_hash)}" data-filename="${escapeHtml(doc.canonical_filename)}" onclick="event.stopPropagation(); visualizeDocumentIn3D(this.getAttribute('data-sha'), this.getAttribute('data-filename'))" title="Visualize document node and connected entity links in 3D Knowledge Universe">
             🌐 3D
           </button>
         </div>
@@ -1659,7 +1659,7 @@ async function selectDocument(sha256) {
         <button class="btn btn-interrogate-detail" data-filename="${escapeHtml(doc.canonical_filename)}" onclick="interrogateAboutCurrent(this.getAttribute('data-filename'))">
           💬 Interrogate Bot About This Document
         </button>
-        <button class="btn btn-secondary btn-block" style="background: linear-gradient(135deg, rgba(56, 189, 248, 0.16), rgba(168, 85, 247, 0.16)); border: 1px solid rgba(56, 189, 248, 0.45); color: #38bdf8; font-weight: 600; padding: 0.55rem 1rem; display: flex; align-items: center; justify-content: center; gap: 0.5rem; cursor: pointer; transition: all 0.2s ease;" onclick="visualizeDocumentIn3D('${escapeHtml(doc.sha256_hash)}', '${escapeHtml(doc.canonical_filename)}')">
+        <button class="btn btn-secondary btn-block" style="background: linear-gradient(135deg, rgba(56, 189, 248, 0.16), rgba(168, 85, 247, 0.16)); border: 1px solid rgba(56, 189, 248, 0.45); color: #38bdf8; font-weight: 600; padding: 0.55rem 1rem; display: flex; align-items: center; justify-content: center; gap: 0.5rem; cursor: pointer; transition: all 0.2s ease;" data-sha="${escapeHtml(doc.sha256_hash)}" data-filename="${escapeHtml(doc.canonical_filename)}" onclick="visualizeDocumentIn3D(this.getAttribute('data-sha'), this.getAttribute('data-filename'))">
           <span>🌐</span> Visualize in 3D Knowledge Universe ➔
         </button>
       </div>
@@ -2059,7 +2059,7 @@ function renderActionItems(items) {
 
     tr.innerHTML = `
       <td style="text-align: center;">
-        <input type="checkbox" class="todo-checkbox" ${isCompleted ? 'checked' : ''} onchange="toggleTodoComplete('${escapeHtml(String(todoId))}', this.checked)" title="Click to resolve/strikeout obligation">
+        <input type="checkbox" class="todo-checkbox" ${isCompleted ? 'checked' : ''} data-todo-id="${escapeHtml(String(todoId))}" onchange="toggleTodoComplete(this.getAttribute('data-todo-id'), this.checked)" title="Click to resolve/strikeout obligation">
       </td>
       <td>
         <div style="font-weight: 600; color: ${isCompleted ? 'var(--text-muted)' : 'var(--text-main)'}; display: flex; align-items: center; gap: 0.4rem;">
@@ -2086,7 +2086,7 @@ function renderActionItems(items) {
       <td>
         <div style="max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
           ${docSha ? `
-            <a href="#" onclick="event.preventDefault(); selectDocument('${escapeHtml(docSha)}'); switchWorkspace('ledger');" style="color: var(--accent-primary); text-decoration: underline; font-size: 0.78rem;" title="View source document in ledger">
+            <a href="#" data-sha="${escapeHtml(docSha)}" onclick="event.preventDefault(); selectDocument(this.getAttribute('data-sha')); switchWorkspace('ledger');" style="color: var(--accent-primary); text-decoration: underline; font-size: 0.78rem;" title="View source document in ledger">
               📄 ${escapeHtml(docName)}
             </a>
           ` : `📄 ${escapeHtml(docName)}`}
@@ -2096,7 +2096,7 @@ function renderActionItems(items) {
         ${fulfilledHtml}
       </td>
       <td style="text-align: right; white-space: nowrap;">
-        <button class="btn btn-outline" style="padding: 0.2rem 0.5rem; font-size: 0.72rem;" onclick="toggleTodoComplete('${escapeHtml(String(todoId))}', ${!isCompleted})">
+        <button class="btn btn-outline" style="padding: 0.2rem 0.5rem; font-size: 0.72rem;" data-todo-id="${escapeHtml(String(todoId))}" onclick="toggleTodoComplete(this.getAttribute('data-todo-id'), ${!isCompleted})">
           ${isCompleted ? 'Reopen' : 'Strikeout'}
         </button>
       </td>
@@ -2818,7 +2818,7 @@ async function loadSidecarStats() {
             else if (type === "location") icon = "📍";
             else if (type === "statute") icon = "⚖️";
             const isActive = activeEntityType === type ? "active" : "";
-            return `<button class="kb-type-chip ${isActive}" data-type="${escapeHtml(type)}" onclick="toggleEntityType('${escapeHtml(type)}')">${icon} <strong>${escapeHtml(type)}</strong>: <span class="badge-count">${count}</span></button>`;
+            return `<button class="kb-type-chip ${isActive}" data-type="${escapeHtml(type)}" onclick="toggleEntityType(this.getAttribute('data-type'))">${icon} <strong>${escapeHtml(type)}</strong>: <span class="badge-count">${count}</span></button>`;
           }).join("");
         }
       }
@@ -3262,13 +3262,13 @@ async function executeStudioGraphRAGSearch(explicitQuery = null) {
               <button class="btn btn-outline btn-xs" data-sha="${escapeHtml(sha)}" data-path="${escapeHtml(primaryPath)}" onclick="handleCandidateOpenFile(event, this, true)" title="Reveal and highlight file in Windows File Explorer">
                 📂 Reveal
               </button>
-              <button class="btn btn-outline btn-xs" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.45); background: rgba(56, 189, 248, 0.08);" onclick="visualizeDocumentIn3D('${escapeHtml(sha)}', '${escapeHtml(filename)}')" title="Locate document vertex and visualize connected knowledge graph in 3D Universe">
+              <button class="btn btn-outline btn-xs" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.45); background: rgba(56, 189, 248, 0.08);" data-sha="${escapeHtml(sha)}" data-filename="${escapeHtml(filename)}" onclick="visualizeDocumentIn3D(this.getAttribute('data-sha'), this.getAttribute('data-filename'))" title="Locate document vertex and visualize connected knowledge graph in 3D Universe">
                 🌐 View in 3D
               </button>
-              <button class="btn btn-outline btn-xs" onclick="selectDocument('${escapeHtml(sha)}'); switchWorkspace('ledger');" title="Inspect full document in ledger">
+              <button class="btn btn-outline btn-xs" data-sha="${escapeHtml(sha)}" onclick="selectDocument(this.getAttribute('data-sha')); switchWorkspace('ledger');" title="Inspect full document in ledger">
                 🗄️ Ledger
               </button>
-              <button class="btn btn-primary btn-xs" onclick="interrogateAboutDocument('${escapeHtml(sha)}', '${escapeHtml(filename)}')" title="Ask AI about this specific document">
+              <button class="btn btn-primary btn-xs" data-sha="${escapeHtml(sha)}" data-filename="${escapeHtml(filename)}" onclick="interrogateAboutDocument(this.getAttribute('data-sha'), this.getAttribute('data-filename'))" title="Ask AI about this specific document">
                 💬 Ask AI
               </button>
             </div>
@@ -3401,8 +3401,7 @@ function renderMarkdown(md) {
   text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, label, href) => {
     let trimmedHref = href.trim();
     if (trimmedHref.startsWith("file://") || /^[a-zA-Z]:[\\/]/.test(trimmedHref) || trimmedHref.startsWith("\\\\")) {
-      const cleanTarget = trimmedHref.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
-      return `<a href="#" onclick="event.preventDefault(); openFile('${cleanTarget}', false);" class="chat-link" title="Open file: ${escapeHtml(trimmedHref)}">🔗 ${label}</a>`;
+      return `<a href="#" data-filepath="${escapeHtml(trimmedHref)}" onclick="event.preventDefault(); openFile(this.getAttribute('data-filepath'), false);" class="chat-link" title="Open file: ${escapeHtml(trimmedHref)}">🔗 ${label}</a>`;
     }
     if (trimmedHref.startsWith("/api/v1")) {
       trimmedHref = API_PREFIX + trimmedHref;
@@ -4646,10 +4645,44 @@ async function load3DUniverseData(forceReload = false, filterParams = null, tran
       glsl3D.layoutMode = params.get("layout");
     }
 
-    requestUrl = `/api/v1/sidecar/graph-3d?${params.toString()}`;
-    const res = await fetch(requestUrl);
-    if (!res.ok) throw new Error("HTTP " + res.status);
+    const apiPrefix = (typeof API_PREFIX !== "undefined" && API_PREFIX) ? API_PREFIX : "";
+    requestUrl = `${apiPrefix}/api/v1/sidecar/graph-3d?${params.toString()}`;
+
+    let res = null;
+    let fetchError = null;
+    const maxAttempts = 3;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        res = await fetch(requestUrl);
+        if (res.ok) {
+          fetchError = null;
+          break;
+        }
+        if (res.status === 502 || res.status === 503 || res.status === 504 || res.status === 408) {
+          throw new Error(`HTTP ${res.status} ${res.statusText}`);
+        }
+        throw new Error(`HTTP ${res.status}`);
+      } catch (fErr) {
+        fetchError = fErr;
+        if (attempt < maxAttempts) {
+          // If large payload failed or timed out, throttle limit to 500 on retry
+          if (attempt === 2 && params.get("limit") === "1000") {
+            params.set("limit", "500");
+            requestUrl = `${apiPrefix}/api/v1/sidecar/graph-3d?${params.toString()}`;
+          }
+          await new Promise(r => setTimeout(r, 1000 * attempt));
+        }
+      }
+    }
+
+    if (!res || !res.ok) {
+      throw fetchError || new Error(`HTTP ${res ? res.status : 'NetworkError'}`);
+    }
     const data = await res.json();
+
+    const existingErrorBanner = document.getElementById("universe-error-banner");
+    if (existingErrorBanner) existingErrorBanner.remove();
 
     if (glsl3D.layoutTransitionAnim) {
       cancelAnimationFrame(glsl3D.layoutTransitionAnim);
@@ -4736,8 +4769,8 @@ async function load3DUniverseData(forceReload = false, filterParams = null, tran
 
         return `
           <div class="cluster-item ${isOff ? 'cluster-disabled' : ''}" data-cluster-id="${c.id}"
-               onclick="handleClusterItemClick(event, ${c.id})"
-               ondblclick="handleClusterItemDblClick(event, ${c.id})"
+               onclick="handleClusterItemClick(event, this.getAttribute('data-cluster-id'))"
+               ondblclick="handleClusterItemDblClick(event, this.getAttribute('data-cluster-id'))"
                title="${escapeHtml(tooltip)}\n💡 Click: Enable / Disable cluster\n💡 Double-click: View detailed entity list">
             <div class="cluster-item-left">
               <span class="cluster-color-dot ${isOff ? 'dot-off' : ''}" style="${isOff ? 'background: transparent; border: 1.5px solid #64748b; box-shadow: none;' : `background: ${c.color}; border: none; box-shadow: 0 0 6px ${c.color};`}"></span>
@@ -4808,6 +4841,36 @@ async function load3DUniverseData(forceReload = false, filterParams = null, tran
   } catch (err) {
     console.error("Failed to load 3D Knowledge Universe:", err);
     pushDiagnosticLog("error", `Failed to load 3D Knowledge Universe data from [${requestUrl || '/api/v1/sidecar/graph-3d'}]: ${err.message}. Ensure Sidecar is running and backend port 8090 is reachable.`, "frontend", "GLSL3D");
+
+    // Display recovery HUD overlay on the 3D canvas so user is not stranded on a black empty canvas
+    const container = document.getElementById("glsl-canvas-wrapper");
+    if (container && (!glsl3D.nodes || glsl3D.nodes.length === 0)) {
+      let errBanner = document.getElementById("universe-error-banner");
+      if (!errBanner) {
+        errBanner = document.createElement("div");
+        errBanner.id = "universe-error-banner";
+        errBanner.className = "universe-error-banner";
+        container.appendChild(errBanner);
+      }
+      errBanner.innerHTML = `
+        <div class="universe-error-card">
+          <div style="font-size: 2.2rem; margin-bottom: 0.5rem;">🌌⚡</div>
+          <h3 style="color: #f87171; margin-bottom: 0.5rem; font-size: 1.15rem; font-weight: 700;">3D Knowledge Universe Offline</h3>
+          <p style="color: var(--text-muted, #94a3b8); font-size: 0.85rem; max-width: 460px; margin: 0 auto 1.25rem; line-height: 1.5;">
+            Failed to fetch graph topology from <code style="color: #38bdf8; font-size: 0.78rem;">${escapeHtml(requestUrl || '/api/v1/sidecar/graph-3d')}</code> (${escapeHtml(err.message)}).
+            Ensure the Sidecar service is running and port 8090 is reachable.
+          </p>
+          <div style="display: flex; gap: 0.75rem; justify-content: center;">
+            <button class="btn btn-primary btn-sm" onclick="load3DUniverseData(true)">
+              ↻ Retry Connection
+            </button>
+            <button class="btn btn-outline btn-sm" onclick="switchWorkspace('process')">
+              Return to Pipeline
+            </button>
+          </div>
+        </div>
+      `;
+    }
   }
 }
 
@@ -5608,17 +5671,19 @@ function openUniverseClusterDrawer(clusterId) {
 
   if (!drawer) return;
 
+  const cid = (clusterId !== null && clusterId !== undefined && !isNaN(Number(clusterId))) ? Number(clusterId) : clusterId;
+
   // Toggle off if clicking the already open cluster
-  if (activeUniverseClusterId === clusterId && !drawer.classList.contains("hidden")) {
+  if (activeUniverseClusterId === cid && !drawer.classList.contains("hidden")) {
     closeUniverseClusterDrawer();
     return;
   }
 
-  activeUniverseClusterId = clusterId;
+  activeUniverseClusterId = cid;
   drawer.classList.remove("hidden");
   if (searchInput) searchInput.value = "";
 
-  const clusterMeta = glsl3D.clusters.find(c => c.id === clusterId) || { name: `Cluster ${clusterId}` };
+  const clusterMeta = glsl3D.clusters.find(c => c.id === cid || c.id == cid) || { name: `Cluster ${cid}` };
   if (titleEl) {
     titleEl.innerHTML = `${clusterMeta.icon || "•"} ${escapeHtml(clusterMeta.name)}`;
     titleEl.style.color = clusterMeta.color || "#38bdf8";
@@ -5642,7 +5707,7 @@ function renderUniverseClusterDrawerItems(query) {
   const countEl = document.getElementById("universe-drawer-count");
   if (!container) return;
 
-  const matchingNodes = glsl3D.nodes.filter(n => n.cluster === activeUniverseClusterId);
+  const matchingNodes = glsl3D.nodes.filter(n => n.cluster === activeUniverseClusterId || n.cluster == activeUniverseClusterId);
   const filtered = query
     ? matchingNodes.filter(n => (n.name || "").toLowerCase().includes(query))
     : matchingNodes;
@@ -5657,7 +5722,7 @@ function renderUniverseClusterDrawerItems(query) {
   container.innerHTML = filtered.map(n => {
     const degBadge = `Deg: ${n.degree || 0}`;
     return `
-      <div class="universe-cluster-entity-pill" onclick="focusOrInspect3DNode('${escapeHtml(n.id)}')" title="Focus entity in 3D: ${escapeHtml(n.name)}">
+      <div class="universe-cluster-entity-pill" data-node-id="${escapeHtml(n.id)}" onclick="focusOrInspect3DNode(this.getAttribute('data-node-id'))" title="Focus entity in 3D: ${escapeHtml(n.name)}">
         <span style="color: ${n.cluster_color || '#38bdf8'}">●</span>
         <span style="font-weight: 500;">${escapeHtml(n.name)}</span>
         <span style="opacity: 0.6; font-size: 0.7rem;">${degBadge}</span>
@@ -6824,7 +6889,8 @@ function renderStatuteDetailsCard(sd) {
         <span class="statute-lang-label">Official Lang:</span>
         ${["fr", "de", "en", "it"].filter(l => availableLangs.includes(l) || l === sd.primary_lang).map(l => `
           <button class="statute-lang-btn ${l === currentLang ? 'active' : ''}"
-                  onclick="switchStatuteLanguage('${l}')"
+                  data-lang="${l}"
+                  onclick="switchStatuteLanguage(this.getAttribute('data-lang'))"
                   title="View official legal text in ${l.toUpperCase()}">
             ${l.toUpperCase()}
           </button>
@@ -6981,7 +7047,8 @@ function renderNeighborhoodDetails(nh) {
   if (allRel.length > 0) {
     html += allRel.slice(0, 25).map(r => `
       <div class="insp-rel-item"
-           onclick="focusOrInspect3DNode('${escapeHtml(r.node_id)}')"
+           data-node-id="${escapeHtml(r.node_id)}"
+           onclick="focusOrInspect3DNode(this.getAttribute('data-node-id'))"
            title="Click to focus / expand: ${escapeHtml(r.name || r.node_id)} (${escapeHtml(r.relation_type || 'LINK')})">
         <span class="insp-rel-name">${escapeHtml(r.name || r.node_id)}</span>
         <span class="insp-rel-tag">${escapeHtml(r.relation_type || 'LINK')}</span>
@@ -7005,7 +7072,9 @@ function renderNeighborhoodDetails(nh) {
   if (docs.length > 0) {
     html += docs.slice(0, 15).map(d => `
       <div class="insp-doc-item"
-           onclick="visualizeDocumentIn3D('${escapeHtml(d.sha256_hash)}', '${escapeHtml(d.canonical_filename)}')"
+           data-sha="${escapeHtml(d.sha256_hash)}"
+           data-filename="${escapeHtml(d.canonical_filename)}"
+           onclick="visualizeDocumentIn3D(this.getAttribute('data-sha'), this.getAttribute('data-filename'))"
            title="Visualize in 3D: ${escapeHtml(d.canonical_filename)}">
         <span class="insp-doc-name">📄 ${escapeHtml(d.canonical_filename)}</span>
       </div>
@@ -7958,7 +8027,7 @@ async function triggerPortraitSynthesis(targetId = null, targetName = null) {
           <h3>⚠️ Synthesis Generation Error</h3>
           <p>${escapeHtml(err.message || fallbackErr.message)}</p>
           <div style="margin-top: 1.5rem;">
-            <button class="btn btn-secondary btn-sm" onclick="triggerPortraitSynthesis('${escapeHtml(focusId)}', '${escapeHtml(focusName)}')">
+            <button class="btn btn-secondary btn-sm" data-id="${escapeHtml(focusId)}" data-name="${escapeHtml(focusName)}" onclick="triggerPortraitSynthesis(this.getAttribute('data-id'), this.getAttribute('data-name'))">
               ⟳ Retry Analysis
             </button>
             <button class="btn btn-outline btn-sm" onclick="closePortraitModal()" style="margin-left: 0.5rem;">
@@ -8450,7 +8519,7 @@ async function loadLineageChains(force = false) {
       return `
         <tr>
           <td>
-            <a class="lineage-doc-link" onclick="selectDocument('${escapeHtml(c.parent_sha256)}'); switchWorkspace('ledger');" title="${escapeHtml(c.parent_name || c.parent_sha256)}">
+            <a class="lineage-doc-link" data-sha="${escapeHtml(c.parent_sha256)}" onclick="selectDocument(this.getAttribute('data-sha')); switchWorkspace('ledger');" title="${escapeHtml(c.parent_name || c.parent_sha256)}">
               📄 ${escapeHtml(c.parent_name || c.parent_sha256.substring(0, 16) + '...')}
             </a>
           </td>
@@ -8458,7 +8527,7 @@ async function loadLineageChains(force = false) {
             <span class="lineage-rel-badge ${relClass}">${relIcon} ${escapeHtml(c.relationship)}</span>
           </td>
           <td>
-            <a class="lineage-doc-link" onclick="selectDocument('${escapeHtml(c.child_sha256)}'); switchWorkspace('ledger');" title="${escapeHtml(c.child_name || c.child_sha256)}">
+            <a class="lineage-doc-link" data-sha="${escapeHtml(c.child_sha256)}" onclick="selectDocument(this.getAttribute('data-sha')); switchWorkspace('ledger');" title="${escapeHtml(c.child_name || c.child_sha256)}">
               📄 ${escapeHtml(c.child_name || c.child_sha256.substring(0, 16) + '...')}
             </a>
           </td>
@@ -8472,7 +8541,7 @@ async function loadLineageChains(force = false) {
             ${statusBadge}
           </td>
           <td>
-            <button class="btn btn-outline btn-xs" onclick="selectDocument('${escapeHtml(c.child_sha256)}'); switchWorkspace('ledger');" title="Inspect full document details">
+            <button class="btn btn-outline btn-xs" data-sha="${escapeHtml(c.child_sha256)}" onclick="selectDocument(this.getAttribute('data-sha')); switchWorkspace('ledger');" title="Inspect full document details">
               Inspect 🔍
             </button>
           </td>

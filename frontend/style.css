@@ -8336,3 +8336,26 @@ body.is-mobile-device .glsl-node-inspector .insp-rel-tag {
   border-radius: 8px;
   border: 1px dashed rgba(56, 189, 248, 0.3);
 }
+
+/* 3D Knowledge Universe Offline & Recovery HUD */
+.universe-error-banner {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 100;
+  text-align: center;
+  pointer-events: auto;
+  max-width: 90%;
+  width: 520px;
+}
+
+.universe-error-card {
+  background: rgba(15, 23, 42, 0.94);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.75), 0 0 24px rgba(239, 68, 68, 0.15);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  padding: 2rem 2.25rem;
+  border-radius: 12px;
+}
